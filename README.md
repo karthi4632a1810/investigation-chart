@@ -93,6 +93,49 @@ docker compose down         # stop containers
 npm run docker:down
 ```
 
+## Production (invest.mapims.edu.in)
+
+Uses unique host port **8094** (avoids conflicts with other Docker apps on the server).
+
+### 1. Deploy containers on server
+
+```bash
+git checkout production
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+```
+
+Or:
+
+```bash
+npm run docker:prod
+```
+
+| Service | Container | Host port |
+|---------|-----------|-----------|
+| React UI | `invest_client` | **8094** |
+| Node API | `invest_server` | internal only |
+
+Test directly: `http://SERVER_IP:8094`
+
+### 2. Install host nginx config
+
+```bash
+sudo cp deploy/nginx/invest.mapims.edu.in.conf /etc/nginx/sites-available/
+sudo ln -sf /etc/nginx/sites-available/invest.mapims.edu.in.conf /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Then open **http://invest.mapims.edu.in**
+
+### 3. Enable HTTPS (recommended)
+
+```bash
+sudo mkdir -p /var/www/certbot
+sudo certbot certonly --webroot -w /var/www/certbot -d invest.mapims.edu.in
+sudo cp deploy/nginx/invest.mapims.edu.in.ssl.conf /etc/nginx/sites-available/invest.mapims.edu.in.conf
+sudo nginx -t && sudo systemctl reload nginx
+```
+
 ## Notes
 
 - EMR credentials live in `server/.env` only — never commit real passwords to git.
