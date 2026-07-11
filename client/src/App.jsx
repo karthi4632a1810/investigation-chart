@@ -8,6 +8,7 @@ import SearchForm from './components/SearchForm';
 import InvestigationChart from './components/InvestigationChart';
 import RawResults from './components/RawResults';
 import DetailModal from './components/DetailModal';
+import PendingTabs from './components/PendingTabs';
 
 export default function App() {
   const [hospital, setHospital] = useState(null);
@@ -69,11 +70,17 @@ export default function App() {
 
       {hasData && (
         <>
-          {result.chart?.fetchErrors?.map((fe) => (
-            <div key={fe} className="warn">
-              {fe}
-            </div>
-          ))}
+          {/* Group pending messages into an orange dropdown and show other warnings normally */}
+          {(() => {
+            const all = result.chart?.fetchErrors ?? [];
+            const pending = all.filter((f) => /details pending/i.test(String(f)));
+            // put the "Could not load detail" messages into the Canceled tab
+            const canceled = all.filter((f) => /could not load detail/i.test(String(f)) || /cancel|canceled|rejected/i.test(String(f)));
+            const groups = {};
+            groups['Pending'] = pending;
+            groups['Canceled'] = canceled;
+            return <PendingTabs groups={groups} onViewDetail={setDetailOrderId} />;
+          })()}
 
           <div className="tabs">
             <button

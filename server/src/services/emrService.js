@@ -86,7 +86,7 @@ export function extractPatientMeta(rows, cols) {
     age: ['age'],
     sex: ['sex', 'gender'],
     bed: ['bedno', 'bed'],
-    ip: ['ipno', 'ipnumber', 'ip'],
+    ip: ['ipno', 'ipnumber', 'ip', 'ipopot'],
     ward: ['ward'],
     unit: ['unit'],
   };
@@ -148,13 +148,16 @@ export async function buildInvestigationChart(searchData) {
 
   let reqCol = null;
   let dateCol = null;
+  let statusCol = null;
   for (const c of cols) {
     const n = normCol(c);
     if (!reqCol && (n === 'reqno' || n === 'requestno')) reqCol = c;
     if (!dateCol && n === 'requestdate') dateCol = c;
+    if (!statusCol && n === 'status') statusCol = c;
   }
 
   const reqDateMap = {};
+  const reqStatusMap = {};
   if (reqCol) {
     for (const row of rows) {
       const parsed = extractOrderIdFromCell(row[reqCol]);
@@ -165,6 +168,9 @@ export async function buildInvestigationChart(searchData) {
         datePart = String(row[dateCol]).trim().slice(0, 10);
       }
       reqDateMap[parsed.orderid] = datePart;
+      if (statusCol && row[statusCol]) {
+        reqStatusMap[parsed.orderid] = String(row[statusCol]).trim();
+      }
     }
   }
 
@@ -204,6 +210,17 @@ export async function buildInvestigationChart(searchData) {
 
   for (const [orderid, datePart] of Object.entries(reqDateMap)) {
     dateSet.add(datePart);
+
+    // If the search row for this order id indicates a pending status,
+    // don't attempt to fetch the detail page (it often returns empty) —
+    // record a clearer fetch error to inform the user.
+    const statusVal = reqStatusMap[orderid];
+    if (statusVal && String(statusVal).toLowerCase().includes('pending')) {
+      fetchErrors.push(
+        `Details pending for Req No ${orderid} (status: ${statusVal}).`,
+      );
+      continue;
+    }
 
     const fullHtml = await fetchLabResultHtml(client, orderid);
     const tableHtml = extractResultTable(fullHtml);

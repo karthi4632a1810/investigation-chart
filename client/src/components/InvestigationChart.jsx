@@ -17,6 +17,42 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
 
   const { chartDates, chartValues, unmapped, patientMeta, template } = chart;
 
+  function parseNumber(v) {
+    const n = parseFloat(String(v).replace(/[^0-9.+\-eE]/g, ''));
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function isOutOfRange(valRaw, rangeStr) {
+    const val = parseNumber(valRaw);
+    if (val === null || !rangeStr) return false;
+
+    const r = String(rangeStr).trim();
+    const dash = r.match(/(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)/);
+    if (dash) {
+      const min = parseFloat(dash[1]);
+      const max = parseFloat(dash[2]);
+      return val < min || val > max;
+    }
+
+    const lt = r.match(/^<\s*(-?\d+(?:\.\d+)?)/);
+    if (lt) return val >= parseFloat(lt[1]);
+    const gt = r.match(/^>\s*(-?\d+(?:\.\d+)?)/);
+    if (gt) return val <= parseFloat(gt[1]);
+
+    return false;
+  }
+
+  function isPending(val) {
+    if (val == null) return false;
+    return String(val).toLowerCase().includes('pending');
+  }
+
+  const PRINT_CHUNK = 6;
+  const dateChunks = [];
+  for (let i = 0; i < chartDates.length; i += PRINT_CHUNK) {
+    dateChunks.push(chartDates.slice(i, i + PRINT_CHUNK));
+  }
+
   return (
     <div className="chart-card">
       <div className="letterhead">
@@ -80,11 +116,15 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
                     <td className="field-range">{field.range}</td>
                     {chartDates.map((d) => {
                       const val = chartValues[field.id]?.[d] ?? '';
+                      const out = isOutOfRange(val, field.range);
+                      const pending = isPending(val);
+                      const classes = ['field-value'];
+                      if (val) classes.push('filled');
+                      else classes.push('empty-val');
+                      if (out) classes.push('out-of-range');
+                      if (pending) classes.push('pending');
                       return (
-                        <td
-                          key={d}
-                          className={`field-value ${val ? 'filled' : 'empty-val'}`}
-                        >
+                        <td key={d} className={classes.join(' ')}>
                           {val || '—'}
                         </td>
                       );
@@ -95,6 +135,55 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
             ))}
           </tbody>
         </table>
+
+        { /* print-only chunked tables: hidden on screen, visible in print */ }
+        <div className="chart-print">
+          {dateChunks.map((chunk, idx) => (
+            <div key={idx} className="chart-print-page">
+              <table className="chart chart-print-table">
+                <thead>
+                  <tr>
+                    <th style={{ minWidth: 160 }}>Parameter</th>
+                    <th style={{ minWidth: 140 }}>Ref. Range</th>
+                    {chunk.map((d) => (
+                      <th key={d}>{d}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(template).map(([sectionName, fields]) => (
+                    <Fragment key={sectionName}>
+                      <tr className="section-row">
+                        <td colSpan={2 + chunk.length}>{sectionName}</td>
+                      </tr>
+                      {fields.map((field) => (
+                        <tr key={field.id}>
+                          <td className="field-label">{field.label}</td>
+                          <td className="field-range">{field.range}</td>
+                          {chunk.map((d) => {
+                            const val = chartValues[field.id]?.[d] ?? '';
+                            const out = isOutOfRange(val, field.range);
+                            const pending = isPending(val);
+                            const classes = ['field-value'];
+                            if (val) classes.push('filled');
+                            else classes.push('empty-val');
+                            if (out) classes.push('out-of-range');
+                            if (pending) classes.push('pending');
+                            return (
+                              <td key={d} className={classes.join(' ')}>
+                                {val || '—'}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
 
         {unmapped?.length > 0 && (
           <div className="unmapped-box">

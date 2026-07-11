@@ -58,6 +58,14 @@ h3 {
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
 }
 
+/* make the header/search area sticky */
+.searchbar {
+  position: sticky;
+  top: 12px;
+  z-index: 40;
+  backdrop-filter: blur(4px);
+}
+
 .field {
   min-width: 0;
 }
@@ -441,26 +449,94 @@ td.field-label {
 }
 
 td.field-range {
-  color: var(--muted);
+  background: #f5f5f5;
+  color: var(--text);
   font-size: 12px;
   white-space: nowrap;
 }
 
-td.field-value {
-  font-weight: 700;
-  color: #0f172a;
+td.field-value.filled {
+  background: transparent;
+  color: var(--green);
 }
 
-td.field-value.filled {
-  background: #f0fdf4;
+.out-of-range {
+  background: var(--red-bg);
+  color: var(--red) !important;
 }
 
 td.field-value.empty-val {
   color: #cbd5e1;
 }
 
+/* highlight values outside reference range */
+.out-of-range {
+  background: var(--red-bg);
+  color: var(--red) !important;
+}
+
+/* pending values (couldn't fetch / pending status) */
+.pending {
+  background: var(--amber-bg);
+  color: var(--amber) !important;
+}
+
 .unmapped-box {
   margin-top: 22px;
+}
+
+/* Pending dropdown styles */
+.pending-dropdown { margin-bottom: 12px; }
+.pending-btn {
+  background: #f59e0b;
+  color: #fff;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.pending-tabs { margin-bottom: 12px; position: relative; }
+.pending-tabs-head { display: flex; gap: 8px; align-items: center; }
+.pending-tabs .tab-btn { padding: 8px 12px; border-radius: 8px; border: 1px solid transparent; cursor: pointer; background: #fff; }
+.pending-tabs .tab-btn.active { background: #f59e0b; color: #fff; border-color: #f59e0b; }
+.pending-tabs .tab-btn.cancel { background: #fff; }
+.pending-tabs .tab-btn.cancel.active { background: #fb923c; color: #fff; border-color: #fb923c; }
+.pending-tabs .tab-btn .count { margin-left: 8px; background: rgba(0,0,0,0.08); padding: 2px 6px; border-radius: 999px; font-weight:700; }
+.pending-list { margin-top: 8px; background: #fff; border: 1px solid var(--border); box-shadow: 0 6px 18px rgba(15,23,42,0.12); width: 100%; max-height: 260px; overflow: auto; border-radius: 8px; }
+.pending-item { padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; cursor: pointer; }
+.pending-item:hover { background: #f8fafc; }
+
+/* Print helpers: hide on-screen print tables, show only when printing */
+.chart-print { display: none; }
+
+@media print {
+  body{background: none}
+  /* hide the on-screen single wide chart, show chunked print tables */
+  table.chart:not(.chart-print-table) { display: none !important; }
+  .chart-print { display: block !important; }
+
+  /* hide the unmapped section completely when printing */
+  .unmapped-box { display: none !important; }
+  .unmapped-box * { display: none !important; }
+
+  /* ensure each print chunk starts on a new page, but don't add a blank final page */
+  .chart-print-page { page-break-after: always; margin-bottom: 12px; }
+  .chart-print-page:last-child { page-break-after: auto; }
+  .chart-print-page { page-break-inside: auto; break-inside: auto; }
+
+  /* reduce page chrome and whitespace in print */
+  .page { padding: 8px !important; }
+  .chart-card-body { padding: 8px !important; }
+  .chart-card { box-shadow: none !important; border: none !important; }
+
+  /* make printed tables more compact */
+  .chart-print-table { display: table !important; width: 100%; border-collapse: collapse; font-size: 10px; }
+  .chart-print-table th, .chart-print-table td { border: 1px solid #888; padding: 4px 6px; line-height: 1.2; }
+  .chart-print-table th { font-size: 10px; }
+  .chart-print-table td { font-size: 9.5px; }
+  .chart-print-table td.field-label,
+  .chart-print-table td.field-range { white-space: nowrap; }
 }
 
 table.unmapped {
