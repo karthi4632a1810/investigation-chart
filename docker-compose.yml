@@ -7,9 +7,11 @@ services:
     env_file:
       - ./server/.env
     environment:
-      PORT: 3001
+      PORT: 2000
+    ports:
+      - "2000:2000"
     expose:
-      - "3001"
+      - "2000"
     restart: unless-stopped
     networks:
       - app-network
@@ -20,7 +22,7 @@ services:
       dockerfile: Dockerfile
     container_name: patient-investigation-client
     ports:
-      - "8080:80"
+      - "1000:80"
     depends_on:
       - server
     restart: unless-stopped
