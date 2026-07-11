@@ -1,10 +1,12 @@
 services:
   server:
     container_name: invest_server
+    ports:
+      - "2000:2000"
     restart: unless-stopped
 
   client:
     container_name: invest_client
     ports:
-      - "8094:80"
+      - "1000:80"
     restart: unless-stopped
