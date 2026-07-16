@@ -20,6 +20,7 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [activeTab, setActiveTab] = useState('chart');
   const [detailOrderId, setDetailOrderId] = useState(null);
+  const [editOpen, setEditOpen] = useState(false);
 
   useEffect(() => {
     fetchHospitalConfig()
@@ -48,6 +49,17 @@ export default function App() {
 
   return (
     <div className="page">
+      {hasData && activeTab === 'chart' && (
+        <button
+          type="button"
+          className="chart-edit-fab no-print"
+          title="Edit groups and test names"
+          onClick={() => setEditOpen(true)}
+        >
+          ✎
+        </button>
+      )}
+
       <h2>Lab Result Search &amp; Investigation Chart</h2>
 
       <SearchForm
@@ -93,7 +105,10 @@ export default function App() {
             <button
               type="button"
               className={`tab-btn ${activeTab === 'raw' ? 'active' : ''}`}
-              onClick={() => setActiveTab('raw')}
+              onClick={() => {
+                setActiveTab('raw');
+                setEditOpen(false);
+              }}
             >
               📄 Raw Results
             </button>
@@ -104,6 +119,8 @@ export default function App() {
               hospital={hospital}
               regNo={result.regNo}
               chart={result.chart}
+              editOpen={editOpen}
+              onEditOpenChange={setEditOpen}
             />
           )}
 

@@ -404,6 +404,232 @@ table.results tbody tr:hover {
   border-radius: 10px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   overflow: hidden;
+  position: relative;
+}
+
+.chart-edit-fab {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 90;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+}
+
+.chart-edit-fab:hover {
+  background: #f8fafc;
+  color: var(--primary-dark);
+  border-color: #bfdbfe;
+}
+
+.chart-toolbar {
+  display: none;
+}
+
+.chart-icon-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.chart-icon-btn:hover {
+  background: #f8fafc;
+  color: var(--primary-dark);
+  border-color: #bfdbfe;
+}
+
+.chart-edit-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.25);
+  z-index: 1100;
+}
+
+.chart-edit-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: min(380px, 100vw);
+  height: 100vh;
+  background: #fff;
+  z-index: 1101;
+  box-shadow: -12px 0 40px rgba(15, 23, 42, 0.18);
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-edit-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chart-edit-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.chart-edit-panel-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.chart-edit-panel-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+  background: #f8fafc;
+}
+
+.chart-edit-group {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.chart-edit-group.drop-target {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.chart-edit-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #dbeafe;
+}
+
+.chart-edit-group-input {
+  flex: 1;
+  border: 1px solid transparent;
+  background: transparent;
+  font-weight: 800;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #1e3a8a;
+  padding: 6px 8px;
+  border-radius: 6px;
+  outline: none;
+}
+
+.chart-edit-group-input:focus {
+  border-color: #93c5fd;
+  background: #fff;
+}
+
+.chart-edit-fields {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  min-height: 12px;
+  transition: background 0.15s ease;
+}
+
+.chart-edit-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.chart-edit-field:hover {
+  background: #f1f5f9;
+}
+
+.chart-edit-field-input {
+  flex: 1;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+  background: #fff;
+}
+
+.chart-edit-field-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.drag-handle {
+  color: #94a3b8;
+  font-size: 11px;
+  letter-spacing: -1px;
+  user-select: none;
+  flex-shrink: 0;
+  cursor: grab;
+  padding: 4px 2px;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+/* SortableJS smooth drag states */
+.sortable-ghost {
+  opacity: 0.35;
+  background: #dbeafe !important;
+  border: 1px dashed #60a5fa !important;
+  box-shadow: none !important;
+}
+
+.sortable-chosen {
+  background: #fff !important;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  z-index: 20;
+}
+
+.sortable-drag,
+.sortable-fallback {
+  opacity: 0.95 !important;
+  background: #fff !important;
+  border-radius: 8px !important;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18) !important;
+  cursor: grabbing !important;
+  z-index: 9999 !important;
+  /* no transform/scale and no transition — clone must track cursor 1:1 */
+  transition: none !important;
+}
+
+.chart-edit-field.sortable-ghost,
+.chart-edit-group.sortable-ghost {
+  pointer-events: none;
 }
 
 .chart-card-body {
@@ -519,6 +745,14 @@ td.field-value.empty-val {
   /* hide the unmapped section completely when printing */
   .unmapped-box { display: none !important; }
   .unmapped-box * { display: none !important; }
+
+  .no-print,
+  .chart-toolbar,
+  .chart-edit-fab,
+  .chart-edit-panel,
+  .chart-edit-backdrop {
+    display: none !important;
+  }
 
   /* ensure each print chunk starts on a new page, but don't add a blank final page */
   .chart-print-page { page-break-after: always; margin-bottom: 12px; }

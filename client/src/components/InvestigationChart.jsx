@@ -1,4 +1,13 @@
-import { Fragment } from 'react';
+import { Fragment, useEffect, useState } from 'react';
+import ChartEditPanel from './ChartEditPanel';
+import {
+  buildLayoutFromTemplate,
+  clearSavedLayout,
+  loadSavedLayout,
+  mergeLayoutWithTemplate,
+  saveLayout,
+  sectionsWithValuesFromLayout,
+} from '../utils/chartLayout';
 
 function PatientField({ label, value }) {
   const hasVal = String(value || '').trim() !== '';
@@ -8,22 +17,6 @@ function PatientField({ label, value }) {
       <b className={hasVal ? '' : 'blank'}>{hasVal ? value : '—'}</b>
     </div>
   );
-}
-
-function fieldHasValue(chartValues, fieldId, dates) {
-  return dates.some((d) => {
-    const val = chartValues[fieldId]?.[d];
-    return val != null && String(val).trim() !== '';
-  });
-}
-
-function sectionsWithValues(template, chartValues, dates) {
-  return Object.entries(template)
-    .map(([sectionName, fields]) => ({
-      sectionName,
-      fields: fields.filter((field) => fieldHasValue(chartValues, field.id, dates)),
-    }))
-    .filter((section) => section.fields.length > 0);
 }
 
 function ValueCell({ val, range, isOutOfRange, isPending }) {
@@ -65,12 +58,29 @@ function ChartBody({ sections, dates, chartValues, isOutOfRange, isPending }) {
   ));
 }
 
-export default function InvestigationChart({ hospital, regNo, chart }) {
+export default function InvestigationChart({
+  hospital,
+  regNo,
+  chart,
+  editOpen = false,
+  onEditOpenChange,
+}) {
+  const [layout, setLayout] = useState([]);
+  const setEditOpen = onEditOpenChange || (() => {});
+
+  const template = chart?.template;
+
+  useEffect(() => {
+    if (!template) return;
+    const saved = loadSavedLayout();
+    setLayout(mergeLayoutWithTemplate(saved, template));
+  }, [template]);
+
   if (!chart?.chartDates?.length) {
     return <div className="empty">Could not build the chart (no Req No / dates detected).</div>;
   }
 
-  const { chartDates, chartValues, unmapped, patientMeta, template } = chart;
+  const { chartDates, chartValues, unmapped, patientMeta } = chart;
 
   function parseNumber(v) {
     const n = parseFloat(String(v).replace(/[^0-9.+\-eE]/g, ''));
@@ -102,7 +112,18 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
     return String(val).toLowerCase().includes('pending');
   }
 
-  const screenSections = sectionsWithValues(template, chartValues, chartDates);
+  function handleLayoutChange(next) {
+    setLayout(next);
+    saveLayout(next);
+  }
+
+  function handleReset() {
+    clearSavedLayout();
+    const fresh = buildLayoutFromTemplate(template);
+    setLayout(fresh);
+  }
+
+  const screenSections = sectionsWithValuesFromLayout(layout, chartValues, chartDates);
 
   const PRINT_CHUNK = 6;
   const dateChunks = [];
@@ -111,7 +132,7 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
   }
 
   return (
-    <div className="chart-card">
+    <div className={`chart-card ${editOpen ? 'chart-edit-open' : ''}`}>
       <div className="letterhead">
         <div className="letterhead-logo">
           {hospital?.logoPath && (
@@ -178,7 +199,7 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
 
         <div className="chart-print">
           {dateChunks.map((chunk, idx) => {
-            const printSections = sectionsWithValues(template, chartValues, chunk);
+            const printSections = sectionsWithValuesFromLayout(layout, chartValues, chunk);
             if (!printSections.length) return null;
 
             return (
@@ -241,6 +262,14 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
           </div>
         )}
       </div>
+
+      <ChartEditPanel
+        open={editOpen}
+        layout={layout}
+        onClose={() => setEditOpen(false)}
+        onChange={handleLayoutChange}
+        onReset={handleReset}
+      />
     </div>
   );
 }
