@@ -10,6 +10,61 @@ function PatientField({ label, value }) {
   );
 }
 
+function fieldHasValue(chartValues, fieldId, dates) {
+  return dates.some((d) => {
+    const val = chartValues[fieldId]?.[d];
+    return val != null && String(val).trim() !== '';
+  });
+}
+
+function sectionsWithValues(template, chartValues, dates) {
+  return Object.entries(template)
+    .map(([sectionName, fields]) => ({
+      sectionName,
+      fields: fields.filter((field) => fieldHasValue(chartValues, field.id, dates)),
+    }))
+    .filter((section) => section.fields.length > 0);
+}
+
+function ValueCell({ val, range, isOutOfRange, isPending }) {
+  const out = isOutOfRange(val, range);
+  const pending = isPending(val);
+  const classes = ['field-value'];
+  if (val) classes.push('filled');
+  else classes.push('empty-val');
+  if (out) classes.push('out-of-range');
+  if (pending) classes.push('pending');
+  return <td className={classes.join(' ')}>{val || '—'}</td>;
+}
+
+function ChartBody({ sections, dates, chartValues, isOutOfRange, isPending }) {
+  return sections.map(({ sectionName, fields }) => (
+    <Fragment key={sectionName}>
+      <tr className="section-row">
+        <td colSpan={2 + dates.length}>{sectionName}</td>
+      </tr>
+      {fields.map((field) => (
+        <tr key={field.id}>
+          <td className="field-label">{field.label}</td>
+          <td className="field-range">{field.range}</td>
+          {dates.map((d) => {
+            const val = chartValues[field.id]?.[d] ?? '';
+            return (
+              <ValueCell
+                key={d}
+                val={val}
+                range={field.range}
+                isOutOfRange={isOutOfRange}
+                isPending={isPending}
+              />
+            );
+          })}
+        </tr>
+      ))}
+    </Fragment>
+  ));
+}
+
 export default function InvestigationChart({ hospital, regNo, chart }) {
   if (!chart?.chartDates?.length) {
     return <div className="empty">Could not build the chart (no Req No / dates detected).</div>;
@@ -47,6 +102,8 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
     return String(val).toLowerCase().includes('pending');
   }
 
+  const screenSections = sectionsWithValues(template, chartValues, chartDates);
+
   const PRINT_CHUNK = 6;
   const dateChunks = [];
   for (let i = 0; i < chartDates.length; i += PRINT_CHUNK) {
@@ -79,7 +136,7 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
         </div>
         <div className="letterhead-title">
           <div className="chart-title-main">INVESTIGATION CHART</div>
-          <div className="chart-regno">Reg No: {regNo}</div>
+          <div className="chart-regno">UHID: {regNo}</div>
         </div>
       </div>
 
@@ -94,95 +151,61 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
       </div>
 
       <div className="chart-card-body">
-        <table className="chart">
-          <thead>
-            <tr>
-              <th style={{ minWidth: 160 }}>Parameter</th>
-              <th style={{ minWidth: 140 }}>Ref. Range</th>
-              {chartDates.map((d) => (
-                <th key={d}>{d}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(template).map(([sectionName, fields]) => (
-              <Fragment key={sectionName}>
-                <tr className="section-row">
-                  <td colSpan={2 + chartDates.length}>{sectionName}</td>
-                </tr>
-                {fields.map((field) => (
-                  <tr key={field.id}>
-                    <td className="field-label">{field.label}</td>
-                    <td className="field-range">{field.range}</td>
-                    {chartDates.map((d) => {
-                      const val = chartValues[field.id]?.[d] ?? '';
-                      const out = isOutOfRange(val, field.range);
-                      const pending = isPending(val);
-                      const classes = ['field-value'];
-                      if (val) classes.push('filled');
-                      else classes.push('empty-val');
-                      if (out) classes.push('out-of-range');
-                      if (pending) classes.push('pending');
-                      return (
-                        <td key={d} className={classes.join(' ')}>
-                          {val || '—'}
-                        </td>
-                      );
-                    })}
-                  </tr>
+        {screenSections.length === 0 ? (
+          <div className="empty">No mapped result values to show in the chart.</div>
+        ) : (
+          <table className="chart">
+            <thead>
+              <tr>
+                <th style={{ minWidth: 160 }}>Parameter</th>
+                <th style={{ minWidth: 140 }}>Ref. Range</th>
+                {chartDates.map((d) => (
+                  <th key={d}>{d}</th>
                 ))}
-              </Fragment>
-            ))}
-          </tbody>
-        </table>
+              </tr>
+            </thead>
+            <tbody>
+              <ChartBody
+                sections={screenSections}
+                dates={chartDates}
+                chartValues={chartValues}
+                isOutOfRange={isOutOfRange}
+                isPending={isPending}
+              />
+            </tbody>
+          </table>
+        )}
 
-        { /* print-only chunked tables: hidden on screen, visible in print */ }
         <div className="chart-print">
-          {dateChunks.map((chunk, idx) => (
-            <div key={idx} className="chart-print-page">
-              <table className="chart chart-print-table">
-                <thead>
-                  <tr>
-                    <th style={{ minWidth: 160 }}>Parameter</th>
-                    <th style={{ minWidth: 140 }}>Ref. Range</th>
-                    {chunk.map((d) => (
-                      <th key={d}>{d}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(template).map(([sectionName, fields]) => (
-                    <Fragment key={sectionName}>
-                      <tr className="section-row">
-                        <td colSpan={2 + chunk.length}>{sectionName}</td>
-                      </tr>
-                      {fields.map((field) => (
-                        <tr key={field.id}>
-                          <td className="field-label">{field.label}</td>
-                          <td className="field-range">{field.range}</td>
-                          {chunk.map((d) => {
-                            const val = chartValues[field.id]?.[d] ?? '';
-                            const out = isOutOfRange(val, field.range);
-                            const pending = isPending(val);
-                            const classes = ['field-value'];
-                            if (val) classes.push('filled');
-                            else classes.push('empty-val');
-                            if (out) classes.push('out-of-range');
-                            if (pending) classes.push('pending');
-                            return (
-                              <td key={d} className={classes.join(' ')}>
-                                {val || '—'}
-                              </td>
-                            );
-                          })}
-                        </tr>
+          {dateChunks.map((chunk, idx) => {
+            const printSections = sectionsWithValues(template, chartValues, chunk);
+            if (!printSections.length) return null;
+
+            return (
+              <div key={idx} className="chart-print-page">
+                <table className="chart chart-print-table">
+                  <thead>
+                    <tr>
+                      <th style={{ minWidth: 160 }}>Parameter</th>
+                      <th style={{ minWidth: 140 }}>Ref. Range</th>
+                      {chunk.map((d) => (
+                        <th key={d}>{d}</th>
                       ))}
-                    </Fragment>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <ChartBody
+                      sections={printSections}
+                      dates={chunk}
+                      chartValues={chartValues}
+                      isOutOfRange={isOutOfRange}
+                      isPending={isPending}
+                    />
+                  </tbody>
+                </table>
+              </div>
+            );
+          })}
         </div>
 
         {unmapped?.length > 0 && (

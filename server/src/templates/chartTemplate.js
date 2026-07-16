@@ -14,6 +14,37 @@ export function getChartTemplate() {
       { id: 'mch', label: 'MCH', range: '27-32 pg', match: ['MCH'] },
       { id: 'mchc', label: 'MCHC', range: '31.5-34.5%', match: ['MCHC'] },
       { id: 'plt', label: 'Platelets', range: '1.5-4.0 Lakhs', match: ['PLATELET COUNT'] },
+      { id: 'rdw', label: 'RDW-CV', range: '11.6-14 %', match: ['RDW-CV', 'RDW CV', 'RDW'] },
+      {
+        id: 'anc',
+        label: 'Abs. Neutrophil',
+        range: '2-7 10^3/µl',
+        match: ['ABSOLUTE NEUTROPHIL COUNT', 'ABS NEUTROPHIL COUNT', 'ANC'],
+      },
+      {
+        id: 'alc',
+        label: 'Abs. Lymphocyte',
+        range: '1-3 10^3/µl',
+        match: ['ABSOLUTE LYMPHOCYTE COUNT', 'ABS LYMPHOCYTE COUNT', 'ALC'],
+      },
+      {
+        id: 'aec',
+        label: 'Abs. Eosinophil',
+        range: '',
+        match: ['ABSOLUTE EOSINOPHIL COUNT', 'ABS EOSINOPHIL COUNT', 'AEC'],
+      },
+      {
+        id: 'amc',
+        label: 'Abs. Monocyte',
+        range: '',
+        match: ['ABSOLUTE MONOCYTE COUNT', 'ABS MONOCYTE COUNT', 'AMC'],
+      },
+      {
+        id: 'abc',
+        label: 'Abs. Basophil',
+        range: '',
+        match: ['ABSOLUTE BASOPHIL COUNT', 'ABS BASOPHIL COUNT', 'ABC'],
+      },
       { id: 'esr', label: 'ESR 1 hrs', range: '12-35 mm', match: ['ESR'] },
       { id: 'crp', label: 'CRP', range: '>6 mg/dl', match: ['CRP'] },
       { id: 'nlr', label: 'NLR', range: '1.0-3', match: ['NLR'] },
@@ -80,24 +111,104 @@ export function getChartTemplate() {
       { id: 'lhr', label: 'LDL/HDL Ratio', range: '3-5.1', match: ['LDL/HDL RATIO'] },
     ],
     'URINE ANALYSIS': [
-      { id: 'ucolour', label: 'Colour', range: 'Straw Yellow', match: ['COLOUR'] },
-      { id: 'uapp', label: 'Appearance', range: '', match: ['APPEARANCE'] },
-      { id: 'uph', label: 'pH', range: '4.6-8.0', match: ['PH'] },
-      { id: 'uprot', label: 'Protein', range: 'Negative', match: ['PROTEIN'] },
-      { id: 'uglu', label: 'Glucose', range: 'Negative', match: ['GLUCOSE'] },
-      { id: 'usg', label: 'Sp. Gravity', range: '1.016 to 1.025', match: ['SPECIFIC GRAVITY'] },
-      { id: 'uket', label: 'Ketone', range: 'Negative', match: ['KETONE'] },
-      { id: 'ubil', label: 'Bilirubin', range: 'Negative', match: ['BILIRUBIN'] },
-      { id: 'ublood', label: 'U.Blood', range: 'Negative', match: ['BLOOD'] },
-      { id: 'uleuko', label: 'Leukocytes', range: 'Negative', match: ['LEUKOCYTES'] },
-      { id: 'unit', label: 'Nitrite', range: '', match: ['NITRITE'] },
-      { id: 'uuro', label: 'Urobilinogen', range: '', match: ['UROBILINOGEN'] },
-      { id: 'urbc', label: 'RBC', range: 'Up to 5 cells / HPF', match: ['DEP-RBC'] },
-      { id: 'upus', label: 'Pus Cells', range: 'Up to 5 cells / HPF', match: ['DEP-PUS CELLS'] },
-      { id: 'ucast', label: 'Casts', range: 'Nil', match: ['DEP-CASTS'] },
-      { id: 'ucryst', label: 'Crystals', range: '', match: ['DEP-CRYSTALS'] },
-      { id: 'uepith', label: 'Epithelial Cells', range: '', match: ['DEP-EPITHELIAL CELLS'] },
-      { id: 'uother', label: 'Others', range: '', match: ['DEP-OTHERS'] },
+      {
+        id: 'ucolour',
+        label: 'Colour',
+        range: 'Straw Yellow',
+        match: ['COLOUR', 'URINE COLOUR', 'URINE COLOR', 'COLOR'],
+      },
+      {
+        id: 'uapp',
+        label: 'Appearance',
+        range: '',
+        match: ['APPEARANCE', 'URINE APPEARANCE'],
+      },
+      { id: 'uph', label: 'pH', range: '4.6-8.0', match: ['PH', 'URINE PH', 'URINE P H'] },
+      {
+        id: 'uprot',
+        label: 'Protein',
+        range: 'Negative',
+        match: ['PROTEIN', 'URINE PROTEIN'],
+      },
+      {
+        id: 'uglu',
+        label: 'Glucose',
+        range: 'Negative',
+        match: ['GLUCOSE', 'URINE GLUCOSE'],
+      },
+      {
+        id: 'usg',
+        label: 'Sp. Gravity',
+        range: '1.016 to 1.025',
+        match: ['SPECIFIC GRAVITY', 'URINE SPECIFIC GRAVITY', 'SP GRAVITY'],
+      },
+      { id: 'uket', label: 'Ketone', range: 'Negative', match: ['KETONE', 'URINE KETONE'] },
+      {
+        id: 'ubil',
+        label: 'Bilirubin',
+        range: 'Negative',
+        match: ['BILIRUBIN', 'URINE BILIRUBIN'],
+      },
+      {
+        id: 'ublood',
+        label: 'U.Blood',
+        range: 'Negative',
+        match: ['BLOOD', 'URINE BLOOD', 'U.BLOOD'],
+      },
+      {
+        id: 'uleuko',
+        label: 'Leukocytes',
+        range: 'Negative',
+        match: ['LEUKOCYTES', 'URINE LEUKOCYTES'],
+      },
+      { id: 'unit', label: 'Nitrite', range: '', match: ['NITRITE', 'URINE NITRITE'] },
+      {
+        id: 'uuro',
+        label: 'Urobilinogen',
+        range: '',
+        match: ['UROBILINOGEN', 'URINE UROBILINOGEN'],
+      },
+      {
+        id: 'urbc',
+        label: 'RBC',
+        range: 'Up to 5 cells / HPF',
+        match: ['DEP-RBC', 'URINE DEP-RBC', 'URINE RBC', 'DEP RBC'],
+      },
+      {
+        id: 'upus',
+        label: 'Pus Cells',
+        range: 'Up to 5 cells / HPF',
+        match: ['DEP-PUS CELLS', 'URINE DEP-PUS CELLS', 'URINE PUS CELLS', 'DEP PUS CELLS'],
+      },
+      {
+        id: 'ucast',
+        label: 'Casts',
+        range: 'Nil',
+        match: ['DEP-CASTS', 'URINE DEP-CASTS', 'URINE CASTS', 'DEP CASTS'],
+      },
+      {
+        id: 'ucryst',
+        label: 'Crystals',
+        range: '',
+        match: ['DEP-CRYSTALS', 'URINE DEP-CRYSTALS', 'URINE CRYSTALS', 'DEP CRYSTALS'],
+      },
+      {
+        id: 'uepith',
+        label: 'Epithelial Cells',
+        range: '',
+        match: [
+          'DEP-EPITHELIAL CELLS',
+          'URINE DEP-EPITHELIAL CELLS',
+          'URINE EPITHELIAL CELLS',
+          'DEP EPITHELIAL CELLS',
+        ],
+      },
+      {
+        id: 'uother',
+        label: 'Others',
+        range: '',
+        match: ['DEP-OTHERS', 'URINE DEP-OTHERS', 'URINE OTHERS', 'DEP OTHERS'],
+      },
     ],
     ANEMIA: [
       { id: 'iron', label: 'S.Iron', range: '70-80 mcg/dl', match: ['SERUM IRON', 'IRON'] },
@@ -140,7 +251,8 @@ export function buildChartIndexes(template) {
         range: field.range,
       };
       for (const alias of field.match) {
-        matchIndex[alias] = field.id;
+        const key = normalizeTestKey(alias);
+        if (key) matchIndex[key] = field.id;
       }
     }
   }
@@ -152,8 +264,27 @@ export function normalizeTestKey(s) {
   let text = String(s);
   text = text.replace(/<\/a>\s*$/i, '');
   text = text.replace(/\s*\[[^\]]*\]\s*$/, '');
+  text = text.replace(/\.+$/g, '');
   text = text.trim().replace(/[.\s]+$/, '');
   text = text.replace(/\s*-\s*/g, '-');
   text = text.replace(/\s+/g, ' ');
   return text.trim().toUpperCase();
+}
+
+/** Try exact key, then drop common panel prefixes (URINE / SERUM / BLOOD). */
+export function resolveFieldId(matchIndex, rawTestName) {
+  const key = normalizeTestKey(rawTestName);
+  if (!key) return null;
+  if (matchIndex[key]) return matchIndex[key];
+
+  const stripped = key
+    .replace(/^(URINE|SERUM|BLOOD|PLASMA|WHOLE BLOOD)\s+/, '')
+    .replace(/^DEP\s+/, 'DEP-');
+  if (stripped && matchIndex[stripped]) return matchIndex[stripped];
+
+  // "URINE DEP-RBC" → "DEP-RBC"
+  const depOnly = key.replace(/^URINE\s+/, '');
+  if (depOnly !== key && matchIndex[depOnly]) return matchIndex[depOnly];
+
+  return null;
 }

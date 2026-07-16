@@ -1,0 +1,328 @@
+{
+  "version": 1,
+  "exportedAt": "2026-07-11T10:50:00.000Z",
+  "workspace": {
+    "name": "MAPIMS Clinical Apps",
+    "slug": "mapims-clinical"
+  },
+  "includeSecrets": true,
+  "projects": [
+    {
+      "name": "Investigation Chart",
+      "description": "Lab result search and auto-generated Investigation Chart. React + Vite frontend, Node.js Express API, Docker deploy for invest.mapims.edu.in",
+      "client": "MAPIMS / Adhiparasakthi Hospitals",
+      "backend": "Node.js (Express)",
+      "frontend": "React + Vite",
+      "database": "— (EMR QueryBuilder / LabResultHis)",
+      "docker": true,
+      "branch": "production",
+      "remoteBranches": ["main", "production"],
+      "repoUrl": "github.com/karthi4632a1810/investigation-chart",
+      "status": "running",
+      "tags": ["lab", "investigation", "emr", "docker", "mapims"],
+      "starred": true,
+      "envVars": [
+        {
+          "name": "PORT",
+          "value": "2000",
+          "environment": "development",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "EMR_LOGIN_URL",
+          "value": "https://emr.mapims.edu.in/BB15SE/wsLogin.asmx/chkLoginNew",
+          "environment": "development",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "EMR_LAB_URL_TEMPLATE",
+          "value": "https://emr.mapims.edu.in/BB15SE/Lab/LabResultHis.aspx?action=Search&Orderid=",
+          "environment": "development",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "EMR_QUERY_BUILDER_URL",
+          "value": "https://emr.mapims.edu.in/BB15SE/QueryBuilder/wsQueryBuilder.asmx/Getdataset1",
+          "environment": "development",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "EMR_USERNAME",
+          "value": "your_username",
+          "environment": "development",
+          "file": "server/.env",
+          "sensitive": true
+        },
+        {
+          "name": "EMR_PASSWORD",
+          "value": "your_password",
+          "environment": "development",
+          "file": "server/.env",
+          "sensitive": true
+        },
+        {
+          "name": "EMR_LOG_OPT",
+          "value": "2",
+          "environment": "development",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "HOSPITAL_LOGO_PATH",
+          "value": "https://mh.mapims.edu.in/static/images/logo.png",
+          "environment": "development",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "HOSPITAL_NAME_EN",
+          "value": "Adhiparasakthi Hospitals",
+          "environment": "development",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "HOSPITAL_NAME_TA",
+          "value": "ஆதிபராசக்தி மருத்துவமனை",
+          "environment": "development",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "HOSPITAL_ADDRESS",
+          "value": "A clinical division of Melmaruvathur Adhiparasakthi Institute of Medical Sciences and Research<br>G.S.T. Road, Melmaruvathur - 603 319. Phone: 044-2752 8528. Toll Free: 1800 599 0999. Website: www.mapims.org",
+          "environment": "development",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "PORT",
+          "value": "2000",
+          "environment": "production",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "EMR_LOGIN_URL",
+          "value": "https://emr.mapims.edu.in/BB15SE/wsLogin.asmx/chkLoginNew",
+          "environment": "production",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "EMR_LAB_URL_TEMPLATE",
+          "value": "https://emr.mapims.edu.in/BB15SE/Lab/LabResultHis.aspx?action=Search&Orderid=",
+          "environment": "production",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "EMR_QUERY_BUILDER_URL",
+          "value": "https://emr.mapims.edu.in/BB15SE/QueryBuilder/wsQueryBuilder.asmx/Getdataset1",
+          "environment": "production",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "EMR_USERNAME",
+          "value": "your_username",
+          "environment": "production",
+          "file": "server/.env",
+          "sensitive": true
+        },
+        {
+          "name": "EMR_PASSWORD",
+          "value": "your_password",
+          "environment": "production",
+          "file": "server/.env",
+          "sensitive": true
+        },
+        {
+          "name": "EMR_LOG_OPT",
+          "value": "2",
+          "environment": "production",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "HOSPITAL_LOGO_PATH",
+          "value": "https://mh.mapims.edu.in/static/images/logo.png",
+          "environment": "production",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "HOSPITAL_NAME_EN",
+          "value": "Adhiparasakthi Hospitals",
+          "environment": "production",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "HOSPITAL_NAME_TA",
+          "value": "ஆதிபராசக்தி மருத்துவமனை",
+          "environment": "production",
+          "file": "server/.env",
+          "sensitive": false
+        },
+        {
+          "name": "HOSPITAL_ADDRESS",
+          "value": "A clinical division of Melmaruvathur Adhiparasakthi Institute of Medical Sciences and Research<br>G.S.T. Road, Melmaruvathur - 603 319. Phone: 044-2752 8528. Toll Free: 1800 599 0999. Website: www.mapims.org",
+          "environment": "production",
+          "file": "server/.env",
+          "sensitive": false
+        }
+      ],
+      "credentials": [
+        {
+          "name": "EMR Lab Login",
+          "category": "EMR / API",
+          "username": "your_username",
+          "password": "your_password",
+          "url": "https://emr.mapims.edu.in/BB15SE",
+          "notes": "Used by server for wsLogin + LabResultHis session. Set real values in server/.env on the host.",
+          "expiresAt": null
+        },
+        {
+          "name": "Production Server",
+          "category": "SSH / Host",
+          "username": "mapims",
+          "password": "",
+          "url": "192.168.101.116",
+          "notes": "App path: ~/investigation-chart. Frontend :1000, Backend :2000. Domain: invest.mapims.edu.in",
+          "expiresAt": null
+        }
+      ],
+      "commands": [
+        {
+          "name": "Install All",
+          "description": "Install server + client npm dependencies",
+          "command": "npm run install:all",
+          "category": "development",
+          "starred": true
+        },
+        {
+          "name": "Start Dev",
+          "description": "Run API + Vite together",
+          "command": "npm run dev",
+          "category": "development",
+          "starred": true
+        },
+        {
+          "name": "Dev Server Only",
+          "description": "Run Express API with watch",
+          "command": "npm run dev:server",
+          "category": "development",
+          "starred": false
+        },
+        {
+          "name": "Dev Client Only",
+          "description": "Run Vite frontend",
+          "command": "npm run dev:client",
+          "category": "development",
+          "starred": false
+        },
+        {
+          "name": "Docker Up",
+          "description": "Build and start client (1000) + server (2000)",
+          "command": "sudo docker compose up --build -d",
+          "category": "docker",
+          "starred": true
+        },
+        {
+          "name": "Docker Prod Up",
+          "description": "Start with production compose overrides",
+          "command": "sudo docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d",
+          "category": "docker",
+          "starred": true
+        },
+        {
+          "name": "Docker Down",
+          "description": "Stop compose stack",
+          "command": "sudo docker compose down",
+          "category": "docker",
+          "starred": false
+        },
+        {
+          "name": "Docker Logs",
+          "description": "Follow container logs",
+          "command": "sudo docker compose logs -f",
+          "category": "docker",
+          "starred": false
+        },
+        {
+          "name": "Health Check",
+          "description": "Hit backend health endpoint",
+          "command": "curl -s http://127.0.0.1:2000/api/health",
+          "category": "deployment",
+          "starred": false
+        },
+        {
+          "name": "Reload Host Nginx",
+          "description": "Test and reload invest.mapims.edu.in site",
+          "command": "sudo nginx -t && sudo systemctl reload nginx",
+          "category": "deployment",
+          "starred": false
+        }
+      ],
+      "yamlFiles": [
+        {
+          "name": "docker-compose.yml",
+          "content": "services:\n  server:\n    build:\n      context: ./server\n      dockerfile: Dockerfile\n    container_name: patient-investigation-server\n    env_file:\n      - ./server/.env\n    environment:\n      PORT: 2000\n    ports:\n      - \"2000:2000\"\n    expose:\n      - \"2000\"\n    restart: unless-stopped\n    networks:\n      - app-network\n\n  client:\n    build:\n      context: ./client\n      dockerfile: Dockerfile\n    container_name: patient-investigation-client\n    ports:\n      - \"1000:80\"\n    depends_on:\n      - server\n    restart: unless-stopped\n    networks:\n      - app-network\n\nnetworks:\n  app-network:\n    driver: bridge\n"
+        },
+        {
+          "name": "docker-compose.prod.yml",
+          "content": "services:\n  server:\n    container_name: invest_server\n    ports:\n      - \"2000:2000\"\n    restart: unless-stopped\n\n  client:\n    container_name: invest_client\n    ports:\n      - \"1000:80\"\n    restart: unless-stopped\n"
+        }
+      ],
+      "notes": [
+        {
+          "title": "Local Development",
+          "content": "## Setup\n1. Copy `server/.env.example` → `server/.env` and set EMR credentials\n2. `npm run install:all`\n3. `npm run dev`\n\n- Frontend: http://localhost:5173 (proxies `/api` → `:2000`)\n- API: http://localhost:2000",
+          "tag": "development"
+        },
+        {
+          "title": "Docker Deploy (192.168.101.116)",
+          "content": "## Deploy\n1. Clone/pull `production` into `~/investigation-chart`\n2. Ensure `server/.env` exists with real EMR credentials\n3. `sudo docker compose up --build -d`\n4. Open http://192.168.101.116:1000\n\n| Service | Port |\n|---------|------|\n| Frontend (nginx) | **1000** |\n| Backend (Express) | **2000** |\n\nClient nginx proxies `/api` → `server:2000` on the Docker network.",
+          "tag": "deployment"
+        },
+        {
+          "title": "Domain: invest.mapims.edu.in",
+          "content": "## Host nginx\n1. Copy `deploy/nginx/invest.mapims.edu.in.conf` to `/etc/nginx/sites-available/`\n2. Enable site + `nginx -t` + reload\n3. Upstream points to `127.0.0.1:1000`\n4. Optional SSL: use `invest.mapims.edu.in.ssl.conf` after certbot\n\nA record should already point to the server.",
+          "tag": "deployment"
+        },
+        {
+          "title": "API Endpoints",
+          "content": "- `GET /api/health`\n- `GET /api/config/hospital`\n- `POST /api/search` `{ regNo, fromDate, toDate }`\n- `GET /api/detail/:orderid`",
+          "tag": "api"
+        }
+      ],
+      "files": [
+        {
+          "name": "server/.env.example",
+          "type": "ENV",
+          "sizeBytes": 720
+        },
+        {
+          "name": "deploy/nginx/invest.mapims.edu.in.conf",
+          "type": "NGINX",
+          "sizeBytes": 2200
+        },
+        {
+          "name": "deploy/nginx/invest.mapims.edu.in.ssl.conf",
+          "type": "NGINX",
+          "sizeBytes": 1400
+        },
+        {
+          "name": "client/nginx.conf",
+          "type": "NGINX",
+          "sizeBytes": 560
+        }
+      ]
+    }
+  ]
+}

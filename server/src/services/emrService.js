@@ -12,7 +12,7 @@ import {
 import {
   buildChartIndexes,
   getChartTemplate,
-  normalizeTestKey,
+  resolveFieldId,
 } from '../templates/chartTemplate.js';
 import { sortChartDates } from '../utils/dateUtils.js';
 
@@ -235,9 +235,8 @@ export async function buildInvestigationChart(searchData) {
     for (const dr of detailRows) {
       if (dr.section) continue;
 
-      const key = normalizeTestKey(dr.test);
-      if (matchIndex[key]) {
-        const fieldId = matchIndex[key];
+      const fieldId = resolveFieldId(matchIndex, dr.test);
+      if (fieldId) {
         if (!chartValues[fieldId]) chartValues[fieldId] = {};
         chartValues[fieldId][datePart] = dr.value;
       } else {
