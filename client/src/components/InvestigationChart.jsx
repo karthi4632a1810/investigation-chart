@@ -113,11 +113,19 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
 
               if (activeFields.length === 0) return null;
 
+              const isIndividualSection =
+                !sectionName ||
+                sectionName === 'INDIVIDUAL TESTS' ||
+                sectionName === 'OTHER TESTS' ||
+                sectionName === 'STANDALONE';
+
               return (
                 <Fragment key={sectionName}>
-                  <tr className="section-row">
-                    <td colSpan={2 + chartDates.length}>{sectionName}</td>
-                  </tr>
+                  {!isIndividualSection && (
+                    <tr className="section-row">
+                      <td colSpan={2 + chartDates.length}>{sectionName}</td>
+                    </tr>
+                  )}
                   {activeFields.map((field) => (
                     <tr key={field.id}>
                       <td className="field-label">{field.label}</td>

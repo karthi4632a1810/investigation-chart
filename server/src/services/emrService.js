@@ -153,30 +153,95 @@ export async function getLabDetail(orderId) {
   };
 }
 
+const DEPARTMENTS = new Set([
+  'HAEMATOLOGY',
+  'BIOCHEMISTRY',
+  'CLINICALPATHOLOGY',
+  'CLINICAL PATHOLOGY',
+  'SEROLOGY',
+  'MICROBIOLOGY',
+  'HISTOPATHOLOGY',
+  'CYTOLOGY',
+  'MOLECULAR BIOLOGY',
+  'IMMUNOLOGY',
+  'BLOOD BANK',
+]);
+
+function isDepartmentName(name) {
+  if (!name) return true;
+  const clean = String(name).trim().toUpperCase().replace(/[^A-Z]/g, '');
+  return DEPARTMENTS.has(clean) || DEPARTMENTS.has(String(name).trim().toUpperCase());
+}
+
 let dynamicTestGroups = null;
 
 async function fetchDynamicTestGroups() {
   if (dynamicTestGroups) return dynamicTestGroups;
   try {
+    const query = `Use KMCH_Lab;
+WITH ProcHierarchy AS (
+    SELECT 
+        p.iProc_id AS TestId,
+        p.cProc_Name AS TestName,
+        p.iProc_id AS PkgId,
+        p.cProc_Name AS PackageName,
+        0 AS Depth
+    FROM Mast_Proc p
+
+    UNION ALL
+
+    SELECT 
+        ph.TestId,
+        ph.TestName,
+        parent.iProc_id AS PkgId,
+        parent.cProc_Name AS PackageName,
+        ph.Depth + 1 AS Depth
+    FROM ProcHierarchy ph
+    JOIN Mast_SubProc sp ON ph.PkgId = sp.iProc_id
+    JOIN Mast_Proc parent ON sp.iReports_To = parent.iProc_id
+    WHERE sp.bActive = 1
+)
+SELECT 
+    p.cProc_Name AS TestName, 
+    ph.PackageName AS CategoryName
+FROM Mast_Proc p
+JOIN (
+    SELECT TestId, PackageName, Depth 
+    FROM (
+        SELECT TestId, PackageName, Depth, 
+               ROW_NUMBER() OVER(PARTITION BY TestId ORDER BY Depth DESC) as rn 
+        FROM ProcHierarchy 
+        WHERE Depth > 0
+    ) t 
+    WHERE rn = 1
+) ph ON p.iProc_id = ph.TestId`;
+
     const payload = {
-      strQuery: "Use KMCH_Lab; SELECT p.cProc_Name, g.cGroup_Name FROM Mast_Proc p JOIN Proc_Group g ON p.iProc_Group_id = g.iProc_Group_id",
-      strCon: "BB_CONSTR"
+      strQuery: query,
+      strCon: 'BB_CONSTR',
     };
     const response = await axios.post(config.emr.retDatatableUrl, payload, {
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
     });
     const records = JSON.parse(response.data.d);
     dynamicTestGroups = {};
     for (const rec of records) {
-      if (rec.cProc_Name && rec.cGroup_Name) {
-        const key = normalizeTestKey(rec.cProc_Name);
-        dynamicTestGroups[key] = rec.cGroup_Name.trim().toUpperCase();
+      if (rec.TestName && rec.CategoryName && !isDepartmentName(rec.CategoryName)) {
+        const key = normalizeTestKey(rec.TestName);
+        const cat = rec.CategoryName.trim().toUpperCase();
+        dynamicTestGroups[key] = cat;
+
+        if (key.includes('TOTAL BILIRUBIN')) {
+          dynamicTestGroups[key.replace('TOTAL BILIRUBIN', 'BILIRUBIN - TOTAL')] = cat;
+        } else if (key.includes('BILIRUBIN - TOTAL')) {
+          dynamicTestGroups[key.replace('BILIRUBIN - TOTAL', 'TOTAL BILIRUBIN')] = cat;
+        }
       }
     }
-    console.log(`Successfully fetched ${Object.keys(dynamicTestGroups).length} dynamic test groups.`);
+    console.log(`Successfully fetched ${Object.keys(dynamicTestGroups).length} dynamic test package groups.`);
     return dynamicTestGroups;
   } catch (err) {
-    console.error("Failed to fetch dynamic test groups:", err.message);
+    console.error('Failed to fetch dynamic test groups:', err.message);
     if (err.response) console.error(err.response.data);
     return {};
   }
@@ -289,25 +354,30 @@ export async function buildInvestigationChart(searchData) {
         searchKey = 'HIV I & II RAPID';
       }
 
-      // 1. Detailed Grouping from RETDatatable using test name
-      let finalCategory = dynGroups[searchKey] || dynGroups[key] || dynGroups[searchKey.replace(/\s+/g, '')];
+      // 1. Detailed Grouping from RETDatatable using package name / test name
+      let finalCategory = dynGroups[key] || dynGroups[searchKey] || dynGroups[searchKey.replace(/\s+/g, '')];
 
       if (!finalCategory && key.includes('COLOUR')) {
         console.log(`Failed to find category for key: '${key}', searchKey: '${searchKey}'`);
       }
 
-      // 2. Fallback to bracketed category
+      // 2. Fallback to bracketed package name from EMR query (if not a department name)
       if (!finalCategory) {
-        finalCategory = testCategoryMap[`${orderid}_${searchKey}`] || testCategoryMap[`${orderid}_${key}`];
+        const bracketCat = testCategoryMap[`${orderid}_${searchKey}`] || testCategoryMap[`${orderid}_${key}`];
+        if (bracketCat && !isDepartmentName(bracketCat)) {
+          finalCategory = bracketCat;
+        }
       }
 
-      // 3. Fallback to current HTML section category
+      // 3. Fallback to current HTML section category ONLY if not a department name
       if (!finalCategory) {
-        finalCategory = currentCategory;
+        if (currentCategory && !isDepartmentName(currentCategory)) {
+          finalCategory = currentCategory;
+        }
       }
 
-      if (!finalCategory || finalCategory === 'OTHER TESTS') {
-        finalCategory = 'OTHER TESTS';
+      if (!finalCategory || isDepartmentName(finalCategory) || finalCategory === 'OTHER TESTS' || finalCategory === 'INDIVIDUAL TESTS') {
+        finalCategory = '';
       }
 
       if (!finalTemplate[finalCategory]) finalTemplate[finalCategory] = [];
