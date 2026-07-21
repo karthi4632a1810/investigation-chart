@@ -9,11 +9,7 @@ import {
   normCol,
   parseResultTableToArray,
 } from '../utils/htmlParser.js';
-import {
-  buildChartIndexes,
-  getChartTemplate,
-  normalizeTestKey,
-} from '../templates/chartTemplate.js';
+import { normalizeTestKey } from '../templates/chartTemplate.js';
 import { sortChartDates } from '../utils/dateUtils.js';
 
 function createClient() {
@@ -32,7 +28,14 @@ export async function doLogin(client) {
       { headers: { 'Content-Type': 'application/json; charset=UTF-8' } },
     );
 
-    if (data?.d && data.d !== '' && data.d !== '0' && data.d !== '-1') {
+    let resultValue = data?.d;
+    try {
+      if (typeof resultValue === 'string') {
+        resultValue = JSON.parse(resultValue);
+      }
+    } catch(e) {}
+    
+    if (resultValue && resultValue !== '' && resultValue !== '0' && resultValue !== '-1' && resultValue !== 0 && resultValue !== -1) {
       return { ok: true, raw: data };
     }
     return { ok: false, raw: data };
@@ -76,7 +79,7 @@ export async function fetchSearchResults(regNo, fromDate, toDate) {
     const rows = json?.d ? JSON.parse(json.d) : [];
     return { ok: true, data: Array.isArray(rows) ? rows : [] };
   } catch (error) {
-    return { ok: false, error: error.message };
+    return { ok: false, error: error.response?.data ? JSON.stringify(error.response.data) : error.message };
   }
 }
 
@@ -86,9 +89,9 @@ export function extractPatientMeta(rows, cols) {
     age: ['age'],
     sex: ['sex', 'gender'],
     bed: ['bedno', 'bed'],
-    ip: ['ipno', 'ipnumber', 'ip'],
+    ip: ['ipno', 'ipnumber', 'ip', 'ipopot'],
     ward: ['ward'],
-    unit: ['unit'],
+    unit: ['unit', 'orderingdepartment', 'dept', 'department'],
   };
 
   const found = {};
@@ -104,10 +107,19 @@ export function extractPatientMeta(rows, cols) {
 
   const meta = {};
   for (const key of Object.keys(colMap)) {
-    meta[key] =
-      found[key] !== null && rows[0]?.[found[key]] !== undefined
-        ? String(rows[0][found[key]]).trim()
-        : '';
+    meta[key] = '';
+    const colName = found[key];
+    if (colName !== null) {
+      for (const row of rows) {
+        const val = String(row[colName] || '').trim();
+        if (val && val !== '-' && val !== '--' && val.toUpperCase() !== 'OP') {
+          meta[key] = val;
+          break; 
+        } else if (val && !meta[key]) {
+          meta[key] = val; 
+        }
+      }
+    }
   }
   return meta;
 }
@@ -141,20 +153,57 @@ export async function getLabDetail(orderId) {
   };
 }
 
+let dynamicTestGroups = null;
+
+async function fetchDynamicTestGroups() {
+  if (dynamicTestGroups) return dynamicTestGroups;
+  try {
+    const payload = {
+      strQuery: "Use KMCH_Lab; SELECT p.cProc_Name, g.cGroup_Name FROM Mast_Proc p JOIN Proc_Group g ON p.iProc_Group_id = g.iProc_Group_id",
+      strCon: "BB_CONSTR"
+    };
+    const response = await axios.post(config.emr.retDatatableUrl, payload, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const records = JSON.parse(response.data.d);
+    dynamicTestGroups = {};
+    for (const rec of records) {
+      if (rec.cProc_Name && rec.cGroup_Name) {
+        const key = normalizeTestKey(rec.cProc_Name);
+        dynamicTestGroups[key] = rec.cGroup_Name.trim().toUpperCase();
+      }
+    }
+    console.log(`Successfully fetched ${Object.keys(dynamicTestGroups).length} dynamic test groups.`);
+    return dynamicTestGroups;
+  } catch (err) {
+    console.error("Failed to fetch dynamic test groups:", err.message);
+    if (err.response) console.error(err.response.data);
+    return {};
+  }
+}
+
 export async function buildInvestigationChart(searchData) {
+  const dynGroups = await fetchDynamicTestGroups();
+
   const rows = searchData;
   const cols = Object.keys(rows[0]);
   const patientMeta = extractPatientMeta(rows, cols);
 
   let reqCol = null;
   let dateCol = null;
+  let procCol = null;
+  let statusCol = null;
   for (const c of cols) {
     const n = normCol(c);
     if (!reqCol && (n === 'reqno' || n === 'requestno')) reqCol = c;
     if (!dateCol && n === 'requestdate') dateCol = c;
+    if (!procCol && (n === 'procedure' || n === 'testname' || n === 'test')) procCol = c;
+    if (!statusCol && (n === 'status' || n === 'teststatus' || n === 'orderstatus')) statusCol = c;
   }
 
   const reqDateMap = {};
+  const reqStatusMap = {};
+  const testCategoryMap = {};
   if (reqCol) {
     for (const row of rows) {
       const parsed = extractOrderIdFromCell(row[reqCol]);
@@ -165,83 +214,126 @@ export async function buildInvestigationChart(searchData) {
         datePart = String(row[dateCol]).trim().slice(0, 10);
       }
       reqDateMap[parsed.orderid] = datePart;
+
+      if (statusCol && row[statusCol]) {
+        reqStatusMap[parsed.orderid] = String(row[statusCol]).trim();
+      }
+
+      if (procCol && row[procCol]) {
+        const rawProc = String(row[procCol]);
+        const match = rawProc.match(/\[([^\]]+)\]/);
+        if (match) {
+          const category = match[1].trim().toUpperCase();
+          const testKey = normalizeTestKey(rawProc);
+          testCategoryMap[`${parsed.orderid}_${testKey}`] = category;
+        }
+      }
     }
   }
 
+  const fetchErrors = [];
+  const chartValues = {};
+  const finalTemplate = {};
+  const dateSet = new Set();
+
   if (Object.keys(reqDateMap).length === 0) {
-    return {
-      chartDates: [],
-      chartValues: {},
-      unmapped: [],
-      fetchErrors: [],
-      patientMeta,
-      template: getChartTemplate(),
-    };
+    return { chartDates: [], chartValues: {}, unmapped: [], fetchErrors, patientMeta, template: {} };
   }
 
   const client = createClient();
   const loginResult = await doLogin(client);
-  const fetchErrors = [];
 
   if (!loginResult.ok) {
-    fetchErrors.push(
-      `Login failed while building chart: ${JSON.stringify(loginResult.raw ?? loginResult.error)}`,
-    );
-    return {
-      chartDates: [],
-      chartValues: {},
-      unmapped: [],
-      fetchErrors,
-      patientMeta,
-      template: getChartTemplate(),
-    };
+    fetchErrors.push(`Login failed while building chart: ${JSON.stringify(loginResult.raw ?? loginResult.error)}`);
+    return { chartDates: [], chartValues: {}, unmapped: [], fetchErrors, patientMeta, template: {} };
   }
-
-  const [matchIndex] = buildChartIndexes(getChartTemplate());
-  const chartValues = {};
-  const unmapped = [];
-  const dateSet = new Set();
 
   for (const [orderid, datePart] of Object.entries(reqDateMap)) {
     dateSet.add(datePart);
 
-    const fullHtml = await fetchLabResultHtml(client, orderid);
-    const tableHtml = extractResultTable(fullHtml);
+    let fullHtml;
+    try {
+      fullHtml = await fetchLabResultHtml(client, orderid);
+    } catch (err) {
+      fetchErrors.push(`Error fetching detail for Req No ${orderid}: ${err.message}`);
+      continue;
+    }
 
+    const tableHtml = extractResultTable(fullHtml);
     if (!tableHtml) {
-      fetchErrors.push(`Could not load detail for Req No ${orderid}.`);
+      const status = reqStatusMap[orderid];
+      if (status && (status.toLowerCase().includes('pending') || status.toLowerCase().includes('cancel') || status.toLowerCase().includes('yet') || status.toLowerCase().includes('process'))) {
+        fetchErrors.push(`Req No ${orderid} — ${status}`);
+      }
       continue;
     }
 
     const detailRows = parseResultTableToArray(tableHtml);
 
+    let currentCategory = 'OTHER TESTS';
     for (const dr of detailRows) {
-      if (dr.section) continue;
+      if (dr.section) {
+        currentCategory = dr.section;
+        continue;
+      }
 
       const key = normalizeTestKey(dr.test);
-      if (matchIndex[key]) {
-        const fieldId = matchIndex[key];
-        if (!chartValues[fieldId]) chartValues[fieldId] = {};
-        chartValues[fieldId][datePart] = dr.value;
-      } else {
-        unmapped.push({
-          test: dr.test,
-          value: dr.value,
-          range: dr.range,
-          date: datePart,
-          orderid,
-        });
+      const fieldId = `dyn_${key.replace(/[^A-Z0-9]/g, '_')}`;
+
+      let searchKey = key;
+      if (searchKey.startsWith('URINE')) {
+        searchKey = searchKey.replace(/^URINE\s*/, '').trim();
+      } else if (searchKey === 'RATIO') {
+        searchKey = 'A/G RATIO';
+      } else if (searchKey.includes('HIV') && searchKey.includes('RAPID')) {
+        searchKey = 'HIV I & II RAPID';
       }
+
+      // 1. Detailed Grouping from RETDatatable using test name
+      let finalCategory = dynGroups[searchKey] || dynGroups[key] || dynGroups[searchKey.replace(/\s+/g, '')];
+
+      if (!finalCategory && key.includes('COLOUR')) {
+        console.log(`Failed to find category for key: '${key}', searchKey: '${searchKey}'`);
+      }
+
+      // 2. Fallback to bracketed category
+      if (!finalCategory) {
+        finalCategory = testCategoryMap[`${orderid}_${searchKey}`] || testCategoryMap[`${orderid}_${key}`];
+      }
+
+      // 3. Fallback to current HTML section category
+      if (!finalCategory) {
+        finalCategory = currentCategory;
+      }
+
+      if (!finalCategory || finalCategory === 'OTHER TESTS') {
+        finalCategory = 'OTHER TESTS';
+      }
+
+      if (!finalTemplate[finalCategory]) finalTemplate[finalCategory] = [];
+
+      let fieldDef = finalTemplate[finalCategory].find((f) => f.id === fieldId);
+      if (!fieldDef) {
+        fieldDef = {
+          id: fieldId,
+          label: dr.test.replace(/<\/a>\s*$/i, '').trim(),
+          range: dr.range,
+        };
+        finalTemplate[finalCategory].push(fieldDef);
+      }
+
+      if (!chartValues[fieldId]) chartValues[fieldId] = {};
+      chartValues[fieldId][datePart] = dr.value;
     }
   }
 
   return {
     chartDates: sortChartDates([...dateSet]),
     chartValues,
-    unmapped,
+    unmapped: [],
     fetchErrors,
     patientMeta,
-    template: getChartTemplate(),
+    template: finalTemplate,
   };
 }
 

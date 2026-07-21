@@ -8,6 +8,7 @@ export const config = {
     loginUrl: process.env.EMR_LOGIN_URL,
     labUrlTemplate: process.env.EMR_LAB_URL_TEMPLATE,
     queryBuilderUrl: process.env.EMR_QUERY_BUILDER_URL,
+    retDatatableUrl: process.env.EMR_RET_DATATABLE_URL || 'https://emr.mapims.edu.in/BB15SE/Lab/wsLabServices.asmx/RETDatatable',
     username: process.env.EMR_USERNAME,
     password: process.env.EMR_PASSWORD,
     logOpt: process.env.EMR_LOG_OPT || '2',

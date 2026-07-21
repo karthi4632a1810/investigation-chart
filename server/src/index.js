@@ -54,4 +54,5 @@ app.get('/api/detail/:orderid', async (req, res) => {
 
 app.listen(config.port, () => {
   console.log(`Server running on http://localhost:${config.port}`);
+  console.log('Server restarted to load updated .env credentials!');
 });

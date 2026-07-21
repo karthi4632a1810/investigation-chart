@@ -61,6 +61,13 @@ export default function App() {
         onSubmit={handleSearch}
       />
 
+      {loading && (
+        <div className="loading">
+          <div className="spinner"></div>
+          <div>Please wait for a moment...</div>
+        </div>
+      )}
+
       {error && <div className="error">Search failed: {error}</div>}
 
       {result && !result.data?.length && (
