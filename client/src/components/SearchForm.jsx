@@ -12,7 +12,7 @@ export default function SearchForm({
   return (
     <form className="searchbar" onSubmit={onSubmit}>
       <div className="field">
-        <label>Reg No</label>
+        <label>UHID</label>
         <input
           type="text"
           value={regNo}
@@ -22,7 +22,7 @@ export default function SearchForm({
         />
       </div>
       <div className="field date-range">
-        <label>From Date</label>
+        <label>Date of Admission</label>
         <input
           type="datetime-local"
           value={fromDate}
@@ -31,7 +31,7 @@ export default function SearchForm({
         />
       </div>
       <div className="field date-range">
-        <label>To Date</label>
+        <label>Date of Discharge</label>
         <input
           type="datetime-local"
           value={toDate}

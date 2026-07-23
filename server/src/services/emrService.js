@@ -262,7 +262,7 @@ export async function buildInvestigationChart(searchData) {
     const n = normCol(c);
     if (!reqCol && (n === 'reqno' || n === 'requestno')) reqCol = c;
     if (!dateCol && n === 'requestdate') dateCol = c;
-    if (!procCol && (n === 'procedure' || n === 'testname' || n === 'test')) procCol = c;
+    if (!procCol && (n.includes('proc') || n.includes('test') || n.includes('desc'))) procCol = c;
     if (!statusCol && (n === 'status' || n === 'teststatus' || n === 'orderstatus')) statusCol = c;
   }
 
@@ -273,6 +273,19 @@ export async function buildInvestigationChart(searchData) {
     for (const row of rows) {
       const parsed = extractOrderIdFromCell(row[reqCol]);
       if (!parsed.orderid) continue;
+
+      if (procCol && row[procCol]) {
+        const procName = String(row[procCol]).toUpperCase();
+        if (
+          procName.includes('PERIPHERAL SMEAR') ||
+          procName.includes('PERIPHERAL SMEAR STUDY') ||
+          procName.includes('PERIPHERAL BLOOD SMEAR') ||
+          procName.includes('SMEAR STUDY') ||
+          procName.includes('SMEAR')
+        ) {
+          continue;
+        }
+      }
 
       let datePart = 'Unknown';
       if (dateCol && row[dateCol]) {
@@ -335,14 +348,59 @@ export async function buildInvestigationChart(searchData) {
 
     const detailRows = parseResultTableToArray(tableHtml);
 
+    const isIgnoredText = (str) => {
+      if (!str) return false;
+      const s = String(str).toUpperCase().trim();
+      return (
+        s.includes('CLINICAL DETAILS') ||
+        s.includes('CRITICAL VALUE') ||
+        s.includes('CRITICAL VALUES') ||
+        s.includes('IMPRESSION') ||
+        s.includes('REMARK') ||
+        s.includes('COMMENT') ||
+        s.includes('SMEAR') ||
+        s.includes('PARASITE') ||
+        s.startsWith('NOTE')
+      );
+    };
+
+    const isNarrativeTextValue = (val) => {
+      if (!val) return false;
+      const str = String(val).trim();
+      if (str.length > 20 && str.split(/\s+/).length > 3) return true;
+      const lower = str.toLowerCase();
+      const narrativeKeywords = [
+        'microcytic', 'hypochromic', 'normocytic', 'normochromic', 'anisopoikilocytosis',
+        'increased', 'decreased', 'reduced', 'smear', 'granulation', 'vacuolation',
+        'reactive', 'lymphocytes', 'neutrophil', 'metamyelocyte', 'predominantly',
+        'admixed', 'echinocytes', 'elliptocytes', 'target cells', 'cells/mm3',
+        'cells/cu', 'left shift', 'seen', 'adequate', 'inadequate', 'imprint', 'biopsy'
+      ];
+      return narrativeKeywords.some((kw) => lower.includes(kw));
+    };
+
     let currentCategory = 'OTHER TESTS';
     for (const dr of detailRows) {
       if (dr.section) {
-        currentCategory = dr.section;
+        if (!isIgnoredText(dr.section)) {
+          currentCategory = dr.section;
+        }
+        continue;
+      }
+
+      if (
+        isIgnoredText(dr.test) ||
+        isIgnoredText(currentCategory) ||
+        isNarrativeTextValue(dr.value) ||
+        isNarrativeTextValue(dr.range) ||
+        (dr.value && String(dr.value).trim().length > 30) ||
+        (dr.range && String(dr.range).trim().length > 30)
+      ) {
         continue;
       }
 
       const key = normalizeTestKey(dr.test);
+      if (!key) continue;
       const fieldId = `dyn_${key.replace(/[^A-Z0-9]/g, '_')}`;
 
       let searchKey = key;

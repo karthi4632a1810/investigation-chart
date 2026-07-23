@@ -582,11 +582,12 @@ if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['regno'])){
 
         $patientMeta = extractPatientMeta($rows, $cols);
 
-        $reqCol = $dateCol = null;
+        $reqCol = $dateCol = $procCol = null;
         foreach($cols as $c){
             $n = normCol($c);
             if($reqCol === null && ($n === 'reqno' || $n === 'requestno')) $reqCol = $c;
             if($dateCol === null && $n === 'requestdate') $dateCol = $c;
+            if($procCol === null && (strpos($n, 'proc') !== false || $n === 'testname' || $n === 'test' || strpos($n, 'desc') !== false)) $procCol = $c;
         }
 
         // discover distinct orderid -> date (date part only)
@@ -595,6 +596,19 @@ if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['regno'])){
             foreach($rows as $row){
                 $parsed = extractOrderIdFromCell($row[$reqCol]);
                 if(!$parsed['orderid']) continue;
+
+                if($procCol && !empty($row[$procCol])){
+                    $procName = strtoupper(trim($row[$procCol]));
+                    if(
+                        strpos($procName, 'PERIPHERAL SMEAR') !== false ||
+                        strpos($procName, 'PERIPHERAL SMEAR STUDY') !== false ||
+                        strpos($procName, 'PERIPHERAL BLOOD SMEAR') !== false ||
+                        strpos($procName, 'SMEAR STUDY') !== false ||
+                        strpos($procName, 'SMEAR') !== false
+                    ){
+                        continue; // Skip PERIPHERAL SMEAR STUDY orders
+                    }
+                }
 
                 $datePart = 'Unknown';
                 if($dateCol && !empty($row[$dateCol])){
@@ -628,11 +642,63 @@ if($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['regno'])){
                     }
 
                     $detailRows = parseResultTableToArray($tableHtml);
+                    $currentCategory = '';
+
+                    $isIgnoredText = function($str) {
+                        if (empty($str)) return false;
+                        $s = strtoupper(trim($str));
+                        return (
+                            strpos($s, 'CLINICAL DETAILS') !== false ||
+                            strpos($s, 'CRITICAL VALUE') !== false ||
+                            strpos($s, 'CRITICAL VALUES') !== false ||
+                            strpos($s, 'IMPRESSION') !== false ||
+                            strpos($s, 'REMARK') !== false ||
+                            strpos($s, 'COMMENT') !== false ||
+                            strpos($s, 'SMEAR') !== false ||
+                            strpos($s, 'PARASITE') !== false ||
+                            strpos($s, 'NOTE') === 0
+                        );
+                    };
+
+                    $isNarrativeTextValue = function($val) {
+                        if (empty($val)) return false;
+                        $str = trim($val);
+                        if (strlen($str) > 20 && count(preg_split('/\s+/', $str)) > 3) return true;
+                        $lower = strtolower($str);
+                        $narrativeKeywords = [
+                            'microcytic', 'hypochromic', 'normocytic', 'normochromic', 'anisopoikilocytosis',
+                            'increased', 'decreased', 'reduced', 'smear', 'granulation', 'vacuolation',
+                            'reactive', 'lymphocytes', 'neutrophil', 'metamyelocyte', 'predominantly',
+                            'admixed', 'echinocytes', 'elliptocytes', 'target cells', 'cells/mm3',
+                            'cells/cu', 'left shift', 'seen', 'adequate', 'inadequate', 'imprint', 'biopsy'
+                        ];
+                        foreach($narrativeKeywords as $kw){
+                            if(strpos($lower, $kw) !== false) return true;
+                        }
+                        return false;
+                    };
 
                     foreach($detailRows as $dr){
-                        if(isset($dr['section'])) continue; // section header row, skip
+                        if(isset($dr['section'])) {
+                            if(!$isIgnoredText($dr['section'])) {
+                                $currentCategory = $dr['section'];
+                            }
+                            continue; // section header row, skip
+                        }
+
+                        if(
+                            $isIgnoredText($dr['test']) ||
+                            $isIgnoredText($currentCategory) ||
+                            $isNarrativeTextValue($dr['value'] ?? '') ||
+                            $isNarrativeTextValue($dr['range'] ?? '') ||
+                            (!empty($dr['value']) && strlen(trim($dr['value'])) > 30) ||
+                            (!empty($dr['range']) && strlen(trim($dr['range'])) > 30)
+                        ) {
+                            continue;
+                        }
 
                         $key = normalizeTestKey($dr['test']);
+                        if(!$key) continue;
 
                         if(isset($matchIndex[$key])){
                             $fieldId = $matchIndex[$key];
@@ -887,11 +953,11 @@ $chartTemplate = getChartTemplate();
         <input type="text" name="regno" value="<?php echo htmlspecialchars($regNo); ?>" placeholder="e.g. 4975109" required>
     </div>
     <div class="field date-range">
-        <label>From Date</label>
+        <label>Date of Admission</label>
         <input type="datetime-local" name="fromdate" value="<?php echo htmlspecialchars(formatForDatetimeLocal($fromDate ?: date('m/d/Y') . ' 00:00')); ?>" required>
     </div>
     <div class="field date-range">
-        <label>To Date</label>
+        <label>Date of Discharge</label>
         <input type="datetime-local" name="todate" value="<?php echo htmlspecialchars(formatForDatetimeLocal($toDate ?: date('m/d/Y') . ' 23:59')); ?>" required>
     </div>
     <div class="search-actions">

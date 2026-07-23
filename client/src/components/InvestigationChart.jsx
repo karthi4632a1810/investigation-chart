@@ -126,10 +126,14 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
                       <td colSpan={2 + chartDates.length}>{sectionName}</td>
                     </tr>
                   )}
-                  {activeFields.map((field) => (
-                    <tr key={field.id}>
-                      <td className="field-label">{field.label}</td>
-                      <td className="field-range">{field.range}</td>
+                  {activeFields.map((field) => {
+                    const isNarrativeRange = field.range && (field.range.length > 30 || /microcytic|hypochromic|normocytic|anisopoikilocytosis|increased|reduced|smear|granulation|leukocytosis/i.test(field.range));
+                    const displayRange = isNarrativeRange ? '' : field.range;
+
+                    return (
+                      <tr key={field.id}>
+                        <td className="field-label">{field.label}</td>
+                        <td className="field-range">{displayRange}</td>
                       {chartDates.map((d) => {
                         const val = chartValues[field.id]?.[d] ?? '';
                         const color = getStatusColor(val, field.range);
@@ -144,7 +148,8 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
                         );
                       })}
                     </tr>
-                  ))}
+                    );
+                  })}
                 </Fragment>
               );
             })}
