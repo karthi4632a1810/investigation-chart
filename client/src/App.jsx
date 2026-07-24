@@ -77,7 +77,7 @@ export default function App() {
       {hasData && (
         <>
           {result.chart?.fetchErrors?.map((fe) => (
-            <div key={fe} className="warn">
+            <div key={fe} className="warn no-print">
               {fe}
             </div>
           ))}

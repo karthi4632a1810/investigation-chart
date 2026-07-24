@@ -50,13 +50,13 @@ export async function fetchLabResultHtml(client, orderId) {
   return data;
 }
 
-export async function fetchSearchResults(regNo, fromDate, toDate) {
+export async function queryEMR(regNoVal, ipNoVal, fromDate, toDate) {
   const sql = `Use KMCH_Lab EXEC LabTestResultHistoryQB
         @FromDate = '${fromDate}',
         @ToDate = '${toDate}',
-        @RegNo = '${regNo}',
+        @RegNo = '${regNoVal || ''}',
         @RequestNo = '',
-        @IPNO = '',
+        @IPNO = '${ipNoVal || ''}',
         @BillNo = '',
         @PatName = '',
         @BedNo = '',
@@ -80,6 +80,41 @@ export async function fetchSearchResults(regNo, fromDate, toDate) {
     return { ok: true, data: Array.isArray(rows) ? rows : [] };
   } catch (error) {
     return { ok: false, error: error.response?.data ? JSON.stringify(error.response.data) : error.message };
+  }
+}
+
+export async function fetchSearchResults(searchInput, fromDate, toDate) {
+  const cleanInput = String(searchInput || '').trim();
+  const isIpFormat = /IP/i.test(cleanInput);
+
+  if (isIpFormat) {
+    // 1st try: as @IPNO with full input string
+    let res = await queryEMR('', cleanInput, fromDate, toDate);
+    if (res.ok && res.data.length) return res;
+
+    // 2nd try: clean IP number without "IP " or "IP" prefix
+    const strippedIp = cleanInput.replace(/^IP\s*/i, '').trim();
+    if (strippedIp && strippedIp !== cleanInput) {
+      res = await queryEMR('', strippedIp, fromDate, toDate);
+      if (res.ok && res.data.length) return res;
+    }
+
+    // 3rd try: as @RegNo fallback
+    res = await queryEMR(cleanInput, '', fromDate, toDate);
+    return res;
+  } else {
+    // Input does not have "IP" prefix
+    // 1st try: as @RegNo
+    let res = await queryEMR(cleanInput, '', fromDate, toDate);
+    if (res.ok && res.data.length) return res;
+
+    // 2nd try: as @IPNO (e.g. user entered raw IP number without 'IP' prefix)
+    res = await queryEMR('', cleanInput, fromDate, toDate);
+    if (res.ok && res.data.length) return res;
+
+    // 3rd try: as @IPNO with "IP" prepended
+    res = await queryEMR('', `IP${cleanInput}`, fromDate, toDate);
+    return res;
   }
 }
 

@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export const config = {
-  port: parseInt(process.env.PORT || '3001', 10),
+  port: parseInt(process.env.PORT || '6001', 10),
   emr: {
     loginUrl: process.env.EMR_LOGIN_URL,
     labUrlTemplate: process.env.EMR_LAB_URL_TEMPLATE,

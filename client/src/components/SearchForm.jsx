@@ -12,12 +12,12 @@ export default function SearchForm({
   return (
     <form className="searchbar" onSubmit={onSubmit}>
       <div className="field">
-        <label>UHID</label>
+        <label>UHID / IP NO</label>
         <input
           type="text"
           value={regNo}
           onChange={(e) => onRegNoChange(e.target.value)}
-          placeholder="e.g. 4975109"
+          placeholder="e.g. 4314566 or IP07014903"
           required
         />
       </div>

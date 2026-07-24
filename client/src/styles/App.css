@@ -603,25 +603,217 @@ tr.section-row-modal td {
   }
 }
 
+/* Toolbar for Preview & Print Options */
+.chart-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.toolbar-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.toolbar-select {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  font-size: 13.5px;
+  background: #f8fafc;
+  color: var(--text);
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+}
+
+.toggle-buttons {
+  display: flex;
+  gap: 4px;
+  background: #e2e8f0;
+  padding: 3px;
+  border-radius: 8px;
+}
+
+.toggle-btn {
+  background: transparent;
+  color: var(--text);
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toggle-btn.active {
+  background: #ffffff;
+  color: var(--primary-dark);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.print-btn {
+  background: #059669;
+  color: #fff;
+  font-size: 13.5px;
+  padding: 9px 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(5, 150, 105, 0.2);
+}
+
+.print-btn:hover {
+  background: #047857;
+}
+
+/* Screen View vs Print View */
+.screen-chart-view {
+  display: block;
+}
+
+.print-chart-view {
+  display: none;
+}
+
+.chart-page-block {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  width: 100%;
+  max-width: 1100px;
+  position: relative;
+  overflow: hidden;
+}
+
+.page-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 20px;
+  background: #f8fafc;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.print-chart-view .chart-card-body {
+  overflow: visible !important;
+  overflow-x: visible !important;
+  padding: 14px;
+}
+
+.print-chart-view table.chart {
+  min-width: 0 !important;
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+
+/* Print CSS */
 @media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+
+  html, body {
+    background: #fff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .no-print,
+  .warn,
+  .unmapped-box,
+  .hint,
   .searchbar,
   .tabs,
   .modal-overlay,
-  body * {
-    visibility: hidden;
+  .chart-toolbar,
+  .screen-chart-view,
+  h2 {
+    display: none !important;
   }
 
-  .chart-card,
-  .chart-card * {
-    visibility: visible;
+  .print-chart-view {
+    display: block !important;
   }
 
-  .chart-card {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    border: none;
-    box-shadow: none;
+  .chart-card-body,
+  .print-chart-view .chart-card-body {
+    overflow: visible !important;
+    overflow-x: visible !important;
+    overflow-y: visible !important;
+    padding: 10px !important;
+  }
+
+  .page {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .chart-page-block {
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    margin-bottom: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .page-footer {
+    display: flex !important;
+    position: relative;
+    bottom: 0;
+  }
+
+  table.chart {
+    min-width: 0 !important;
+    width: 100% !important;
+    table-layout: fixed !important;
+  }
+
+  table.chart th,
+  table.chart td {
+    padding: 5px 6px !important;
+    font-size: 11px !important;
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
+  }
+
+  tr.section-row td {
+    background: #dbeafe !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  td.field-value.filled {
+    background: #f0fdf4 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }

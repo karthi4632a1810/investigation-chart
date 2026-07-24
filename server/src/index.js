@@ -3,10 +3,30 @@ import cors from 'cors';
 import { config } from './config.js';
 import { getLabDetail, searchInvestigation } from './services/emrService.js';
 
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const candidatePaths = [
+  path.join(__dirname, '../../client/dist'),
+  path.join(__dirname, '../client/dist'),
+  path.join(__dirname, '../dist'),
+  path.join(__dirname, '../../dist'),
+  path.join(__dirname, './dist'),
+];
+
+const clientDistPath = candidatePaths.find((p) => fs.existsSync(path.join(p, 'index.html'))) || candidatePaths[0];
+
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+// Serve static frontend files (React dist)
+app.use(express.static(clientDistPath));
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
@@ -52,7 +72,14 @@ app.get('/api/detail/:orderid', async (req, res) => {
   }
 });
 
+// Fallback for Single Page Application (SPA) routing
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) return next();
+  res.sendFile(path.join(clientDistPath, 'index.html'));
+});
+
 app.listen(config.port, () => {
   console.log(`Server running on http://localhost:${config.port}`);
+  console.log(`Serving static UI from: ${clientDistPath} (exists: ${fs.existsSync(clientDistPath)})`);
   console.log('Server restarted to load updated .env credentials!');
 });
