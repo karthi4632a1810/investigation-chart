@@ -10,7 +10,13 @@ export async function searchInvestigation({ regNo, fromDate, toDate }) {
   const res = await fetch(`${API_BASE}/search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ regNo, fromDate, toDate }),
+    // fromDate/toDate come in as plain "YYYY-MM-DD" from a date-only input —
+    // expand to the full day so the search range still covers 00:00–23:59.
+    body: JSON.stringify({
+      regNo,
+      fromDate: `${fromDate}T00:00`,
+      toDate: `${toDate}T23:59`,
+    }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Search failed');
@@ -24,8 +30,8 @@ export async function fetchLabDetail(orderid) {
   return data;
 }
 
-export function defaultDatetimeLocal(hours, minutes) {
+export function defaultDateOnly() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(hours)}:${pad(minutes)}`;
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }

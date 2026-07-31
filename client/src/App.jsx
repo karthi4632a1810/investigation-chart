@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  defaultDatetimeLocal,
+  defaultDateOnly,
   fetchHospitalConfig,
   searchInvestigation,
 } from './api/client';
@@ -12,8 +12,8 @@ import DetailModal from './components/DetailModal';
 export default function App() {
   const [hospital, setHospital] = useState(null);
   const [regNo, setRegNo] = useState('');
-  const [fromDate, setFromDate] = useState(defaultDatetimeLocal(0, 0));
-  const [toDate, setToDate] = useState(defaultDatetimeLocal(23, 59));
+  const [fromDate, setFromDate] = useState(defaultDateOnly());
+  const [toDate, setToDate] = useState(defaultDateOnly());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);

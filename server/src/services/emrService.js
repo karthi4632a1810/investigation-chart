@@ -208,6 +208,20 @@ function isDepartmentName(name) {
   return DEPARTMENTS.has(clean) || DEPARTMENTS.has(String(name).trim().toUpperCase());
 }
 
+// Given a raw EMR datetime string (day portion already stripped off the front),
+// pulls out a 12-hour "H:MM AM/PM" to disambiguate multiple orders placed on the same day.
+function extractTimePart(dateRaw) {
+  if (!dateRaw || dateRaw === 'Unknown') return null;
+  const rest = String(dateRaw).slice(10);
+  const m = rest.match(/(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  let hour = parseInt(m[1], 10);
+  const period = hour >= 12 ? 'PM' : 'AM';
+  hour = hour % 12;
+  if (hour === 0) hour = 12;
+  return `${hour}:${m[2]} ${period}`;
+}
+
 let dynamicTestGroups = null;
 
 async function fetchDynamicTestGroups() {
@@ -322,11 +336,11 @@ export async function buildInvestigationChart(searchData) {
         }
       }
 
-      let datePart = 'Unknown';
+      let dateRaw = 'Unknown';
       if (dateCol && row[dateCol]) {
-        datePart = String(row[dateCol]).trim().slice(0, 10);
+        dateRaw = String(row[dateCol]).trim();
       }
-      reqDateMap[parsed.orderid] = datePart;
+      reqDateMap[parsed.orderid] = dateRaw;
 
       if (statusCol && row[statusCol]) {
         reqStatusMap[parsed.orderid] = String(row[statusCol]).trim();
@@ -348,6 +362,7 @@ export async function buildInvestigationChart(searchData) {
   const chartValues = {};
   const finalTemplate = {};
   const dateSet = new Set();
+  const repeatCounts = {}; // `${fieldId}|${dayPart}` -> how many same-day repeat rows exist
 
   if (Object.keys(reqDateMap).length === 0) {
     return { chartDates: [], chartValues: {}, unmapped: [], fetchErrors, patientMeta, template: {} };
@@ -361,8 +376,9 @@ export async function buildInvestigationChart(searchData) {
     return { chartDates: [], chartValues: {}, unmapped: [], fetchErrors, patientMeta, template: {} };
   }
 
-  for (const [orderid, datePart] of Object.entries(reqDateMap)) {
-    dateSet.add(datePart);
+  for (const [orderid, dateRaw] of Object.entries(reqDateMap)) {
+    const dayPart = dateRaw === 'Unknown' ? 'Unknown' : dateRaw.slice(0, 10);
+    dateSet.add(dayPart);
 
     let fullHtml;
     try {
@@ -475,18 +491,52 @@ export async function buildInvestigationChart(searchData) {
 
       if (!finalTemplate[finalCategory]) finalTemplate[finalCategory] = [];
 
-      let fieldDef = finalTemplate[finalCategory].find((f) => f.id === fieldId);
-      if (!fieldDef) {
-        fieldDef = {
-          id: fieldId,
-          label: dr.test.replace(/<\/a>\s*$/i, '').trim(),
-          range: dr.range,
-        };
-        finalTemplate[finalCategory].push(fieldDef);
+      const baseLabel = dr.test.replace(/<\/a>\s*$/i, '').trim();
+
+      // Same test already has a value for this day from another order — instead of
+      // overwriting it, add another row for the same test (tagged with the order time).
+      const hasExistingForDay =
+        chartValues[fieldId] &&
+        chartValues[fieldId][dayPart] !== undefined &&
+        String(chartValues[fieldId][dayPart]).trim() !== '';
+
+      let rowFieldId = fieldId;
+      let rowLabel = baseLabel;
+
+      if (hasExistingForDay) {
+        const repeatKey = `${fieldId}|${dayPart}`;
+        const n = (repeatCounts[repeatKey] || 1) + 1;
+        repeatCounts[repeatKey] = n;
+        const timePart = extractTimePart(dateRaw);
+        rowFieldId = `${fieldId}__rep${n}`;
+        rowLabel = `${baseLabel} (${timePart || `Repeat ${n}`})`;
       }
 
-      if (!chartValues[fieldId]) chartValues[fieldId] = {};
-      chartValues[fieldId][datePart] = dr.value;
+      let fieldDef = finalTemplate[finalCategory].find((f) => f.id === rowFieldId);
+      if (!fieldDef) {
+        fieldDef = {
+          id: rowFieldId,
+          label: rowLabel,
+          range: dr.range,
+        };
+        if (hasExistingForDay) {
+          // Insert right after the original (or latest repeat) row so repeats stay grouped.
+          let insertAt = finalTemplate[finalCategory].length;
+          for (let i = finalTemplate[finalCategory].length - 1; i >= 0; i--) {
+            const fid = finalTemplate[finalCategory][i].id;
+            if (fid === fieldId || fid.startsWith(`${fieldId}__rep`)) {
+              insertAt = i + 1;
+              break;
+            }
+          }
+          finalTemplate[finalCategory].splice(insertAt, 0, fieldDef);
+        } else {
+          finalTemplate[finalCategory].push(fieldDef);
+        }
+      }
+
+      if (!chartValues[rowFieldId]) chartValues[rowFieldId] = {};
+      chartValues[rowFieldId][dayPart] = dr.value;
     }
   }
 

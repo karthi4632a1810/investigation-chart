@@ -24,7 +24,7 @@ export default function SearchForm({
       <div className="field date-range">
         <label>Date of Admission</label>
         <input
-          type="datetime-local"
+          type="date"
           value={fromDate}
           onChange={(e) => onFromDateChange(e.target.value)}
           required
@@ -33,7 +33,7 @@ export default function SearchForm({
       <div className="field date-range">
         <label>Date of Discharge</label>
         <input
-          type="datetime-local"
+          type="date"
           value={toDate}
           onChange={(e) => onToDateChange(e.target.value)}
           required
