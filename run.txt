@@ -1,0 +1,73 @@
+Patient Investigation Chart — Commands
+=======================================
+
+LOCAL DEVELOPMENT (no Docker)
+------------------------------
+Install all dependencies (server + client):
+  npm run install:all
+
+Run server + client together (dev, with hot reload):
+  npm run dev
+
+Run only the server:
+  npm run dev:server
+
+Run only the client:
+  npm run dev:client
+
+Build the client for production:
+  npm run build
+
+
+DOCKER (recommended for deployment)
+------------------------------------
+Build and start all containers (mongo, server, client):
+  sudo docker compose up --build -d
+
+Start/recreate a single service (e.g. after editing docker-compose.yml):
+  sudo docker compose up -d mongo
+
+Start in production mode (uses docker-compose.prod.yml overrides):
+  npm run docker:prod
+
+Stop all containers:
+  npm run docker:down
+  (or: sudo docker compose down)
+
+View logs:
+  npm run docker:logs
+  (or: sudo docker compose logs -f)
+
+Check running containers:
+  sudo docker ps
+
+
+MONGODB USER IMPORT (login credentials)
+-----------------------------------------
+1. Edit server/auth.txt with one "username:password" per line, e.g.:
+   admin:your-password
+   user1:password1
+
+   This is a FULL SYNC, not a merge:
+   - usernames listed are created if new, or have their password REPLACED
+   - any user in MongoDB that is NOT listed in auth.txt is DELETED
+
+2. Run the import script:
+
+   If running server locally (not in Docker), Mongo is reached via the
+   MONGO_URI already set in server/.env:
+     npm run import:auth --prefix server
+
+   If Mongo is running in Docker and you're importing from the host,
+   Mongo is exposed on host port 3000 (mapped to container port 27017):
+     MONGO_URI=mongodb://127.0.0.1:3000 npm run import:auth --prefix server
+
+   Optional: pass a different credentials file path:
+     node server/scripts/importAuth.js /path/to/other-auth.txt
+
+
+PORTS
+-----
+  1000  -> client (Docker, nginx)
+  2000  -> server (API)
+  3000  -> mongo (Docker, host-exposed on 127.0.0.1 only, for admin/import use)

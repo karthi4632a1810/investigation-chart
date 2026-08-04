@@ -2,6 +2,8 @@ services:
   mongo:
     image: mongo:7
     container_name: patient-investigation-mongo
+    ports:
+      - "127.0.0.1:3000:27017"
     volumes:
       - mongo-data:/data/db
     restart: unless-stopped

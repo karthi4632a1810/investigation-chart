@@ -3,4 +3,4 @@ dist/
 .env
 cookies.txt
 *.log
-server/auth.json
+server/auth.txt
