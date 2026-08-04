@@ -4,6 +4,10 @@ dotenv.config();
 
 export const config = {
   port: parseInt(process.env.PORT || '6001', 10),
+  auth: {
+    username: process.env.APP_USERNAME || 'admin',
+    password: process.env.APP_PASSWORD || 'admin123',
+  },
   emr: {
     loginUrl: process.env.EMR_LOGIN_URL,
     labUrlTemplate: process.env.EMR_LAB_URL_TEMPLATE,

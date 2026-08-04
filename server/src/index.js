@@ -20,23 +20,40 @@ const candidatePaths = [
 
 const clientDistPath = candidatePaths.find((p) => fs.existsSync(path.join(p, 'index.html'))) || candidatePaths[0];
 
-const app = express();
+export function createApp() {
+  const app = express();
 
-app.use(cors());
-app.use(express.json());
+  app.use(cors());
+  app.use(express.json());
 
-// Serve static frontend files (React dist)
-app.use(express.static(clientDistPath));
+  // Serve static frontend files (React dist)
+  app.use(express.static(clientDistPath));
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true });
-});
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true });
+  });
 
-app.get('/api/config/hospital', (_req, res) => {
-  res.json(config.hospital);
-});
+  app.post('/api/login', (req, res) => {
+    const { username, password } = req.body || {};
 
-app.post('/api/search', async (req, res) => {
+    if (!username || !password) {
+      return res.status(400).json({ ok: false, error: 'Username and password are required' });
+    }
+
+    const isValid = username === config.auth.username && password === config.auth.password;
+
+    if (!isValid) {
+      return res.status(401).json({ ok: false, error: 'Invalid username or password' });
+    }
+
+    res.json({ ok: true, username });
+  });
+
+  app.get('/api/config/hospital', (_req, res) => {
+    res.json(config.hospital);
+  });
+
+  app.post('/api/search', async (req, res) => {
   const { regNo, fromDate, toDate } = req.body || {};
 
   if (!regNo?.trim() || !fromDate || !toDate) {
@@ -72,11 +89,16 @@ app.get('/api/detail/:orderid', async (req, res) => {
   }
 });
 
-// Fallback for Single Page Application (SPA) routing
-app.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api')) return next();
-  res.sendFile(path.join(clientDistPath, 'index.html'));
-});
+  // Fallback for Single Page Application (SPA) routing
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(clientDistPath, 'index.html'));
+  });
+
+  return app;
+}
+
+const app = createApp();
 
 app.listen(config.port, () => {
   console.log(`Server running on http://localhost:${config.port}`);
