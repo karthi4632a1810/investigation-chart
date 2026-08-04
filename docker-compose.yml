@@ -1,4 +1,13 @@
 services:
+  mongo:
+    image: mongo:7
+    container_name: patient-investigation-mongo
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+    networks:
+      - app-network
+
   server:
     build:
       context: ./server
@@ -8,10 +17,13 @@ services:
       - ./server/.env
     environment:
       PORT: 2000
+      MONGO_URI: mongodb://mongo:27017
     ports:
       - "2000:2000"
     expose:
       - "2000"
+    depends_on:
+      - mongo
     restart: unless-stopped
     networks:
       - app-network
@@ -32,3 +44,6 @@ services:
 networks:
   app-network:
     driver: bridge
+
+volumes:
+  mongo-data:

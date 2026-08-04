@@ -4,15 +4,19 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/index.js",
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "import:auth": "node scripts/importAuth.js"
   },
   "dependencies": {
     "axios": "^1.7.9",
     "axios-cookiejar-support": "^5.0.3",
+    "bcryptjs": "^3.0.3",
     "cheerio": "^1.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.3",
+    "mongodb": "^7.5.0",
     "patient-investigation": "file:..",
     "tough-cookie": "^5.0.0"
   }

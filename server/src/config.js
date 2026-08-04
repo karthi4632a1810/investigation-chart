@@ -4,6 +4,14 @@ dotenv.config();
 
 export const config = {
   port: parseInt(process.env.PORT || '2000', 10),
+  mongo: {
+    uri: process.env.MONGO_URI || 'mongodb://localhost:27017',
+    dbName: process.env.MONGO_DB_NAME || 'patient_investigation',
+  },
+  jwt: {
+    secret: process.env.JWT_SECRET,
+    expiresIn: process.env.JWT_EXPIRES_IN || '12h',
+  },
   emr: {
     loginUrl: process.env.EMR_LOGIN_URL,
     labUrlTemplate: process.env.EMR_LAB_URL_TEMPLATE,

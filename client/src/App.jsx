@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
+  clearToken,
   defaultDatetimeLocal,
   fetchHospitalConfig,
+  getToken,
   searchInvestigation,
 } from './api/client';
+import Login from './components/Login';
 import SearchForm from './components/SearchForm';
 import InvestigationChart from './components/InvestigationChart';
 import RawResults from './components/RawResults';
@@ -11,6 +14,7 @@ import DetailModal from './components/DetailModal';
 import PendingTabs from './components/PendingTabs';
 
 export default function App() {
+  const [authed, setAuthed] = useState(() => Boolean(getToken()));
   const [hospital, setHospital] = useState(null);
   const [regNo, setRegNo] = useState('');
   const [fromDate, setFromDate] = useState(defaultDatetimeLocal(0, 0));
@@ -47,8 +51,23 @@ export default function App() {
 
   const hasData = result?.ok && result.data?.length > 0;
 
+  if (!authed) {
+    return <Login onLoggedIn={() => setAuthed(true)} />;
+  }
+
+  function handleLogout() {
+    clearToken();
+    setAuthed(false);
+  }
+
   return (
     <div className="page">
+      <div className="app-topbar no-print">
+        <button type="button" className="btn secondary" onClick={handleLogout}>
+          Log out
+        </button>
+      </div>
+
       {hasData && activeTab === 'chart' && (
         <button
           type="button"
