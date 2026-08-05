@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import {
   defaultDateOnly,
   fetchHospitalConfig,
+  login,
   searchInvestigation,
 } from './api/client';
 import SearchForm from './components/SearchForm';
 import InvestigationChart from './components/InvestigationChart';
 import RawResults from './components/RawResults';
 import DetailModal from './components/DetailModal';
+import LoginScreen from './components/LoginScreen';
 
 export default function App() {
   const [hospital, setHospital] = useState(null);
@@ -19,12 +21,47 @@ export default function App() {
   const [result, setResult] = useState(null);
   const [activeTab, setActiveTab] = useState('chart');
   const [detailOrderId, setDetailOrderId] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    return Boolean(sessionStorage.getItem('investigation-auth'));
+  });
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState('');
 
   useEffect(() => {
     fetchHospitalConfig()
       .then(setHospital)
       .catch(() => setHospital({}));
   }, []);
+
+  async function handleLogin(e) {
+    e.preventDefault();
+    setLoginLoading(true);
+    setLoginError('');
+
+    try {
+      const data = await login({ username, password });
+      if (data.ok) {
+        sessionStorage.setItem('investigation-auth', JSON.stringify({ username }));
+        setIsAuthenticated(true);
+      } else {
+        setLoginError(data.error || 'Login failed');
+      }
+    } catch (err) {
+      setLoginError(err.message || 'Login failed');
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  function handleLogout() {
+    sessionStorage.removeItem('investigation-auth');
+    setIsAuthenticated(false);
+    setUsername('');
+    setPassword('');
+    setLoginError('');
+  }
 
   async function handleSearch(e) {
     e.preventDefault();
@@ -45,9 +82,28 @@ export default function App() {
 
   const hasData = result?.ok && result.data?.length > 0;
 
+  if (!isAuthenticated) {
+    return (
+      <LoginScreen
+        username={username}
+        password={password}
+        loading={loginLoading}
+        error={loginError}
+        onUsernameChange={setUsername}
+        onPasswordChange={setPassword}
+        onSubmit={handleLogin}
+      />
+    );
+  }
+
   return (
     <div className="page">
-      <h2>Lab Result Search &amp; Investigation Chart</h2>
+      <div className="page-header">
+        <h2>Lab Result Search &amp; Investigation Chart</h2>
+        <button type="button" className="btn secondary" onClick={handleLogout}>
+          Logout
+        </button>
+      </div>
 
       <SearchForm
         regNo={regNo}

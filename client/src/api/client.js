@@ -6,6 +6,17 @@ export async function fetchHospitalConfig() {
   return res.json();
 }
 
+export async function login({ username, password }) {
+  const res = await fetch(`${API_BASE}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Login failed');
+  return data;
+}
+
 export async function searchInvestigation({ regNo, fromDate, toDate }) {
   const res = await fetch(`${API_BASE}/search`, {
     method: 'POST',
