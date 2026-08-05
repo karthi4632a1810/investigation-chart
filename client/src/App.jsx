@@ -4,6 +4,7 @@ import {
   defaultDatetimeLocal,
   fetchHospitalConfig,
   getToken,
+  getUsername,
   searchInvestigation,
 } from './api/client';
 import Login from './components/Login';
@@ -15,6 +16,7 @@ import PendingTabs from './components/PendingTabs';
 
 export default function App() {
   const [authed, setAuthed] = useState(() => Boolean(getToken()));
+  const [username, setUsername] = useState(() => getUsername());
   const [hospital, setHospital] = useState(null);
   const [regNo, setRegNo] = useState('');
   const [fromDate, setFromDate] = useState(defaultDatetimeLocal(0, 0));
@@ -52,12 +54,20 @@ export default function App() {
   const hasData = result?.ok && result.data?.length > 0;
 
   if (!authed) {
-    return <Login onLoggedIn={() => setAuthed(true)} />;
+    return (
+      <Login
+        onLoggedIn={(loggedInUsername) => {
+          setUsername(loggedInUsername);
+          setAuthed(true);
+        }}
+      />
+    );
   }
 
   function handleLogout() {
     clearToken();
     setAuthed(false);
+    setUsername(null);
   }
 
   return (
@@ -140,6 +150,7 @@ export default function App() {
               chart={result.chart}
               editOpen={editOpen}
               onEditOpenChange={setEditOpen}
+              generatedBy={username}
             />
           )}
 

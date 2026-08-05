@@ -1,5 +1,6 @@
 const API_BASE = '/api';
 const TOKEN_KEY = 'auth_token';
+const USERNAME_KEY = 'auth_username';
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
@@ -11,6 +12,15 @@ export function setToken(token) {
 
 export function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USERNAME_KEY);
+}
+
+export function getUsername() {
+  return localStorage.getItem(USERNAME_KEY);
+}
+
+export function setUsername(username) {
+  if (username) localStorage.setItem(USERNAME_KEY, username);
 }
 
 function authHeaders() {
@@ -33,6 +43,7 @@ export async function login(username, password) {
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Login failed');
   setToken(data.token);
+  setUsername(data.username);
   return data;
 }
 

@@ -774,6 +774,14 @@ td.field-value.empty-val {
 .pending-item { padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; cursor: pointer; }
 .pending-item:hover { background: #f8fafc; }
 
+.report-footer {
+  text-align: right;
+  font-size: 10px;
+  color: #6b7280;
+  margin-top: 10px;
+  padding-top: 4px;
+}
+
 /* Print helpers: hide on-screen print tables, show only when printing */
 .chart-print { display: none; }
 
