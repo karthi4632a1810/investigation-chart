@@ -158,7 +158,7 @@ export default function InvestigationChart({
         </div>
         <div className="letterhead-title">
           <div className="chart-title-main">INVESTIGATION CHART</div>
-          <div className="chart-regno">UHID: {regNo}</div>
+          <div className="chart-regno">UHID / IP: {regNo}</div>
         </div>
       </div>
 

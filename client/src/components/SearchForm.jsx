@@ -12,7 +12,7 @@ export default function SearchForm({
   return (
     <form className="searchbar" onSubmit={onSubmit}>
       <div className="field">
-        <label>UHID</label>
+        <label>UHID / IP</label>
         <input
           type="text"
           value={regNo}
