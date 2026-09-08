@@ -41,6 +41,38 @@ export async function fetchLabDetail(orderid) {
   return data;
 }
 
+export async function fetchReportStatus() {
+  const res = await fetch(`${API_BASE}/reports/status`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load automation status');
+  return data;
+}
+
+export async function fetchReportDates() {
+  const res = await fetch(`${API_BASE}/reports/dates`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load report dates');
+  return data.dates;
+}
+
+export async function fetchReportsForDate(date) {
+  const res = await fetch(`${API_BASE}/reports/${encodeURIComponent(date)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load reports');
+  return data.patients;
+}
+
+export async function triggerReportRun() {
+  const res = await fetch(`${API_BASE}/reports/run-now`, { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to run discharge check');
+  return data.summary;
+}
+
+export function reportPdfUrl(date, ipNo) {
+  return `${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/pdf`;
+}
+
 export function defaultDateOnly() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');

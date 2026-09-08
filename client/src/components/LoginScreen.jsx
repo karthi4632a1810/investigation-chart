@@ -1,4 +1,5 @@
 export default function LoginScreen({
+  hospital,
   username,
   password,
   loading,
@@ -11,10 +12,10 @@ export default function LoginScreen({
     <div className="login-shell">
       <div className="login-card">
         <div className="login-brand">
-          <div className="login-badge">🔐</div>
+          <div className="login-badge">🏥</div>
           <div>
-            <h2>Sign in to continue</h2>
-            <p>Access the investigation chart dashboard with your configured credentials.</p>
+            <h2>{hospital?.nameEn || 'Sign in to continue'}</h2>
+            <p>{hospital?.nameEn ? 'Investigation Chart Portal' : 'Access the investigation chart dashboard with your configured credentials.'}</p>
           </div>
         </div>
 

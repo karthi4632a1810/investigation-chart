@@ -3,3 +3,7 @@ dist/
 .env
 cookies.txt
 *.log
+
+# Generated patient reports and discharge lists — contain PHI, never commit.
+/reports/
+/discharge.csv

@@ -10,9 +10,11 @@ import InvestigationChart from './components/InvestigationChart';
 import RawResults from './components/RawResults';
 import DetailModal from './components/DetailModal';
 import LoginScreen from './components/LoginScreen';
+import DischargeReports from './components/DischargeReports';
 
 export default function App() {
   const [hospital, setHospital] = useState(null);
+  const [view, setView] = useState('search'); // 'search' | 'reports'
   const [regNo, setRegNo] = useState('');
   const [fromDate, setFromDate] = useState(defaultDateOnly());
   const [toDate, setToDate] = useState(defaultDateOnly());
@@ -85,6 +87,7 @@ export default function App() {
   if (!isAuthenticated) {
     return (
       <LoginScreen
+        hospital={hospital}
         username={username}
         password={password}
         loading={loginLoading}
@@ -97,14 +100,47 @@ export default function App() {
   }
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <h2>Lab Result Search &amp; Investigation Chart</h2>
-        <button type="button" className="btn secondary" onClick={handleLogout}>
-          Logout
-        </button>
-      </div>
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="app-brand">
+          <div className="app-brand-icon">🏥</div>
+          <div className="app-brand-text">
+            <div className="app-brand-title">{hospital?.nameEn || 'Lab Result Search & Investigation Chart'}</div>
+            <div className="app-brand-subtitle">Investigation Chart Portal</div>
+          </div>
+        </div>
+        <div className="page-header-actions">
+          <div className="tabs no-print">
+            <button
+              type="button"
+              className={`tab-btn ${view === 'search' ? 'active' : ''}`}
+              onClick={() => setView('search')}
+            >
+              🔍 Search
+            </button>
+            <button
+              type="button"
+              className={`tab-btn ${view === 'reports' ? 'active' : ''}`}
+              onClick={() => setView('reports')}
+            >
+              🗂️ Discharge Reports
+            </button>
+          </div>
+          <button type="button" className="btn ghost-danger" onClick={handleLogout}>
+            Logout
+          </button>
+        </div>
+      </header>
 
+      <main className="page">
+      {view === 'reports' && <DischargeReports />}
+
+      {view === 'search' && (
+        <>
+      <div className="section-header">
+        <h2>Lab Result Search</h2>
+        <p className="section-subtitle">Search a patient's investigation chart and raw lab results.</p>
+      </div>
       <SearchForm
         regNo={regNo}
         fromDate={fromDate}
@@ -176,6 +212,9 @@ export default function App() {
         orderId={detailOrderId}
         onClose={() => setDetailOrderId(null)}
       />
+        </>
+      )}
+      </main>
     </div>
   );
 }
