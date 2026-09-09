@@ -1,0 +1,36 @@
+# Production override for a bare VPS. Apply on top of the base compose file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+#
+# What this changes vs. local dev:
+#   - Only the frontend (1003) and the MinIO S3 API (4003) are bound to all
+#     interfaces — those are the two ports a browser actually needs to reach
+#     (the frontend's nginx proxies /api internally; MinIO is hit directly
+#     for presigned PDF downloads, so it can't be loopback-only).
+#   - The backend's own port, Mongo, and the MinIO web console are bound to
+#     127.0.0.1 only, so they're reachable for local debugging (SSH tunnel)
+#     but never exposed to the public internet.
+#   - restart: always instead of unless-stopped, so containers come back
+#     after a host reboot even if they were manually stopped beforehand.
+
+services:
+  server:
+    ports:
+      - "127.0.0.1:2003:2003"
+    restart: always
+
+  client:
+    ports:
+      - "1003:80"
+    restart: always
+
+  mongo:
+    ports:
+      - "127.0.0.1:3003:3003"
+    restart: always
+
+  minio:
+    ports:
+      - "4003:4003"
+      - "127.0.0.1:5003:5003"
+    restart: always
