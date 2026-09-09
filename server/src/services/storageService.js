@@ -19,12 +19,21 @@ const ACCESS_KEY = process.env.MINIO_ACCESS_KEY || 'minioadmin';
 const SECRET_KEY = process.env.MINIO_SECRET_KEY || 'minioadmin';
 const BUCKET = process.env.MINIO_BUCKET || 'investigation-reports';
 
+// A fixed region skips the SDK's automatic bucket-region lookup (a real network
+// call to the endpoint). Without it, `presignClient.presignedGetObject` — which
+// is deliberately configured with the browser-facing host, e.g. "localhost" —
+// tried to connect to that host *from inside this container*, where it's
+// unreachable, and failed with ECONNREFUSED before ever getting to sign anything.
+// MinIO doesn't enforce real AWS regions, so any fixed value works.
+const REGION = process.env.MINIO_REGION || 'us-east-1';
+
 const minioClient = new Client({
   endPoint: process.env.MINIO_ENDPOINT || 'localhost',
   port: PORT,
   useSSL: USE_SSL,
   accessKey: ACCESS_KEY,
   secretKey: SECRET_KEY,
+  region: REGION,
 });
 
 // Falls back to MINIO_ENDPOINT when no public endpoint is set, so this still works
@@ -35,12 +44,18 @@ const presignClient = new Client({
   useSSL: process.env.MINIO_PUBLIC_USE_SSL === 'true' || USE_SSL,
   accessKey: ACCESS_KEY,
   secretKey: SECRET_KEY,
+  region: REGION,
 });
 
 let bucketReady = null;
 
 export function reportObjectKey(date, ipNo) {
   return `${date}/${ipNo}.pdf`;
+}
+
+/** The EMR's own discharge summary document — separate from the lab investigation chart. */
+export function reportSummaryObjectKey(date, ipNo) {
+  return `${date}/${ipNo}-summary.pdf`;
 }
 
 /** Creates the bucket if it doesn't exist yet. Safe to call repeatedly. */

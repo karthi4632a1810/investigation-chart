@@ -13,6 +13,35 @@ import { promisify } from 'util';
 import { searchInvestigation } from './emrService.js';
 import { reportObjectKey, uploadPdfFile } from './storageService.js';
 
+/**
+ * Pulls the search window's start back by `hoursBack` hours. Confirmed against
+ * the live EMR: a patient's lab orders can be timestamped *well before* her
+ * recorded admission time (pre-admission / pre-op workup carried into the
+ * inpatient record) — two observed cases so far, one 12 hours before admission,
+ * another a full 3 days before. An exact admission->discharge window silently
+ * misses these even though the search itself "succeeds" with zero rows.
+ * Reformats to MM/DD/YYYY HH:mm, one of the formats normalizeSearchDate already
+ * accepts.
+ */
+function widenWindowStart(admissionDateStr, hoursBack) {
+  const m = String(admissionDateStr).match(/^(\d{1,2})-(\d{1,2})-(\d{4})[ T](\d{2}):(\d{2})/);
+  if (!m) return admissionDateStr;
+
+  const [, day, month, year, hour, minute] = m;
+  const d = new Date(+year, +month - 1, +day, +hour, +minute);
+  d.setHours(d.getHours() - hoursBack);
+
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// A week, not a day: the second real case needed 3 days of headroom, and
+// pre-op workups can reasonably be ordered up to about a week ahead of an
+// elective admission. Kept bounded (not unbounded) so a patient with an
+// unrelated admission months earlier under the same REG NO doesn't have that
+// old stay's results folded into this one.
+const PRE_ADMISSION_BUFFER_HOURS = 24 * 7;
+
 const execFileAsync = promisify(execFile);
 
 // The host dev workflow uses the system's google-chrome; the Docker image installs
@@ -110,10 +139,21 @@ function renderChartTable(dates, template, chartValues) {
   return `<table class="chart"><thead><tr><th style="width:26%;">Parameter</th><th style="width:18%;">Ref. Range</th>${headCols}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
+let defaultLogoDataUri = '';
+try {
+  const logoFile = new URL('../assets/logo.png', import.meta.url);
+  if (fs.existsSync(logoFile)) {
+    defaultLogoDataUri = `data:image/png;base64,${fs.readFileSync(logoFile).toString('base64')}`;
+  }
+} catch {
+  // fallback to hospital.logoPath if local asset cannot be read
+}
+
 function renderLetterhead(hospital, regNo) {
+  const logoSrc = defaultLogoDataUri || hospital.logoPath || '';
   return `
     <div class="letterhead">
-      <div class="letterhead-logo">${hospital.logoPath ? `<img src="${esc(hospital.logoPath)}" onerror="this.style.display='none'" />` : ''}</div>
+      <div class="letterhead-logo">${logoSrc ? `<img src="${esc(logoSrc)}" onerror="this.style.display='none'" />` : ''}</div>
       <div class="letterhead-name">
         <div class="hosp-name-en">${esc(hospital.nameEn)}</div>
         <div class="hosp-name-ta">${esc(hospital.nameTa)}</div>
@@ -222,39 +262,131 @@ ${pageBlocks}
 </html>`;
 }
 
-/** Renders HTML to a PDF file via headless Chrome. Throws on failure. */
+/**
+ * Renders HTML to a PDF file via headless Chrome. Throws on failure.
+ *
+ * Each call gets its own `--user-data-dir`. Without it, every invocation shares
+ * Chrome's default profile directory and its `SingletonLock` file — the first
+ * concurrent (or not-yet-cleaned-up) launch wins the lock and every other one
+ * fails outright with "Failed to create a ProcessSingleton for your profile
+ * directory", which is exactly the kind of failure that looks like a flaky EMR
+ * fetch (it happens after the chart data is already fetched) but isn't.
+ *
+ * `--virtual-time-budget` is a leftover of old headless Chrome and is not
+ * reliably honored under `--headless=new` — observed in testing to leave the
+ * process running for minutes past its supposed 8-second budget. The hard
+ * `timeout` below is what actually bounds this: execFile SIGTERMs (then
+ * SIGKILLs) the process if it's still running after RENDER_TIMEOUT_MS, turning
+ * a silent multi-minute hang into a fast, clear, retryable failure.
+ */
+const RENDER_TIMEOUT_MS = 60_000;
+
 export async function renderHtmlToPdf(html, outPath) {
   const tmpHtmlPath = path.join(os.tmpdir(), `investigation-pdf-${crypto.randomUUID()}.html`);
+  const profileDir = path.join(os.tmpdir(), `chrome-profile-${crypto.randomUUID()}`);
   fs.writeFileSync(tmpHtmlPath, html, 'utf8');
 
   try {
-    await execFileAsync(CHROME_BIN, [
-      '--headless=new',
-      '--disable-gpu',
-      '--no-sandbox',
-      '--virtual-time-budget=8000',
-      `--print-to-pdf=${outPath}`,
-      '--no-pdf-header-footer',
-      `file://${tmpHtmlPath}`,
-    ]);
+    await execFileAsync(
+      CHROME_BIN,
+      [
+        '--headless=new',
+        '--disable-gpu',
+        // This container has no GPU/Vulkan driver at all. Without these, ANGLE's
+        // Vulkan backend probe fails and the GPU process crash-loops retrying
+        // (visible in logs as repeated "Exiting GPU process due to errors during
+        // initialization") before falling back to software rendering — on a slow
+        // host that loop alone can eat the whole render timeout. These flags skip
+        // the GPU process and Vulkan probing entirely; this is the standard flag
+        // set for running headless Chrome/Chromium in a container.
+        '--disable-software-rasterizer',
+        '--disable-dev-shm-usage',
+        '--disable-setuid-sandbox',
+        '--no-sandbox',
+        `--user-data-dir=${profileDir}`,
+        '--virtual-time-budget=8000',
+        `--print-to-pdf=${outPath}`,
+        '--no-pdf-header-footer',
+        `file://${tmpHtmlPath}`,
+      ],
+      // SIGKILL, not the default SIGTERM: Chromium's multi-process tree (zygote,
+      // renderer, gpu-process) doesn't reliably tear itself down on SIGTERM under
+      // load, which left orphaned children still writing into the profile dir —
+      // causing the *cleanup* below to fail with ENOTEMPTY and mask whatever the
+      // real render outcome was.
+      { timeout: RENDER_TIMEOUT_MS, killSignal: 'SIGKILL' },
+    );
+
+    // Chromium can exit 0 under --headless=new + --virtual-time-budget without
+    // ever having written the output file (observed in testing) — silently
+    // continuing would surface as a confusing ENOENT from deep inside the MinIO
+    // upload instead of a clear, retryable error from the actual point of failure.
+    if (!fs.existsSync(outPath)) {
+      throw new Error('Chrome exited without producing a PDF file');
+    }
   } finally {
     fs.rmSync(tmpHtmlPath, { force: true });
+    // Best-effort: a still-unwinding Chromium subprocess can transiently hold
+    // files open here. Failing to clean up a temp dir is not worth failing (or
+    // masking the result of) the whole PDF generation attempt over.
+    try {
+      fs.rmSync(profileDir, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(`[pdf] could not remove temp profile dir ${profileDir}: ${error.message}`);
+    }
   }
 }
 
 /**
- * Fetches the full chart for one patient (by IP number) across the given date
- * window, renders it to a PDF, and uploads it to MinIO at `<date>/<ipNo>.pdf`.
+ * Fetches the full chart for one patient across the given date window, renders
+ * it to a PDF, and uploads it to MinIO at `<date>/<ipNo>.pdf`.
+ *
+ * Two corrections over a literal admission->discharge search, both confirmed
+ * against the live EMR rather than assumed:
+ *
+ * 1. The search window starts PRE_ADMISSION_BUFFER_HOURS before the recorded
+ *    admission time. A patient's lab orders can predate her official admission
+ *    timestamp (ER / pre-admission workup carried into the inpatient record —
+ *    one observed case had orders 12 hours earlier), and an exact window
+ *    silently excludes them even though the search itself "succeeds" with zero
+ *    rows.
+ * 2. Tries the IP number first; some patients' lab orders are filed under their
+ *    REG NO without a matching IP NO on the order record, which makes an
+ *    IP-number search come back empty even though the patient has real results
+ *    (confirmed directly: IP-number search 0 rows, REG-number search 24 rows,
+ *    same patient, same window). When `regNo` is available and the IP search
+ *    finds nothing, retry with it before giving up.
  *
  * @returns {Promise<{ok: true, dateCount: number, fetchErrors: string[], objectKey: string} | {ok: false, error: string}>}
  */
-export async function generatePatientPdf({ ipNo, admissionDate, dischargeDate, hospital, date }) {
-  const result = await searchInvestigation(ipNo, admissionDate, dischargeDate);
+export async function generatePatientPdf({ ipNo, regNo, admissionDate, dischargeDate, hospital, date }) {
+  const searchFromDate = widenWindowStart(admissionDate, PRE_ADMISSION_BUFFER_HOURS);
+
+  let result = await searchInvestigation(ipNo, searchFromDate, dischargeDate);
+
+  if (regNo && (!result.ok || !result.chart?.chartDates?.length)) {
+    const byRegNo = await searchInvestigation(regNo, searchFromDate, dischargeDate);
+    if (byRegNo.ok && byRegNo.chart?.chartDates?.length) {
+      result = byRegNo;
+    }
+  }
+
   if (!result.ok) {
-    return { ok: false, error: `EMR search failed: ${result.error}` };
+    // A real technical failure (timeout, connection reset, EMR error) — worth
+    // retrying, since the same request could well succeed a few seconds later.
+    return { ok: false, reason: 'TECHNICAL', error: `EMR search failed: ${result.error}` };
   }
   if (!result.chart?.chartDates?.length) {
-    return { ok: false, error: 'No investigation chart could be built (no Req No / dates detected).' };
+    // Not a failure of this system — both identifiers were searched, with the
+    // window already widened a week before admission, and the EMR still has
+    // zero lab orders for this patient. Some short/observation admissions
+    // genuinely never have any labs ordered. Retrying can't produce data that
+    // was never entered, so this is a terminal outcome, not a transient one.
+    return {
+      ok: false,
+      reason: 'NO_DATA',
+      error: 'No lab orders found for this patient (checked both IP and REG number, admission week onward).',
+    };
   }
 
   const html = buildInvestigationChartHtml({ hospital, regNo: ipNo, chart: result.chart });
@@ -270,6 +402,7 @@ export async function generatePatientPdf({ ipNo, admissionDate, dischargeDate, h
       dateCount: result.chart.chartDates.length,
       fetchErrors: result.chart.fetchErrors || [],
       patientMeta: result.chart.patientMeta,
+      reqNos: result.chart.reqNos || [],
       objectKey,
     };
   } finally {

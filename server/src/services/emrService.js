@@ -12,9 +12,14 @@ import {
 import { normalizeTestKey } from '../templates/chartTemplate.js';
 import { sortChartDates } from '../utils/dateUtils.js';
 
+// Without an explicit timeout, axios waits forever on a connection that never
+// completes — observed in testing as a login/detail-fetch call hanging for
+// minutes with nothing coming back, silently blocking the whole discharge check.
+const EMR_TIMEOUT_MS = 60_000;
+
 function createClient() {
   const jar = new CookieJar();
-  const client = wrapper(axios.create({ jar, withCredentials: true }));
+  const client = wrapper(axios.create({ jar, withCredentials: true, timeout: EMR_TIMEOUT_MS }));
   return client;
 }
 
@@ -73,7 +78,7 @@ export async function queryEMR(regNoVal, ipNoVal, fromDate, toDate) {
     const { data: json } = await axios.post(
       config.emr.queryBuilderUrl,
       { strQuery: sql, strCon: 'BB_CONSTR' },
-      { headers: { 'Content-Type': 'application/json; charset=UTF-8' } },
+      { headers: { 'Content-Type': 'application/json; charset=UTF-8' }, timeout: EMR_TIMEOUT_MS },
     );
 
     const rows = json?.d ? JSON.parse(json.d) : [];
@@ -271,6 +276,7 @@ JOIN (
     };
     const response = await axios.post(config.emr.retDatatableUrl, payload, {
       headers: { 'Content-Type': 'application/json' },
+      timeout: EMR_TIMEOUT_MS,
     });
     const records = JSON.parse(response.data.d);
     dynamicTestGroups = {};
@@ -365,7 +371,7 @@ export async function buildInvestigationChart(searchData) {
   const repeatCounts = {}; // `${fieldId}|${dayPart}` -> how many same-day repeat rows exist
 
   if (Object.keys(reqDateMap).length === 0) {
-    return { chartDates: [], chartValues: {}, unmapped: [], fetchErrors, patientMeta, template: {} };
+    return { chartDates: [], chartValues: {}, unmapped: [], fetchErrors, patientMeta, template: {}, reqNos: [] };
   }
 
   const client = createClient();
@@ -373,7 +379,7 @@ export async function buildInvestigationChart(searchData) {
 
   if (!loginResult.ok) {
     fetchErrors.push(`Login failed while building chart: ${JSON.stringify(loginResult.raw ?? loginResult.error)}`);
-    return { chartDates: [], chartValues: {}, unmapped: [], fetchErrors, patientMeta, template: {} };
+    return { chartDates: [], chartValues: {}, unmapped: [], fetchErrors, patientMeta, template: {}, reqNos: [] };
   }
 
   for (const [orderid, dateRaw] of Object.entries(reqDateMap)) {
@@ -547,6 +553,7 @@ export async function buildInvestigationChart(searchData) {
     fetchErrors,
     patientMeta,
     template: finalTemplate,
+    reqNos: Object.keys(reqDateMap),
   };
 }
 

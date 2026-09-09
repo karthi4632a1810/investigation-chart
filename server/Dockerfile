@@ -13,7 +13,13 @@ RUN apk add --no-cache \
     ca-certificates \
     ttf-freefont
 
-ENV CHROME_PATH=/usr/bin/chromium-browser
+# The real binary, not the /usr/bin/chromium-browser wrapper script: that wrapper
+# runs as root and *always* prepends --user-data-dir=/root/.config/chromium (its
+# "upstream failsafe" workaround for running as root), ahead of whatever we pass —
+# so every invocation contends for one shared profile lock no matter what
+# --user-data-dir investigationPdfService.js supplies. Calling the binary directly
+# means our unique-per-call --user-data-dir is the only one in effect.
+ENV CHROME_PATH=/usr/lib/chromium/chromium
 
 WORKDIR /app
 

@@ -4,6 +4,11 @@ services:
       context: ./server
       dockerfile: Dockerfile
     container_name: investigation-backend
+    # PDF generation shells out to Chromium (investigationPdfService.js), which
+    # forks crashpad handler subprocesses. Without a real init as PID 1, an
+    # abruptly-killed or crashed Chromium leaves those as unreaped zombies forever
+    # (Node doesn't reap grandchildren). `init: true` uses Docker's built-in tini.
+    init: true
     env_file:
       - ./server/.env
     environment:

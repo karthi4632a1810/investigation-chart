@@ -9,6 +9,10 @@ export const config = {
     password: process.env.APP_PASSWORD || 'admin123',
   },
   emr: {
+    // Used by dischargeSummaryService.js for the ward module's endpoints
+    // (GetPatdetail, pSummary.aspx), which live under a different path than the
+    // lab/query-builder URLs below but on the same host.
+    baseUrl: process.env.EMR_BASE_URL || 'https://emr.mapims.edu.in/BB15SE',
     loginUrl: process.env.EMR_LOGIN_URL,
     labUrlTemplate: process.env.EMR_LAB_URL_TEMPLATE,
     queryBuilderUrl: process.env.EMR_QUERY_BUILDER_URL,

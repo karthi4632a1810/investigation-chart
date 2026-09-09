@@ -62,6 +62,19 @@ export async function fetchReportsForDate(date) {
   return data.patients;
 }
 
+export async function searchReports(filters) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      params.set(key, value);
+    }
+  }
+  const res = await fetch(`${API_BASE}/reports/search?${params.toString()}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Search failed');
+  return data.patients;
+}
+
 export async function triggerReportRun() {
   const res = await fetch(`${API_BASE}/reports/run-now`, { method: 'POST' });
   const data = await res.json();
@@ -71,6 +84,10 @@ export async function triggerReportRun() {
 
 export function reportPdfUrl(date, ipNo) {
   return `${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/pdf`;
+}
+
+export function reportSummaryPdfUrl(date, ipNo) {
+  return `${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/summary-pdf`;
 }
 
 export function defaultDateOnly() {

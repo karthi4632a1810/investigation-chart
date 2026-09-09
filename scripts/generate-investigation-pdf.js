@@ -19,6 +19,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { config } from '../server/src/config.js';
 import { generatePatientPdf } from '../server/src/services/investigationPdfService.js';
+import { buildReportRecord, upsertReportRecord } from '../server/src/services/dischargeReportService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -101,6 +102,7 @@ async function main() {
 
   const result = await generatePatientPdf({
     ipNo,
+    regNo: row['REG NO'],
     admissionDate,
     dischargeDate,
     hospital: config.hospital,
@@ -116,6 +118,13 @@ async function main() {
     console.log(`Note: ${result.fetchErrors.length} fetch warning(s):`, result.fetchErrors);
   }
   console.log(`Uploaded to MinIO: ${result.objectKey}`);
+
+  // Without this, a manually-generated report exists as a PDF in MinIO but is
+  // invisible on the Discharge Reports screen, which reads report metadata from
+  // Mongo — not the object store — so it can list/search without touching the EMR.
+  await upsertReportRecord(folderDate, buildReportRecord(row, result));
+  console.log(`Recorded in Mongo for ${folderDate}.`);
+  process.exit(0); // the open Mongo connection would otherwise hold the process alive
 }
 
 main().catch((error) => {

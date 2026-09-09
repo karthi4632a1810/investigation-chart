@@ -4,13 +4,16 @@ import { config } from './config.js';
 import { getLabDetail, searchInvestigation } from './services/emrService.js';
 import {
   getReportPdfUrl,
+  getReportSummaryPdfUrl,
   getSchedulerStatus,
   listReportDates,
   loadReportIndex,
+  runBackfillForDate,
   runDischargeCheck,
+  searchReports,
   startDischargeScheduler,
 } from './services/dischargeReportService.js';
-import { pdfExists, reportObjectKey } from './services/storageService.js';
+import { pdfExists, reportObjectKey, reportSummaryObjectKey } from './services/storageService.js';
 
 import fs from 'fs';
 import path from 'path';
@@ -121,6 +124,17 @@ app.get('/api/detail/:orderid', async (req, res) => {
     }
   });
 
+  // Must come before /api/reports/:date — otherwise Express would match "search"
+  // as the :date param and reject it as an invalid date.
+  app.get('/api/reports/search', async (req, res) => {
+    try {
+      const patients = await searchReports(req.query);
+      res.json({ ok: true, patients });
+    } catch (error) {
+      res.status(503).json({ ok: false, error: `Reports store unavailable: ${error.message}` });
+    }
+  });
+
   app.get('/api/reports/:date', async (req, res) => {
     const { date } = req.params;
     if (!DATE_RE.test(date)) {
@@ -154,10 +168,47 @@ app.get('/api/detail/:orderid', async (req, res) => {
     }
   });
 
+  /** The EMR's own discharge summary document — separate from the lab chart above. */
+  app.get('/api/reports/:date/:ip/summary-pdf', async (req, res) => {
+    const { date, ip } = req.params;
+    if (!DATE_RE.test(date) || !IP_RE.test(ip)) {
+      return res.status(400).json({ ok: false, error: 'Invalid date or IP number' });
+    }
+
+    try {
+      if (!(await pdfExists(reportSummaryObjectKey(date, ip)))) {
+        return res.status(404).json({ ok: false, error: 'Discharge summary not found' });
+      }
+      res.redirect(await getReportSummaryPdfUrl(date, ip));
+    } catch (error) {
+      res.status(503).json({ ok: false, error: `Reports store unavailable: ${error.message}` });
+    }
+  });
+
   /** Manual trigger so you don't have to wait up to an hour to see it work. */
   app.post('/api/reports/run-now', async (_req, res) => {
     try {
       const summary = await runDischargeCheck();
+      res.json({ ok: true, summary });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /**
+   * Backfill a past date. The live scheduler only ever checks "today", so a
+   * date that's already gone by is otherwise never revisited — this runs the
+   * identical per-patient logic against a caller-supplied date instead. Can
+   * take a while for a busy day (one EMR round-trip per missing document), so
+   * this is meant to be fired and then watched via /api/reports/status.
+   */
+  app.post('/api/reports/backfill/:date', async (req, res) => {
+    const { date } = req.params;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ ok: false, error: 'Invalid date format, expected YYYY-MM-DD' });
+    }
+    try {
+      const summary = await runBackfillForDate(date);
       res.json({ ok: true, summary });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
