@@ -16,7 +16,7 @@
 services:
   server:
     ports:
-      - "127.0.0.1:2003:2003"
+      - "127.0.0.1:2033:2003"
     restart: always
 
   client:
@@ -26,11 +26,11 @@ services:
 
   mongo:
     ports:
-      - "127.0.0.1:3003:3003"
+      - "127.0.0.1:3033:3003"
     restart: always
 
   minio:
     ports:
       - "4003:4003"
-      - "127.0.0.1:5003:5003"
+      - "127.0.0.1:5033:5003"
     restart: always
