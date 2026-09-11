@@ -270,7 +270,7 @@ app.get('/api/detail/:orderid', async (req, res) => {
       const result = await sendInvestigationReportWhatsApp({
         toNumber,
         name: record?.name || ip,
-        note: `Investigation report for ${record?.name || ip} (${ip})`,
+        note: settings.secondParam,
         pdfUrl,
       });
       res.json({ ok: true, sentTo: toNumber, result });

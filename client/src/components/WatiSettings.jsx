@@ -5,6 +5,7 @@ import { WhatsAppIcon } from './Icons';
 export default function WatiSettings() {
   const [settings, setSettings] = useState(null);
   const [fixedNumberInput, setFixedNumberInput] = useState('');
+  const [secondParamInput, setSecondParamInput] = useState(' ');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -15,6 +16,7 @@ export default function WatiSettings() {
       .then((s) => {
         setSettings(s);
         setFixedNumberInput(s.fixedNumber || '');
+        setSecondParamInput(s.secondParam || ' ');
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -43,6 +45,11 @@ export default function WatiSettings() {
   function handleSaveFixedNumber(e) {
     e.preventDefault();
     persist({ fixedNumber: fixedNumberInput });
+  }
+
+  function handleSaveSecondParam(e) {
+    e.preventDefault();
+    persist({ secondParam: secondParamInput });
   }
 
   if (loading) {
@@ -83,6 +90,26 @@ export default function WatiSettings() {
             <span className="wati-toggle-knob" />
           </button>
         </div>
+
+        <form className="wati-fixed-number-form" onSubmit={handleSaveSecondParam}>
+          <label htmlFor="wati-second-param">Message body text (template's second field)</label>
+          <div className="wati-fixed-number-row">
+            <input
+              id="wati-second-param"
+              type="text"
+              placeholder=" "
+              value={secondParamInput}
+              onChange={(e) => setSecondParamInput(e.target.value)}
+            />
+            <button type="submit" className="btn btn-primary" disabled={saving}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+          <p className="wati-fixed-number-hint">
+            Inserted into the template's second line (the one after "report attached."), for both manual
+            and automatic sends. Defaults to a single space if left blank.
+          </p>
+        </form>
 
         {!settings.liveEnabled && (
           <form className="wati-fixed-number-form" onSubmit={handleSaveFixedNumber}>

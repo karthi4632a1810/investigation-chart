@@ -13,18 +13,28 @@ import { getMongoCollection } from './mongo.js';
 
 const COLLECTION = 'wati_settings';
 const DOC_ID = 'wati';
-const DEFAULTS = { liveEnabled: false, fixedNumber: '' };
+// A single space, not '' — the template's {{2}} slot renders as a blank line
+// either way, but WATI's API has been inconsistent about accepting a truly
+// empty parameter value, so a space is the safer "nothing to say" default.
+const DEFAULTS = { liveEnabled: false, fixedNumber: '', secondParam: ' ' };
 
 export async function getWatiSettings() {
   const collection = await getMongoCollection(COLLECTION);
   const doc = await collection.findOne({ _id: DOC_ID });
-  return doc ? { liveEnabled: Boolean(doc.liveEnabled), fixedNumber: doc.fixedNumber || '' } : { ...DEFAULTS };
+  return doc
+    ? {
+        liveEnabled: Boolean(doc.liveEnabled),
+        fixedNumber: doc.fixedNumber || '',
+        secondParam: doc.secondParam || ' ',
+      }
+    : { ...DEFAULTS };
 }
 
 export async function updateWatiSettings(patch = {}) {
   const update = {};
   if (typeof patch.liveEnabled === 'boolean') update.liveEnabled = patch.liveEnabled;
   if (typeof patch.fixedNumber === 'string') update.fixedNumber = patch.fixedNumber.trim();
+  if (typeof patch.secondParam === 'string') update.secondParam = patch.secondParam || ' ';
 
   const collection = await getMongoCollection(COLLECTION);
   await collection.updateOne({ _id: DOC_ID }, { $set: update }, { upsert: true });

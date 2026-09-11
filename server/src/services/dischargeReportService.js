@@ -365,7 +365,7 @@ async function processDischargeDate(dateFolder, mdy) {
                 await sendInvestigationReportWhatsApp({
                   toNumber: mobile,
                   name: patientName,
-                  note: `Investigation report for ${patientName} (${ipNo})`,
+                  note: watiSettings.secondParam,
                   pdfUrl,
                 });
                 console.log(`[discharge] sent WhatsApp lab report to ${mobile} for ${ipNo}`);
