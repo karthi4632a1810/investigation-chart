@@ -2,35 +2,27 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 #
-# What this changes vs. local dev:
-#   - Only the frontend (1003) and the MinIO S3 API (4003) are bound to all
-#     interfaces — those are the two ports a browser actually needs to reach
-#     (the frontend's nginx proxies /api internally; MinIO is hit directly
-#     for presigned PDF downloads, so it can't be loopback-only).
-#   - The backend's own port, Mongo, and the MinIO web console are bound to
-#     127.0.0.1 only, so they're reachable for local debugging (SSH tunnel)
-#     but never exposed to the public internet.
-#   - restart: always instead of unless-stopped, so containers come back
-#     after a host reboot even if they were manually stopped beforehand.
+# Port bindings are NOT set here. Compose concatenates list-valued keys (like
+# "ports:") across -f files instead of replacing them — an earlier version of
+# this file tried to override ports here and ended up with BOTH the public
+# and the loopback binding active at once, briefly exposing an unauthenticated
+# Mongo on the public internet. The actual port values live in docker-compose.yml
+# as ${...} env vars, overridden per environment via .env — see
+# .env.production.example for the values this deployment should use.
+#
+# This file only changes the restart policy: "always" instead of
+# "unless-stopped", so containers come back after a host reboot even if they
+# were manually stopped beforehand.
 
 services:
   server:
-    ports:
-      - "127.0.0.1:2033:2003"
     restart: always
 
   client:
-    ports:
-      - "1003:80"
     restart: always
 
   mongo:
-    ports:
-      - "127.0.0.1:3033:3003"
     restart: always
 
   minio:
-    ports:
-      - "4003:4003"
-      - "127.0.0.1:5033:5003"
     restart: always

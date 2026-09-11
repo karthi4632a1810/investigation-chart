@@ -32,7 +32,11 @@ cp server/.env.production.example server/.env
 
 Edit both:
 - `.env` — generate a real MinIO root user/password (`openssl rand -base64 24`),
-  confirm `MINIO_PUBLIC_ENDPOINT=194.238.22.210`.
+  confirm `MINIO_PUBLIC_ENDPOINT=194.238.22.210`. If this VPS is shared with
+  other apps (it is — check `docker ps` first), the `*_PORT_BIND` vars here
+  are what keep the backend/Mongo/MinIO-console off the public internet and
+  off ports other containers already hold; adjust the loopback port numbers
+  if the ones in the example collide too.
 - `server/.env` — set `APP_USERNAME`/`APP_PASSWORD` (the app's own login, not
   EMR), the same MinIO credentials as above, and the real `EMR_USERNAME`/
   `EMR_PASSWORD`.
@@ -59,8 +63,14 @@ Only open what's actually served publicly:
 sudo ufw allow OpenSSH
 sudo ufw allow 1003/tcp
 sudo ufw allow 4003/tcp
+sudo ufw default deny incoming
 sudo ufw enable
 ```
+
+Do this **before** `docker compose up`, not after — Docker inserts its own
+iptables rules that can bypass a `ufw` policy applied too late. If you already
+started the stack, run `docker ps` afterward and confirm nothing besides
+`1003`/`4003` shows a `0.0.0.0:` binding.
 
 ## 6. Verify
 

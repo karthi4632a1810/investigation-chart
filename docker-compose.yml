@@ -29,8 +29,13 @@ services:
       # this at the server's real hostname/IP for anything beyond local testing.
       MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-localhost}
       MINIO_PUBLIC_PORT: 4003
+    # A single templated bind string (not a second "ports:" list in an override
+    # file) — Compose concatenates list-valued keys across -f files instead of
+    # replacing them, so a docker-compose.prod.yml override here would leave
+    # BOTH the public and the loopback binding active at once. Overriding the
+    # env var in .env is the only way to actually change this per environment.
     ports:
-      - "2003:2003"
+      - "${SERVER_PORT_BIND:-2003:2003}"
     depends_on:
       - mongo
       - minio
@@ -44,7 +49,7 @@ services:
       dockerfile: Dockerfile
     container_name: investigation-front
     ports:
-      - "1003:80"
+      - "${CLIENT_PORT_BIND:-1003:80}"
     depends_on:
       - server
     restart: unless-stopped
@@ -56,7 +61,7 @@ services:
     container_name: investigation-mongo
     command: ["--port", "3003"]
     ports:
-      - "3003:3003"
+      - "${MONGO_PORT_BIND:-3003:3003}"
     volumes:
       - mongo-data:/data/db
     restart: unless-stopped
@@ -71,8 +76,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "4003:4003" # S3 API
-      - "5003:5003" # Web console
+      - "${MINIO_API_PORT_BIND:-4003:4003}"
+      - "${MINIO_CONSOLE_PORT_BIND:-5003:5003}"
     volumes:
       - minio-data:/data
     restart: unless-stopped
