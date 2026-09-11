@@ -27,4 +27,13 @@ export const config = {
     nameTa: process.env.HOSPITAL_NAME_TA,
     address: process.env.HOSPITAL_ADDRESS,
   },
+  wati: {
+    // The tenant-specific API host, e.g. https://live-mt-server.wati.io/123456
+    // (found in the WATI dashboard's API Docs page).
+    endpoint: process.env.API_ENDPOINT,
+    // The full "Bearer <jwt>" value from the same page — used as-is in the
+    // Authorization header, not the differently-formatted WATI_API_TOKEN.
+    accessToken: process.env.WATI_ACCESS_TOKEN,
+    templateId: process.env.WATI_TEMPLATE_ID || 'investigation',
+  },
 };

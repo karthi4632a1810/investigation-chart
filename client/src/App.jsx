@@ -11,12 +11,14 @@ import RawResults from './components/RawResults';
 import DetailModal from './components/DetailModal';
 import LoginScreen from './components/LoginScreen';
 import DischargeReports from './components/DischargeReports';
+import WatiSettings from './components/WatiSettings';
 import {
   FilePdfIcon,
   HospitalIcon,
   LogoutIcon,
   SearchIcon,
   SparklesIcon,
+  WhatsAppIcon,
 } from './components/Icons';
 
 const RECENT_SEARCHES_KEY = 'portal_recent_searches';
@@ -187,6 +189,14 @@ export default function App() {
               <FilePdfIcon size={16} />
               <span>Discharge Reports</span>
             </button>
+            <button
+              type="button"
+              className={`nav-segment-btn ${view === 'wati' ? 'active' : ''}`}
+              onClick={() => setView('wati')}
+            >
+              <WhatsAppIcon size={16} />
+              <span>WATI Settings</span>
+            </button>
           </nav>
 
           <button
@@ -203,6 +213,8 @@ export default function App() {
 
       <main className="page">
         {view === 'reports' && <DischargeReports />}
+
+        {view === 'wati' && <WatiSettings />}
 
         {view === 'search' && (
           <div className="search-view-container">

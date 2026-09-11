@@ -90,6 +90,33 @@ export function reportSummaryPdfUrl(date, ipNo) {
   return `${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/summary-pdf`;
 }
 
+export async function sendReportWhatsApp(date, ipNo) {
+  const res = await fetch(`${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/send-whatsapp`, {
+    method: 'POST',
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to send WhatsApp message');
+  return data;
+}
+
+export async function fetchWatiSettings() {
+  const res = await fetch(`${API_BASE}/wati/settings`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load WATI settings');
+  return data.settings;
+}
+
+export async function updateWatiSettings(payload) {
+  const res = await fetch(`${API_BASE}/wati/settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to update WATI settings');
+  return data.settings;
+}
+
 export function defaultDateOnly() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');

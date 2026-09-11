@@ -4,6 +4,7 @@ import { config } from './config.js';
 import { getLabDetail, searchInvestigation } from './services/emrService.js';
 import {
   getReportPdfUrl,
+  getReportRecord,
   getReportSummaryPdfUrl,
   getSchedulerStatus,
   listReportDates,
@@ -14,6 +15,8 @@ import {
   startDischargeScheduler,
 } from './services/dischargeReportService.js';
 import { pdfExists, reportObjectKey, reportSummaryObjectKey } from './services/storageService.js';
+import { getWatiSettings, updateWatiSettings } from './services/watiSettingsService.js';
+import { sendInvestigationReportWhatsApp } from './services/watiService.js';
 
 import fs from 'fs';
 import path from 'path';
@@ -210,6 +213,67 @@ app.get('/api/detail/:orderid', async (req, res) => {
     try {
       const summary = await runBackfillForDate(date);
       res.json({ ok: true, summary });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /**
+   * WATI live-mode settings — see watiSettingsService.js. `liveEnabled: false`
+   * (the default) routes manual sends to `fixedNumber` instead of real patient
+   * numbers, and disables the automation's auto-send entirely.
+   */
+  app.get('/api/wati/settings', async (_req, res) => {
+    try {
+      res.json({ ok: true, settings: await getWatiSettings() });
+    } catch (error) {
+      res.status(503).json({ ok: false, error: `Settings store unavailable: ${error.message}` });
+    }
+  });
+
+  app.post('/api/wati/settings', async (req, res) => {
+    try {
+      res.json({ ok: true, settings: await updateWatiSettings(req.body || {}) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /**
+   * Manual "Send WhatsApp" trigger for a patient's lab report (never the
+   * discharge summary). Target number depends on WATI live mode: the
+   * patient's own mobile on file when live, otherwise the configured fixed
+   * test number — same rule the automation's auto-send follows.
+   */
+  app.post('/api/reports/:date/:ip/send-whatsapp', async (req, res) => {
+    const { date, ip } = req.params;
+    if (!DATE_RE.test(date) || !IP_RE.test(ip)) {
+      return res.status(400).json({ ok: false, error: 'Invalid date or IP number' });
+    }
+    try {
+      if (!(await pdfExists(reportObjectKey(date, ip)))) {
+        return res.status(404).json({ ok: false, error: 'Lab report not found' });
+      }
+
+      const [record, settings] = await Promise.all([getReportRecord(date, ip), getWatiSettings()]);
+      const toNumber = settings.liveEnabled ? record?.mobile : settings.fixedNumber;
+      if (!toNumber) {
+        return res.status(400).json({
+          ok: false,
+          error: settings.liveEnabled
+            ? 'No mobile number on file for this patient'
+            : 'No fixed test number configured — set one in WATI Settings first',
+        });
+      }
+
+      const pdfUrl = await getReportPdfUrl(date, ip);
+      const result = await sendInvestigationReportWhatsApp({
+        toNumber,
+        name: record?.name || ip,
+        note: `Investigation report for ${record?.name || ip} (${ip})`,
+        pdfUrl,
+      });
+      res.json({ ok: true, sentTo: toNumber, result });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
     }

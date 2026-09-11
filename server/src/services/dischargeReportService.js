@@ -22,6 +22,8 @@ import { generatePatientPdf } from './investigationPdfService.js';
 import { generateDischargeSummaryPdf } from './dischargeSummaryService.js';
 import { pdfExists, reportObjectKey, reportSummaryObjectKey, getPdfPresignedUrl } from './storageService.js';
 import { getMongoCollection } from './mongo.js';
+import { getWatiSettings } from './watiSettingsService.js';
+import { sendInvestigationReportWhatsApp } from './watiService.js';
 
 const REPORTS_COLLECTION = 'discharge_reports';
 // Patients confirmed to have zero lab orders anywhere in the EMR (checked by both
@@ -138,6 +140,14 @@ export async function fetchDischargeList(fromDate, toDate) {
   const data = await res.json();
   const rows = data?.d ? JSON.parse(data.d) : [];
   return (Array.isArray(rows) ? rows : []).filter(isRealPatient);
+}
+
+export async function getReportRecord(dateFolder, ipNo) {
+  const collection = await getMongoCollection(REPORTS_COLLECTION);
+  const doc = await collection.findOne({ date: dateFolder, ipNo });
+  if (!doc) return null;
+  const { _id, ...rest } = doc;
+  return rest;
 }
 
 export async function loadReportIndex(dateFolder) {
@@ -342,6 +352,27 @@ async function processDischargeDate(dateFolder, mdy) {
             await upsertReportRecord(dateFolder, buildReportRecord(row, result));
             summary.generated += 1;
             console.log(`[discharge] generated lab report for ${ipNo} (${patientName})`);
+
+            // WhatsApp auto-send — lab report only, never the discharge summary,
+            // and only when live mode is on (see watiSettingsService.js). A send
+            // failure here shouldn't affect the report itself, which already
+            // succeeded — it's logged and left for a manual resend if needed.
+            try {
+              const watiSettings = await getWatiSettings();
+              const mobile = row['MOBILE'];
+              if (watiSettings.liveEnabled && mobile) {
+                const pdfUrl = await getPdfPresignedUrl(labKey);
+                await sendInvestigationReportWhatsApp({
+                  toNumber: mobile,
+                  name: patientName,
+                  note: `Investigation report for ${patientName} (${ipNo})`,
+                  pdfUrl,
+                });
+                console.log(`[discharge] sent WhatsApp lab report to ${mobile} for ${ipNo}`);
+              }
+            } catch (error) {
+              console.error(`[discharge] ${ipNo}: WhatsApp auto-send failed: ${error.message}`);
+            }
           }
         } catch (error) {
           summary.failed += 1;

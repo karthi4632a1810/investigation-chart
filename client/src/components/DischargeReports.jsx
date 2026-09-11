@@ -6,6 +6,7 @@ import {
   reportPdfUrl,
   reportSummaryPdfUrl,
   searchReports,
+  sendReportWhatsApp,
   triggerReportRun,
 } from '../api/client';
 import {
@@ -189,6 +190,47 @@ function AutomationStatus({ status, onRunNow, running }) {
   );
 }
 
+/** Self-contained so each row tracks its own send state independently. */
+function SendWhatsAppButton({ date, ipNo, name }) {
+  const [status, setStatus] = useState('idle'); // idle | sending | sent | error
+  const [error, setError] = useState('');
+
+  async function handleClick() {
+    if (status === 'sending') return;
+    setStatus('sending');
+    setError('');
+    try {
+      await sendReportWhatsApp(date, ipNo);
+      setStatus('sent');
+    } catch (err) {
+      setStatus('error');
+      setError(err.message);
+    }
+  }
+
+  if (status === 'sent') {
+    return (
+      <span className="btn btn-whatsapp-sent" title="WhatsApp message sent">
+        <WhatsAppIcon size={15} />
+        <span>Sent</span>
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="btn btn-send-whatsapp"
+      onClick={handleClick}
+      disabled={status === 'sending'}
+      title={status === 'error' ? `Failed: ${error} — click to retry` : `Send investigation report to ${name} via WhatsApp`}
+    >
+      <WhatsAppIcon size={15} />
+      <span>{status === 'sending' ? 'Sending…' : status === 'error' ? 'Retry' : 'Send WhatsApp'}</span>
+    </button>
+  );
+}
+
 function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
   if (!patients.length) return null;
 
@@ -298,6 +340,9 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
                         <span>Summary</span>
                       </a>
                     )}
+                    {p.dateCount !== undefined && (
+                      <SendWhatsAppButton date={p.date} ipNo={p.ipNo} name={p.name} />
+                    )}
                     {p.dateCount === undefined && !p.hasSummary && <span className="text-muted">—</span>}
                   </div>
                 </td>
@@ -355,6 +400,7 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
                     <span>Summary</span>
                   </a>
                 )}
+                {hasLab && <SendWhatsAppButton date={p.date} ipNo={p.ipNo} name={p.name} />}
               </div>
             </div>
 
