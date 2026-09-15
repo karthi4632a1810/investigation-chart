@@ -1621,29 +1621,41 @@ html, body {
 }
 
 /* ==========================================================================
-   RESPONSIVE PATIENT CARDS (TABLET & MOBILE)
+/* ==========================================================================
+   RESPONSIVE PATIENT CARDS & USER-FRIENDLY CONTROLS (IMAGE.PNG MATCH)
    ========================================================================== */
 .patient-cards-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(285px, 1fr));
   gap: 16px;
+  margin-top: 14px;
+  align-items: stretch;
+}
+
+@media (min-width: 1400px) {
+  .patient-cards-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
 }
 
 .patient-mobile-card {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 18px;
-  box-shadow: var(--shadow-sm);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  transition: all 0.18s ease;
+  justify-content: space-between;
+  gap: 12px;
+  height: 100%;
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s ease;
+  position: relative;
 }
 
 .patient-mobile-card:hover {
-  border-color: var(--primary-border);
-  box-shadow: var(--shadow-md);
+  border-color: #cbd5e1;
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.08), 0 4px 8px -2px rgba(0, 0, 0, 0.04);
   transform: translateY(-2px);
 }
 
@@ -1651,102 +1663,612 @@ html, body {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.card-patient-info {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .card-patient-name {
-  font-size: 16px;
+  font-size: 14.5px;
   font-weight: 800;
-  color: var(--text-main);
+  color: #0f172a;
   letter-spacing: -0.01em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .card-patient-chips {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
+  margin-top: 5px;
+  flex-wrap: wrap;
+}
+
+.type-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  letter-spacing: 0.02em;
+  display: inline-block;
+}
+
+.type-general {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.type-corporate {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
 }
 
 .card-date-chip {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
   background: #f1f5f9;
   color: #475569;
   padding: 2px 7px;
-  border-radius: var(--radius-full);
+  border-radius: 9999px;
 }
 
-.btn-card-pdf {
-  padding: 6px 12px;
-}
-
-.card-id-strip {
+.card-header-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.card-header-actions .btn-view-summary,
+.card-header-actions .btn-card-pdf {
+  padding: 4px 9px;
+  font-size: 11.5px;
+  font-weight: 700;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* Card ID Strip */
+.card-id-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   background: #f8fafc;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
-  gap: 8px;
+  border: 1px solid #f1f5f9;
+  border-radius: 8px;
+  padding: 8px 10px;
+  gap: 6px;
+  align-items: center;
 }
 
 .card-id-col {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
+  min-width: 0;
 }
 
 .card-id-label {
+  font-size: 9px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Copyable Chip */
+.copyable-chip {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  border-radius: 5px;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.copyable-chip:hover .copy-icon-idle {
+  opacity: 1;
+  color: #2563eb;
+}
+
+.copy-icon-idle {
+  opacity: 0.4;
+  transition: opacity 0.15s ease;
+}
+
+.copy-icon-copied {
+  color: #16a34a;
+}
+
+.copyable-chip.code-chip-ip {
+  font-size: 13px;
+  font-weight: 800;
+  color: #2563eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.copyable-chip.code-chip-ip:hover {
+  text-decoration: underline;
+  color: #1d4ed8;
+}
+
+.copyable-chip.code-chip-reg {
+  font-size: 13px;
+  font-weight: 800;
+  color: #0f172a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.copyable-chip.code-chip-reg:hover {
+  color: #2563eb;
+}
+
+.copy-bubble-tag {
+  position: absolute;
+  top: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #0f172a;
+  color: #ffffff;
   font-size: 10px;
   font-weight: 700;
-  color: var(--text-subtle);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  pointer-events: none;
+  white-space: nowrap;
+  animation: popIn 0.15s ease;
+  z-index: 20;
 }
 
-.card-details-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 14px;
-  font-size: 12.5px;
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
-.card-detail-item {
+.mini-copy-chip {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #f1f5f9;
+}
+
+.mini-copy-chip:hover {
+  background: #e2e8f0;
+}
+
+.dates-pill {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dates-pill-ready {
+  color: #059669;
+  font-weight: 700;
+}
+
+.dates-pill-muted {
+  color: #64748b;
+  font-weight: 600;
+  font-size: 10.5px;
+}
+
+/* ==========================================================================
+   Clinical & Location Information (Dedicated spacing, zero text overlap)
+   ========================================================================== */
+.card-clinical-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 0;
+  flex: 1 1 auto;
+}
+
+/* Full Width Row for Department & Ward */
+.clinical-row-full {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 7px;
+  min-width: 0;
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
+  border-radius: 8px;
+  padding: 7px 9px;
 }
 
-.detail-label {
-  display: block;
-  font-size: 10.5px;
+/* Balanced 2-Column Split Row (Doctor & Mobile, Created User & Date) */
+.clinical-row-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.clinical-split-col {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+
+.clinical-icon-cell {
+  flex-shrink: 0;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+}
+
+.clinical-text-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.clinical-tag-label {
+  font-size: 9px;
   font-weight: 700;
-  color: var(--text-muted);
+  color: #64748b;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.detail-value {
-  font-size: 12.5px;
+.clinical-dept-ward {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: #1e293b;
+  word-break: break-word;
+}
+
+.dept-title {
+  font-weight: 800;
+  color: #0f172a;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+}
+
+.ward-bullet {
+  margin: 0 4px;
+  color: #94a3b8;
+  font-weight: 700;
+}
+
+.ward-text {
   font-weight: 600;
-  color: var(--text-main);
-  display: block;
-  margin-top: 1px;
+  color: #475569;
+  text-transform: uppercase;
 }
 
+.doctor-name-text {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e293b;
+  text-transform: uppercase;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.mobile-action-flex {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mobile-tel-link {
+  font-size: 12px;
+  font-weight: 700;
+  color: #2563eb;
+  text-decoration: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mobile-tel-link:hover {
+  text-decoration: underline;
+  color: #1d4ed8;
+}
+
+.user-login-text {
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.date-meta-text {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #334155;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.text-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.mobile-interactive-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Card Action Bar & Buttons (Pinned to bottom for equal row alignment) */
 .card-action-bar {
-  margin-top: 4px;
-  border-top: 1px solid var(--border-subtle);
+  margin-top: auto;
   padding-top: 12px;
+  border-top: 1px solid #f1f5f9;
 }
 
 .btn-card-full-pdf {
   width: 100%;
-  padding: 10px;
-  font-size: 13.5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
 }
+
+/* Summary Button - Teal/Mint matching image.png */
+.btn-view-summary {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.btn-view-summary:hover {
+  background: #d1fae5;
+  border-color: #6ee7b7;
+  color: #065f46;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 5px rgba(16, 185, 129, 0.15);
+}
+
+.btn-view-pdf {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+}
+
+.btn-view-pdf:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  color: #1e40af;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 5px rgba(37, 99, 235, 0.15);
+}
+
+.card-action-dual {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.btn-card-dual {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  text-align: center;
+}
+
+.card-no-actions {
+  font-size: 12px;
+  text-align: center;
+  padding: 6px 0;
+}
+
+/* Category Filter Bar */
+.category-filter-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.cat-chip {
+  appearance: none;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 9999px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #475569;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+
+.cat-chip:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #0f172a;
+}
+
+.cat-count-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 9999px;
+  background: #f1f5f9;
+  color: #64748b;
+  transition: all 0.15s ease;
+}
+
+.cat-chip.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+}
+
+.cat-chip.active .cat-count-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.cat-chip-lab.active {
+  background: #0d9488;
+  border-color: #0d9488;
+}
+
+.cat-chip-summary.active {
+  background: #059669;
+  border-color: #059669;
+}
+
+.cat-chip-nolab.active {
+  background: #64748b;
+  border-color: #64748b;
+}
+
+.cat-chip-corp.active {
+  background: #4f46e5;
+  border-color: #4f46e5;
+}
+
+/* Date Human Badge */
+.date-human-pill {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  background: #f1f5f9;
+  color: #475569;
+  margin-left: 6px;
+  letter-spacing: 0.01em;
+}
+
+.date-human-pill.is-today {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
+}
+
+/* Toast Notification */
+.portal-toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  animation: toastSlideUp 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes toastSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.portal-toast {
+  background: #0f172a;
+  color: #f8fafc;
+  border-radius: 10px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 10px 25px -3px rgba(0, 0, 0, 0.2), 0 4px 6px -2px rgba(0, 0, 0, 0.1);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.portal-toast .toast-icon {
+  color: #4ade80;
+  display: flex;
+}
+
+.portal-toast .toast-dismiss-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px 0 6px;
+}
+
+.portal-toast .toast-dismiss-btn:hover {
+  color: #ffffff;
+}
+
+.filter-empty-state {
+  padding: 36px 20px;
+  text-align: center;
+}
+
 
 /* ==========================================================================
    ENHANCED ADVANCED SEARCH PANEL (UPGRADED SCREEN 1 UI)
@@ -2889,6 +3411,14 @@ table.unmapped tbody tr:nth-child(even) {
 
   .patient-mobile-card {
     padding: 14px;
+  }
+
+  .card-id-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .card-id-strip .card-id-col:last-child {
+    grid-column: span 2;
   }
 
   .nav-segment-btn {

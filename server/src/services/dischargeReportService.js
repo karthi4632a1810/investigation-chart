@@ -32,7 +32,7 @@ const REPORTS_COLLECTION = 'discharge_reports';
 // checked thoroughly, so the scheduler stops re-checking a patient who will never
 // have data instead of re-querying the EMR for them forever.
 const NO_DATA_COLLECTION = 'discharge_no_data';
-const CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes, aligned to the wall clock — see startDischargeScheduler
+const CHECK_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes, aligned to the wall clock — see startDischargeScheduler
 let schedulerStarted = false;
 let checkInProgress = false;
 
@@ -214,7 +214,7 @@ async function sleep(ms) {
  * Retries a single patient's PDF generation a few times before giving up for
  * this cycle. The EMR is a shared, occasionally slow/loaded production system —
  * a single timeout or connection error shouldn't cost the patient the whole
- * cycle (the next scheduled check would retry anyway, but that's 30 minutes of
+ * cycle (the next scheduled check would retry anyway, but that's 15 minutes of
  * delay for what's often just a few seconds of EMR load).
  *
  * A `NO_DATA` result (investigationPdfService.js already tried both identifiers
@@ -415,7 +415,7 @@ async function processDischargeDate(dateFolder, mdy) {
  * skips patients that already have both documents for today, and generates
  * whichever is missing for the rest.
  *
- * Safe to call repeatedly (every 30 min) — already-reported patients are always
+ * Safe to call repeatedly (every 15 min) — already-reported patients are always
  * skipped, and a failure on one patient does not stop the others.
  */
 export async function runDischargeCheck() {
@@ -469,13 +469,13 @@ export async function runBackfillForDate(dateStr) {
 
 /**
  * Milliseconds until the next wall-clock boundary that's a multiple of
- * `intervalMs` since the Unix epoch (UTC). For a 30-minute interval this lands
- * on :00 and :30 of every hour — "1:00, 1:30, 2:00, 2:30", not "whenever the
- * server happened to start, plus 30 minutes, plus 30 minutes...".
+ * `intervalMs` since the Unix epoch (UTC). For a 15-minute interval this lands
+ * on :00, :15, :30, :45 of every hour — not "whenever the server happened to
+ * start, plus 15 minutes, plus 15 minutes...".
  *
- * This also lines up with IST wall-clock halves without any timezone-aware
- * math: IST is UTC+5:30, and 5h30m is itself an exact multiple of 30 minutes,
- * so a UTC :00/:30 boundary is always an IST :00/:30 boundary too.
+ * This also lines up with IST wall-clock quarters without any timezone-aware
+ * math: IST is UTC+5:30, and 5h30m (330 minutes) is itself an exact multiple
+ * of 15 minutes, so a UTC :00/:15/:30/:45 boundary is always the same in IST.
  */
 function msUntilNextAlignedTick(intervalMs) {
   const remainder = Date.now() % intervalMs;
@@ -484,7 +484,7 @@ function msUntilNextAlignedTick(intervalMs) {
 
 /**
  * Starts the discharge-check loop: once immediately (so a restart doesn't mean
- * waiting up to 30 minutes to see fresh data), then aligned to the wall clock
+ * waiting up to 15 minutes to see fresh data), then aligned to the wall clock
  * every CHECK_INTERVAL_MS after that. Safe to call once at server startup.
  *
  * Self-scheduling via setTimeout rather than setInterval — setInterval would
@@ -505,7 +505,7 @@ export function startDischargeScheduler() {
     }, delay);
   }
 
-  console.log('[discharge] scheduler starting — checking now, then every 30 minutes on the clock (:00/:30)');
+  console.log('[discharge] scheduler starting — checking now, then every 15 minutes on the clock (:00/:15/:30/:45)');
   runDischargeCheck().catch((error) => console.error('[discharge] initial check failed:', error.message));
   scheduleNextTick();
 }

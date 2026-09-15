@@ -12,9 +12,12 @@ import {
 import {
   CalendarIcon,
   CardViewIcon,
+  CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CopyIcon,
   DoctorIcon,
+  ExternalLinkIcon,
   FilePdfIcon,
   FilterIcon,
   InfoIcon,
@@ -87,6 +90,24 @@ function getFormattedDate(daysOffset = 0) {
   d.setDate(d.getDate() - daysOffset);
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function getHumanDate(dateStr) {
+  if (!dateStr) return '';
+  const today = getFormattedDate(0);
+  const yesterday = getFormattedDate(1);
+  if (dateStr === today) return 'Today';
+  if (dateStr === yesterday) return 'Yesterday';
+  try {
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+  } catch {
+    // fallback
+  }
+  return dateStr;
 }
 
 function AutomationStatus({ status, onRunNow, running }) {
@@ -190,18 +211,83 @@ function AutomationStatus({ status, onRunNow, running }) {
   );
 }
 
+function CopyableChip({ value, label, className = '', onToast }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!value || value === '—') return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      if (onToast) onToast(`Copied ${label ? label + ' ' : ''}${value} to clipboard`);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // fallback
+    }
+  }
+
+  if (!value) return <span className="text-muted">—</span>;
+
+  return (
+    <button
+      type="button"
+      className={`copyable-chip ${className} ${copied ? 'is-copied' : ''}`}
+      onClick={handleCopy}
+      title={copied ? 'Copied to clipboard!' : `Click to copy ${label ? label + ': ' : ''}${value}`}
+      aria-label={`Copy ${label || ''} ${value}`}
+    >
+      <span className="copyable-text">{value}</span>
+      <span className="copyable-indicator" aria-hidden="true">
+        {copied ? (
+          <CheckIcon size={12} className="copy-icon-copied" />
+        ) : (
+          <CopyIcon size={11} className="copy-icon-idle" />
+        )}
+      </span>
+      {copied && <span className="copy-bubble-tag">Copied!</span>}
+    </button>
+  );
+}
+
+function ToastNotification({ toast, onDismiss }) {
+  if (!toast) return null;
+  return (
+    <div className="portal-toast-container no-print" role="status" aria-live="polite">
+      <div className="portal-toast">
+        <div className="toast-icon">
+          <CheckIcon size={16} />
+        </div>
+        <div className="toast-message">{toast.message}</div>
+        <button
+          type="button"
+          className="toast-dismiss-btn"
+          onClick={onDismiss}
+          aria-label="Dismiss notification"
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Self-contained so each row tracks its own send state independently. */
-function SendWhatsAppButton({ date, ipNo, name }) {
+function SendWhatsAppButton({ date, ipNo, name, onToast }) {
   const [status, setStatus] = useState('idle'); // idle | sending | sent | error
   const [error, setError] = useState('');
 
-  async function handleClick() {
+  async function handleClick(e) {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
     if (status === 'sending') return;
     setStatus('sending');
     setError('');
     try {
       await sendReportWhatsApp(date, ipNo);
       setStatus('sent');
+      if (onToast) onToast(`WhatsApp report sent for ${name}!`);
     } catch (err) {
       setStatus('error');
       setError(err.message);
@@ -212,7 +298,7 @@ function SendWhatsAppButton({ date, ipNo, name }) {
     return (
       <span className="btn btn-whatsapp-sent" title="WhatsApp message sent">
         <WhatsAppIcon size={15} />
-        <span>Sent</span>
+        <span>Sent ✓</span>
       </span>
     );
   }
@@ -226,12 +312,13 @@ function SendWhatsAppButton({ date, ipNo, name }) {
       title={status === 'error' ? `Failed: ${error} — click to retry` : `Send investigation report to ${name} via WhatsApp`}
     >
       <WhatsAppIcon size={15} />
-      <span>{status === 'sending' ? 'Sending…' : status === 'error' ? 'Retry' : 'Send WhatsApp'}</span>
+      <span>{status === 'sending' ? 'Sending…' : status === 'error' ? 'Retry' : 'WhatsApp'}</span>
     </button>
   );
 }
 
-function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
+
+function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast }) {
   if (!patients.length) return null;
 
   return (
@@ -260,10 +347,20 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
               <tr key={`${p.date}-${p.ipNo}`} className="patient-row">
                 {dateColumn && <td className="cell-date">{p.date}</td>}
                 <td className="cell-ip">
-                  <span className="code-chip code-chip-ip">{p.ipNo}</span>
+                  <CopyableChip
+                    value={p.ipNo}
+                    label="IP"
+                    className="code-chip code-chip-ip"
+                    onToast={onToast}
+                  />
                 </td>
                 <td className="cell-reg">
-                  <span className="code-chip code-chip-reg">{p.regNo}</span>
+                  <CopyableChip
+                    value={p.regNo}
+                    label="UHID"
+                    className="code-chip code-chip-reg"
+                    onToast={onToast}
+                  />
                 </td>
                 <td className="cell-name">
                   <div className="patient-name-box">
@@ -290,10 +387,18 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
                 </td>
                 <td className="cell-mobile">
                   {p.mobile ? (
-                    <a href={`tel:${p.mobile}`} className="tel-link">
-                      <PhoneIcon size={12} />
-                      <span>{p.mobile}</span>
-                    </a>
+                    <div className="mobile-interactive-wrap">
+                      <a href={`tel:${p.mobile}`} className="tel-link" title={`Call ${p.mobile}`}>
+                        <PhoneIcon size={12} />
+                        <span>{p.mobile}</span>
+                      </a>
+                      <CopyableChip
+                        value={p.mobile}
+                        label="Mobile"
+                        className="mini-copy-chip"
+                        onToast={onToast}
+                      />
+                    </div>
                   ) : (
                     <span className="text-muted">—</span>
                   )}
@@ -305,7 +410,7 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
                 </td>
                 <td className="cell-dates">
                   {p.dateCount !== undefined ? (
-                    <span className="dates-pill" title={`${p.dateCount} dates with lab orders`}>
+                    <span className="dates-pill dates-pill-ready" title={`${p.dateCount} dates with lab orders`}>
                       {p.dateCount} date{p.dateCount === 1 ? '' : 's'}
                     </span>
                   ) : (
@@ -341,7 +446,12 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
                       </a>
                     )}
                     {p.dateCount !== undefined && (
-                      <SendWhatsAppButton date={p.date} ipNo={p.ipNo} name={p.name} />
+                      <SendWhatsAppButton
+                        date={p.date}
+                        ipNo={p.ipNo}
+                        name={p.name}
+                        onToast={onToast}
+                      />
                     )}
                     {p.dateCount === undefined && !p.hasSummary && <span className="text-muted">—</span>}
                   </div>
@@ -355,7 +465,7 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
   );
 }
 
-function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
+function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast }) {
   if (!patients.length) return null;
 
   return (
@@ -365,9 +475,10 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
         const hasLab = p.dateCount !== undefined;
         return (
           <div key={`${p.date}-${p.ipNo}`} className="patient-mobile-card">
+            {/* Top Header: Name, Category, Quick Summary/WhatsApp */}
             <div className="card-top-header">
               <div className="card-patient-info">
-                <div className="card-patient-name">{p.name}</div>
+                <div className="card-patient-name" title={p.name}>{p.name}</div>
                 <div className="card-patient-chips">
                   <span className={`type-badge ${isCorporate ? 'type-corporate' : 'type-general'}`}>
                     {p.patientType || 'General'}
@@ -375,19 +486,7 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
                   {dateColumn && <span className="card-date-chip">{p.date}</span>}
                 </div>
               </div>
-              <div className="action-btn-group">
-                {hasLab && (
-                  <a
-                    className="btn btn-view-pdf btn-card-pdf"
-                    href={getPdfUrl(p)}
-                    target="_blank"
-                    rel="noreferrer"
-                    title={`Open lab report for ${p.name}`}
-                  >
-                    <FilePdfIcon size={15} />
-                    <span>Lab</span>
-                  </a>
-                )}
+              <div className="card-header-actions">
                 {p.hasSummary && (
                   <a
                     className="btn btn-view-summary btn-card-pdf"
@@ -396,91 +495,195 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
                     rel="noreferrer"
                     title={`Open discharge summary for ${p.name}`}
                   >
-                    <FilePdfIcon size={15} />
+                    <FilePdfIcon size={14} />
                     <span>Summary</span>
                   </a>
                 )}
-                {hasLab && <SendWhatsAppButton date={p.date} ipNo={p.ipNo} name={p.name} />}
-              </div>
-            </div>
-
-            <div className="card-id-strip">
-              <div className="card-id-col">
-                <span className="card-id-label">IP NO</span>
-                <span className="code-chip code-chip-ip">{p.ipNo}</span>
-              </div>
-              <div className="card-id-col">
-                <span className="card-id-label">UHID (REG NO)</span>
-                <span className="code-chip code-chip-reg">{p.regNo}</span>
-              </div>
-              <div className="card-id-col">
-                <span className="card-id-label">LAB DATES</span>
-                {hasLab ? (
-                  <span className="dates-pill">{p.dateCount} date{p.dateCount === 1 ? '' : 's'}</span>
-                ) : (
-                  <span className="text-muted">no lab data</span>
+                {hasLab && (
+                  <SendWhatsAppButton
+                    date={p.date}
+                    ipNo={p.ipNo}
+                    name={p.name}
+                    onToast={onToast}
+                  />
                 )}
               </div>
             </div>
 
-            <div className="card-details-grid">
-              <div className="card-detail-item">
-                <DoctorIcon size={14} className="doctor-icon-dim" />
-                <div>
-                  <span className="detail-label">Doctor</span>
-                  <span className="detail-value">{p.doctor || '—'}</span>
-                </div>
+            {/* ID Strip with 1-Click Copy */}
+            <div className="card-id-strip">
+              <div className="card-id-col">
+                <span className="card-id-label">IP NO</span>
+                <CopyableChip
+                  value={p.ipNo}
+                  label="IP No"
+                  className="code-chip code-chip-ip"
+                  onToast={onToast}
+                />
               </div>
-
-              <div className="card-detail-item">
-                <WardIcon size={14} className="ward-icon-dim" />
-                <div>
-                  <span className="detail-label">Department & Ward</span>
-                  <span className="detail-value">{p.department} · {p.ward}</span>
-                </div>
+              <div className="card-id-col">
+                <span className="card-id-label" title="UHID (Registration Number)">UHID (REG NO)</span>
+                <CopyableChip
+                  value={p.regNo}
+                  label="UHID"
+                  className="code-chip code-chip-reg"
+                  onToast={onToast}
+                />
               </div>
-
-              <div className="card-detail-item">
-                <PhoneIcon size={14} />
-                <div>
-                  <span className="detail-label">Mobile</span>
-                  <span className="detail-value">
-                    {p.mobile ? <a href={`tel:${p.mobile}`} className="tel-link">{p.mobile}</a> : '—'}
+              <div className="card-id-col lab-dates-col">
+                <span className="card-id-label">LAB DATES</span>
+                {hasLab ? (
+                  <span
+                    className="dates-pill dates-pill-ready"
+                    title={`${p.dateCount} dates with completed lab tests`}
+                  >
+                    {p.dateCount} date{p.dateCount === 1 ? '' : 's'}
                   </span>
+                ) : (
+                  <span className="dates-pill dates-pill-muted" title="No laboratory test orders found in EMR">
+                    no lab data
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Clinical & Location Information - Dedicated spacing prevents text overlaps */}
+            <div className="card-clinical-box">
+              {/* Department & Ward (Full Width Row) */}
+              <div className="clinical-row-full">
+                <div className="clinical-icon-cell">
+                  <WardIcon size={14} className="clinical-icon" />
+                </div>
+                <div className="clinical-text-cell">
+                  <span className="clinical-tag-label">DEPARTMENT &amp; WARD</span>
+                  <div className="clinical-dept-ward" title={`${p.department || ''} · ${p.ward || ''}`}>
+                    <span className="dept-title">{p.department || 'General'}</span>
+                    {p.ward && <span className="ward-bullet">•</span>}
+                    {p.ward && <span className="ward-text">{p.ward}</span>}
+                  </div>
                 </div>
               </div>
 
-              <div className="card-detail-item">
-                <UserIcon size={14} />
-                <div>
-                  <span className="detail-label">Created User</span>
-                  <span className="detail-value">{p.createdUser || '—'}</span>
+              {/* Doctor & Mobile (Balanced 2-Column Split) */}
+              <div className="clinical-row-split">
+                <div className="clinical-split-col">
+                  <div className="clinical-icon-cell">
+                    <DoctorIcon size={14} className="clinical-icon" />
+                  </div>
+                  <div className="clinical-text-cell">
+                    <span className="clinical-tag-label">DOCTOR</span>
+                    <span className="doctor-name-text" title={p.doctor || '—'}>
+                      {p.doctor || '—'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="clinical-split-col">
+                  <div className="clinical-icon-cell">
+                    <PhoneIcon size={13} className="clinical-icon" />
+                  </div>
+                  <div className="clinical-text-cell">
+                    <span className="clinical-tag-label">MOBILE</span>
+                    <div className="mobile-action-flex">
+                      {p.mobile ? (
+                        <>
+                          <a href={`tel:${p.mobile}`} className="mobile-tel-link" title={`Call ${p.mobile}`}>
+                            {p.mobile}
+                          </a>
+                          <CopyableChip
+                            value={p.mobile}
+                            label="Mobile"
+                            className="mini-copy-chip"
+                            onToast={onToast}
+                          />
+                        </>
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Created User Row */}
+              <div className="clinical-row-split sub-meta-row">
+                <div className="clinical-split-col">
+                  <div className="clinical-icon-cell">
+                    <UserIcon size={13} className="clinical-icon" />
+                  </div>
+                  <div className="clinical-text-cell">
+                    <span className="clinical-tag-label">CREATED USER</span>
+                    <span className="user-login-text" title={p.createdUser || '—'}>
+                      {p.createdUser || '—'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="clinical-split-col">
+                  <div className="clinical-icon-cell">
+                    <CalendarIcon size={13} className="clinical-icon" />
+                  </div>
+                  <div className="clinical-text-cell">
+                    <span className="clinical-tag-label">DISCHARGE DATE</span>
+                    <span className="date-meta-text" title={p.date}>
+                      {p.date ? (dateColumn ? p.date : getHumanDate(p.date)) : '—'}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
 
+            {/* Bottom Action Bar (Pinned to bottom for perfect row alignment) */}
             <div className="card-action-bar">
-              {hasLab && (
+              {hasLab && p.hasSummary ? (
+                <div className="card-action-dual">
+                  <a
+                    className="btn btn-view-pdf btn-card-dual"
+                    href={getPdfUrl(p)}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={`Open investigation report for ${p.name}`}
+                  >
+                    <FilePdfIcon size={15} />
+                    <span>Lab Report</span>
+                  </a>
+                  <a
+                    className="btn btn-view-summary btn-card-dual"
+                    href={getSummaryPdfUrl(p)}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={`Open discharge summary for ${p.name}`}
+                  >
+                    <FilePdfIcon size={15} />
+                    <span>Summary</span>
+                  </a>
+                </div>
+              ) : hasLab ? (
                 <a
                   className="btn btn-view-pdf btn-card-full-pdf"
                   href={getPdfUrl(p)}
                   target="_blank"
                   rel="noreferrer"
+                  title={`Open investigation report PDF for ${p.name}`}
                 >
                   <FilePdfIcon size={16} />
                   <span>View Full Investigation PDF</span>
                 </a>
-              )}
-              {p.hasSummary && (
+              ) : p.hasSummary ? (
                 <a
                   className="btn btn-view-summary btn-card-full-pdf"
                   href={getSummaryPdfUrl(p)}
                   target="_blank"
                   rel="noreferrer"
+                  title={`Open discharge summary for ${p.name}`}
                 >
                   <FilePdfIcon size={16} />
                   <span>View Discharge Summary</span>
                 </a>
+              ) : (
+                <div className="card-no-actions text-muted">
+                  No documents ready yet
+                </div>
               )}
             </div>
           </div>
@@ -489,6 +692,8 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl }) {
     </div>
   );
 }
+
+
 
 function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
   function set(key) {
@@ -793,8 +998,17 @@ export default function DischargeReports() {
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState(null);
   const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
-  const [viewLayout, setViewLayout] = useState('auto'); // 'auto' | 'table' | 'cards'
+  const [viewLayout, setViewLayout] = useState(() => {
+    try {
+      return localStorage.getItem('portal_view_layout') || 'cards';
+    } catch {
+      return 'cards';
+    }
+  });
   const [filterText, setFilterText] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all'); // 'all' | 'lab' | 'summary' | 'nolab' | 'corporate'
+  const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
 
   // Pagination State: 50 is default, options: 50, 100, 'all'
   const [pageSize, setPageSize] = useState(50);
@@ -802,6 +1016,23 @@ export default function DischargeReports() {
 
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
+
+  const showToast = useCallback((message) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ message, id: Date.now() });
+    toastTimerRef.current = setTimeout(() => {
+      setToast(null);
+    }, 2800);
+  }, []);
+
+  function handleLayoutToggle(newLayout) {
+    setViewLayout(newLayout);
+    try {
+      localStorage.setItem('portal_view_layout', newLayout);
+    } catch {
+      // ignore
+    }
+  }
 
   const loadByDate = useCallback((forDate) => {
     setLoading(true);
@@ -860,14 +1091,57 @@ export default function DischargeReports() {
     return () => clearInterval(id);
   }, []);
 
+  // Keyboard navigation shortcuts
+  useEffect(() => {
+    function handleKeyDown(e) {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) {
+        if (e.key === 'Escape') {
+          e.target.blur();
+          if (filterText) {
+            setFilterText('');
+            setCurrentPage(1);
+          }
+        }
+        return;
+      }
+
+      if (e.key === '/') {
+        e.preventDefault();
+        const searchInput = document.querySelector('.filter-text-input');
+        searchInput?.focus();
+      } else if (e.key === 'ArrowLeft' || e.key === '[') {
+        if (mode === 'date') {
+          setDate((prev) => adjustDateByDays(prev, -1));
+        }
+      } else if (e.key === 'ArrowRight' || e.key === ']') {
+        if (mode === 'date') {
+          setDate((prev) => adjustDateByDays(prev, 1));
+        }
+      } else if (e.key.toLowerCase() === 't') {
+        if (mode === 'date') {
+          setDate(defaultDateOnly());
+        }
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [mode, filterText]);
+
   async function handleRunNow() {
     setRunning(true);
     try {
       const summary = await triggerReportRun();
       setStatus((prev) => ({ ...prev, lastSummary: summary, lastCheckFinishedAt: new Date().toISOString() }));
       refreshCurrentView();
+      showToast(
+        summary?.found !== undefined
+          ? `Discharge check complete: ${summary.found} patients checked`
+          : 'Discharge check completed successfully'
+      );
     } catch (err) {
       setStatus((prev) => ({ ...prev, lastSummary: { error: err.message } }));
+      showToast(`Check failed: ${err.message}`);
     } finally {
       setRunning(false);
       refreshStatus();
@@ -879,6 +1153,7 @@ export default function DischargeReports() {
     setPatients([]);
     setError('');
     setFilterText('');
+    setCategoryFilter('all');
     setCurrentPage(1);
     if (nextMode === 'search') setSearchActive(false);
   }
@@ -888,6 +1163,7 @@ export default function DischargeReports() {
     setSearchActive(false);
     setPatients([]);
     setFilterText('');
+    setCategoryFilter('all');
     setCurrentPage(1);
   }
 
@@ -896,16 +1172,48 @@ export default function DischargeReports() {
     setCurrentPage(1);
   }
 
+  function handleCategoryFilterChange(cat) {
+    setCategoryFilter(cat);
+    setCurrentPage(1);
+  }
+
   function handlePageSizeChange(newSize) {
     setPageSize(newSize);
     setCurrentPage(1);
   }
 
-  // Quick in-page client filter: Instant lookup by name, IP, doctor, ward
+  // Dynamic category counts
+  const categoryCounts = useMemo(() => {
+    let lab = 0;
+    let summary = 0;
+    let noLab = 0;
+    let corporate = 0;
+    patients.forEach((p) => {
+      if (p.dateCount !== undefined) lab++;
+      else noLab++;
+      if (p.hasSummary) summary++;
+      if (p.patientType?.toLowerCase().includes('corp')) corporate++;
+    });
+    return { all: patients.length, lab, summary, noLab, corporate };
+  }, [patients]);
+
+  // Quick in-page client filter: Category + Text filter across all key fields
   const filteredPatients = useMemo(() => {
-    if (!filterText.trim()) return patients;
+    let list = patients;
+
+    if (categoryFilter === 'lab') {
+      list = list.filter((p) => p.dateCount !== undefined);
+    } else if (categoryFilter === 'summary') {
+      list = list.filter((p) => Boolean(p.hasSummary));
+    } else if (categoryFilter === 'nolab') {
+      list = list.filter((p) => p.dateCount === undefined);
+    } else if (categoryFilter === 'corporate') {
+      list = list.filter((p) => p.patientType?.toLowerCase().includes('corp'));
+    }
+
+    if (!filterText.trim()) return list;
     const q = filterText.toLowerCase();
-    return patients.filter((p) => {
+    return list.filter((p) => {
       return (
         p.name?.toLowerCase().includes(q) ||
         p.ipNo?.toLowerCase().includes(q) ||
@@ -913,10 +1221,11 @@ export default function DischargeReports() {
         p.doctor?.toLowerCase().includes(q) ||
         p.department?.toLowerCase().includes(q) ||
         p.ward?.toLowerCase().includes(q) ||
-        p.mobile?.includes(q)
+        p.mobile?.includes(q) ||
+        p.createdUser?.toLowerCase().includes(q)
       );
     });
-  }, [patients, filterText]);
+  }, [patients, categoryFilter, filterText]);
 
   // Pagination calculation
   const totalCount = filteredPatients.length;
@@ -935,6 +1244,8 @@ export default function DischargeReports() {
 
   return (
     <div className="discharge-reports-page">
+      <ToastNotification toast={toast} onDismiss={() => setToast(null)} />
+
       <div className="section-header reports-header">
         <div>
           <h2>Discharge Investigation Reports</h2>
@@ -982,7 +1293,7 @@ export default function DischargeReports() {
               type="button"
               className="btn btn-stepper"
               onClick={() => setDate((prev) => adjustDateByDays(prev, -1))}
-              title="Previous day"
+              title="Previous day (Shortcut: [ or Left Arrow)"
             >
               <ChevronLeftIcon size={16} />
               <span className="hide-on-mobile">Prev</span>
@@ -997,13 +1308,16 @@ export default function DischargeReports() {
                 className="toolbar-date-input"
                 aria-label="Select discharge date"
               />
+              <span className={`date-human-pill ${date === getFormattedDate(0) ? 'is-today' : ''}`}>
+                {getHumanDate(date)}
+              </span>
             </div>
 
             <button
               type="button"
               className="btn btn-stepper"
               onClick={() => setDate((prev) => adjustDateByDays(prev, 1))}
-              title="Next day"
+              title="Next day (Shortcut: ] or Right Arrow)"
             >
               <span className="hide-on-mobile">Next</span>
               <ChevronRightIcon size={16} />
@@ -1011,9 +1325,9 @@ export default function DischargeReports() {
 
             <button
               type="button"
-              className="btn btn-stepper-today"
+              className={`btn btn-stepper-today ${date === getFormattedDate(0) ? 'active' : ''}`}
               onClick={() => setDate(defaultDateOnly())}
-              title="Reset to today"
+              title="Reset to today (Shortcut: T)"
             >
               Today
             </button>
@@ -1027,7 +1341,7 @@ export default function DischargeReports() {
                 type="text"
                 value={filterText}
                 onChange={handleFilterTextChange}
-                placeholder="Filter by name, IP, doctor, ward…"
+                placeholder="Filter by name, IP, doctor, ward… (Press /)"
                 className="filter-text-input"
               />
               {filterText && (
@@ -1038,7 +1352,7 @@ export default function DischargeReports() {
                     setFilterText('');
                     setCurrentPage(1);
                   }}
-                  title="Clear filter"
+                  title="Clear filter (Escape)"
                 >
                   ×
                 </button>
@@ -1051,8 +1365,8 @@ export default function DischargeReports() {
             <div className="layout-toggle-group no-print">
               <button
                 type="button"
-                className={`btn-layout-toggle ${viewLayout === 'auto' || viewLayout === 'table' ? 'active' : ''}`}
-                onClick={() => setViewLayout('table')}
+                className={`btn-layout-toggle ${viewLayout === 'table' ? 'active' : ''}`}
+                onClick={() => handleLayoutToggle('table')}
                 title="Table view"
               >
                 <TableViewIcon size={16} />
@@ -1061,7 +1375,7 @@ export default function DischargeReports() {
               <button
                 type="button"
                 className={`btn-layout-toggle ${viewLayout === 'cards' ? 'active' : ''}`}
-                onClick={() => setViewLayout('cards')}
+                onClick={() => handleLayoutToggle('cards')}
                 title="Card grid view"
               >
                 <CardViewIcon size={16} />
@@ -1121,11 +1435,63 @@ export default function DischargeReports() {
 
       {!loading && patients.length > 0 && (
         <div className="results-container">
+          {/* Quick Category Filter Bar */}
+          <div className="category-filter-chips no-print">
+            <button
+              type="button"
+              className={`cat-chip ${categoryFilter === 'all' ? 'active' : ''}`}
+              onClick={() => handleCategoryFilterChange('all')}
+            >
+              <span>All Patients</span>
+              <span className="cat-count-badge">{categoryCounts.all}</span>
+            </button>
+            <button
+              type="button"
+              className={`cat-chip cat-chip-lab ${categoryFilter === 'lab' ? 'active' : ''}`}
+              onClick={() => handleCategoryFilterChange('lab')}
+              title="Filter to patients with lab reports ready"
+            >
+              <span>📋 Lab Ready</span>
+              <span className="cat-count-badge">{categoryCounts.lab}</span>
+            </button>
+            <button
+              type="button"
+              className={`cat-chip cat-chip-summary ${categoryFilter === 'summary' ? 'active' : ''}`}
+              onClick={() => handleCategoryFilterChange('summary')}
+              title="Filter to patients with discharge summaries"
+            >
+              <span>📄 Summary Ready</span>
+              <span className="cat-count-badge">{categoryCounts.summary}</span>
+            </button>
+            <button
+              type="button"
+              className={`cat-chip cat-chip-nolab ${categoryFilter === 'nolab' ? 'active' : ''}`}
+              onClick={() => handleCategoryFilterChange('nolab')}
+              title="Filter to patients with no lab orders"
+            >
+              <span>⏳ No Lab Data</span>
+              <span className="cat-count-badge">{categoryCounts.noLab}</span>
+            </button>
+            {categoryCounts.corporate > 0 && (
+              <button
+                type="button"
+                className={`cat-chip cat-chip-corp ${categoryFilter === 'corporate' ? 'active' : ''}`}
+                onClick={() => handleCategoryFilterChange('corporate')}
+                title="Filter to corporate patients"
+              >
+                <span>🏢 Corporate</span>
+                <span className="cat-count-badge">{categoryCounts.corporate}</span>
+              </button>
+            )}
+          </div>
+
           {/* Top Pagination Summary & Page Size Controls */}
           <div className="results-meta-bar">
             <div className="result-count-badge">
               <strong>{totalCount}</strong> {totalCount === 1 ? 'report' : 'reports'} found
-              {filterText && <span> (filtered from {patients.length})</span>}
+              {(filterText || categoryFilter !== 'all') && (
+                <span className="filtered-from-note"> (filtered from {patients.length})</span>
+              )}
             </div>
 
             {/* Quick Page Size Pill in Meta Bar */}
@@ -1155,45 +1521,73 @@ export default function DischargeReports() {
             </div>
           </div>
 
-          {/* Conditional rendering based on layout toggle */}
-          {viewLayout === 'cards' ? (
-            <ReportsCards
-              patients={paginatedPatients}
-              dateColumn={mode === 'search'}
-              getPdfUrl={(p) => reportPdfUrl(p.date, p.ipNo)}
-              getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
-            />
+          {totalCount === 0 ? (
+            <div className="empty modern-empty filter-empty-state">
+              <div className="empty-icon">🔍</div>
+              <div className="empty-title">No matching reports found</div>
+              <p className="empty-subtitle">
+                No patients match the current filter {filterText ? `"${filterText}"` : ''} in{' '}
+                <strong>
+                  {categoryFilter === 'all' ? 'all categories' : categoryFilter}
+                </strong>.
+              </p>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setFilterText('');
+                  setCategoryFilter('all');
+                  setCurrentPage(1);
+                }}
+              >
+                Clear Filters
+              </button>
+            </div>
           ) : (
             <>
-              {/* On desktop: show modern table without vertical scroll; on small screens CSS switches to cards */}
-              <div className="responsive-table-view">
-                <ReportsTable
-                  patients={paginatedPatients}
-                  dateColumn={mode === 'search'}
-                  getPdfUrl={(p) => reportPdfUrl(p.date, p.ipNo)}
-              getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
-                />
-              </div>
-              <div className="responsive-cards-view">
+              {/* Conditional rendering based on layout toggle */}
+              {viewLayout === 'cards' ? (
                 <ReportsCards
                   patients={paginatedPatients}
                   dateColumn={mode === 'search'}
                   getPdfUrl={(p) => reportPdfUrl(p.date, p.ipNo)}
-              getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
+                  getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
+                  onToast={showToast}
                 />
-              </div>
+              ) : (
+                <>
+                  <div className="responsive-table-view">
+                    <ReportsTable
+                      patients={paginatedPatients}
+                      dateColumn={mode === 'search'}
+                      getPdfUrl={(p) => reportPdfUrl(p.date, p.ipNo)}
+                      getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
+                      onToast={showToast}
+                    />
+                  </div>
+                  <div className="responsive-cards-view">
+                    <ReportsCards
+                      patients={paginatedPatients}
+                      dateColumn={mode === 'search'}
+                      getPdfUrl={(p) => reportPdfUrl(p.date, p.ipNo)}
+                      getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
+                      onToast={showToast}
+                    />
+                  </div>
+                </>
+              )}
+
+              {/* Bottom Pagination Controls */}
+              <Pagination
+                currentPage={safePage}
+                totalPages={totalPages}
+                totalCount={totalCount}
+                pageSize={pageSize}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={handlePageSizeChange}
+              />
             </>
           )}
-
-          {/* Bottom Pagination Controls */}
-          <Pagination
-            currentPage={safePage}
-            totalPages={totalPages}
-            totalCount={totalCount}
-            pageSize={pageSize}
-            onPageChange={setCurrentPage}
-            onPageSizeChange={handlePageSizeChange}
-          />
         </div>
       )}
     </div>
