@@ -1,31 +1,44 @@
 services:
-  mongo:
-    image: mongo:7
-    container_name: patient-investigation-mongo
-    ports:
-      - "127.0.0.1:3000:27017"
-    volumes:
-      - mongo-data:/data/db
-    restart: unless-stopped
-    networks:
-      - app-network
-
   server:
     build:
       context: ./server
       dockerfile: Dockerfile
-    container_name: patient-investigation-server
+    container_name: investigation-backend
+    # PDF generation shells out to Chromium (investigationPdfService.js), which
+    # forks crashpad handler subprocesses. Without a real init as PID 1, an
+    # abruptly-killed or crashed Chromium leaves those as unreaped zombies forever
+    # (Node doesn't reap grandchildren). `init: true` uses Docker's built-in tini.
+    init: true
     env_file:
       - ./server/.env
     environment:
-      PORT: 2000
-      MONGO_URI: mongodb://mongo:27017
+      PORT: 2003
+      # Internal Docker-network addresses — different from the host-published ports
+      # below, which are what your browser / host-side scripts use.
+      MONGO_URI: mongodb://mongo:3003
+      MONGO_DB: investigation-chart
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 4003
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET: investigation-reports
+      # The browser resolves this host itself when following a presigned PDF URL,
+      # so it must be reachable from wherever the browser actually is — "localhost"
+      # only works when the browser and this stack are on the same machine. Point
+      # this at the server's real hostname/IP for anything beyond local testing.
+      MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-localhost}
+      MINIO_PUBLIC_PORT: 4003
+    # A single templated bind string (not a second "ports:" list in an override
+    # file) — Compose concatenates list-valued keys across -f files instead of
+    # replacing them, so a docker-compose.prod.yml override here would leave
+    # BOTH the public and the loopback binding active at once. Overriding the
+    # env var in .env is the only way to actually change this per environment.
     ports:
-      - "2000:2000"
-    expose:
-      - "2000"
+      - "${SERVER_PORT_BIND:-2003:2003}"
     depends_on:
       - mongo
+      - minio
     restart: unless-stopped
     networks:
       - app-network
@@ -34,11 +47,39 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
-    container_name: patient-investigation-client
+    container_name: investigation-front
     ports:
-      - "1000:80"
+      - "${CLIENT_PORT_BIND:-1003:80}"
     depends_on:
       - server
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  mongo:
+    image: mongo:7
+    container_name: investigation-mongo
+    command: ["--port", "3003"]
+    ports:
+      - "${MONGO_PORT_BIND:-3003:3003}"
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: investigation-min.io
+    command: ["server", "/data", "--address", ":4003", "--console-address", ":5003"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_API_PORT_BIND:-4003:4003}"
+      - "${MINIO_CONSOLE_PORT_BIND:-5003:5003}"
+    volumes:
+      - minio-data:/data
     restart: unless-stopped
     networks:
       - app-network
@@ -49,3 +90,4 @@ networks:
 
 volumes:
   mongo-data:
+  minio-data:

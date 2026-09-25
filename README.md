@@ -28,7 +28,7 @@ npm run dev
 ```
 
 - Frontend: http://localhost:5173
-- API: http://localhost:3001
+- API: http://localhost:6001
 
 ## API Endpoints
 
@@ -53,7 +53,7 @@ npm run dev
 
 ```bash
 npm run build          # builds client to client/dist
-npm run start          # starts API on port 3001
+npm run start          # starts API on port 6001
 ```
 
 Serve `client/dist` via your web server and proxy `/api` to the Node server, or add static file serving to Express.

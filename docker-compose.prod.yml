@@ -1,12 +1,28 @@
+# Production override for a bare VPS. Apply on top of the base compose file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+#
+# Port bindings are NOT set here. Compose concatenates list-valued keys (like
+# "ports:") across -f files instead of replacing them — an earlier version of
+# this file tried to override ports here and ended up with BOTH the public
+# and the loopback binding active at once, briefly exposing an unauthenticated
+# Mongo on the public internet. The actual port values live in docker-compose.yml
+# as ${...} env vars, overridden per environment via .env — see
+# .env.production.example for the values this deployment should use.
+#
+# This file only changes the restart policy: "always" instead of
+# "unless-stopped", so containers come back after a host reboot even if they
+# were manually stopped beforehand.
+
 services:
   server:
-    container_name: invest_server
-    ports:
-      - "2000:2000"
-    restart: unless-stopped
+    restart: always
 
   client:
-    container_name: invest_client
-    ports:
-      - "1000:80"
-    restart: unless-stopped
+    restart: always
+
+  mongo:
+    restart: always
+
+  minio:
+    restart: always

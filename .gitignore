@@ -4,3 +4,7 @@ dist/
 cookies.txt
 *.log
 server/auth.txt
+
+# Generated patient reports and discharge lists — contain PHI, never commit.
+/reports/
+/discharge.csv

@@ -3,19 +3,20 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export const config = {
-  port: parseInt(process.env.PORT || '2000', 10),
-  mongo: {
-    uri: process.env.MONGO_URI || 'mongodb://localhost:27017',
-    dbName: process.env.MONGO_DB_NAME || 'patient_investigation',
-  },
-  jwt: {
-    secret: process.env.JWT_SECRET,
-    expiresIn: process.env.JWT_EXPIRES_IN || '12h',
+  port: parseInt(process.env.PORT || '6001', 10),
+  auth: {
+    username: process.env.APP_USERNAME || 'admin',
+    password: process.env.APP_PASSWORD || 'admin123',
   },
   emr: {
+    // Used by dischargeSummaryService.js for the ward module's endpoints
+    // (GetPatdetail, pSummary.aspx), which live under a different path than the
+    // lab/query-builder URLs below but on the same host.
+    baseUrl: process.env.EMR_BASE_URL || 'https://emr.mapims.edu.in/BB15SE',
     loginUrl: process.env.EMR_LOGIN_URL,
     labUrlTemplate: process.env.EMR_LAB_URL_TEMPLATE,
     queryBuilderUrl: process.env.EMR_QUERY_BUILDER_URL,
+    retDatatableUrl: process.env.EMR_RET_DATATABLE_URL || 'https://emr.mapims.edu.in/BB15SE/Lab/wsLabServices.asmx/RETDatatable',
     username: process.env.EMR_USERNAME,
     password: process.env.EMR_PASSWORD,
     logOpt: process.env.EMR_LOG_OPT || '2',
@@ -25,5 +26,14 @@ export const config = {
     nameEn: process.env.HOSPITAL_NAME_EN,
     nameTa: process.env.HOSPITAL_NAME_TA,
     address: process.env.HOSPITAL_ADDRESS,
+  },
+  wati: {
+    // The tenant-specific API host, e.g. https://live-mt-server.wati.io/123456
+    // (found in the WATI dashboard's API Docs page).
+    endpoint: process.env.API_ENDPOINT,
+    // The full "Bearer <jwt>" value from the same page — used as-is in the
+    // Authorization header, not the differently-formatted WATI_API_TOKEN.
+    accessToken: process.env.WATI_ACCESS_TOKEN,
+    templateId: process.env.WATI_TEMPLATE_ID || 'investigation',
   },
 };
