@@ -1,5 +1,15 @@
 const API_BASE = '/api';
 
+// Fired when the server rejects the session (expired, or signed out elsewhere)
+// so App can drop back to the login screen instead of showing API errors.
+export const AUTH_EXPIRED_EVENT = 'investigation-auth-expired';
+
+async function apiFetch(url, options) {
+  const res = await fetch(url, options);
+  if (res.status === 401) window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+  return res;
+}
+
 export async function fetchHospitalConfig() {
   const res = await fetch(`${API_BASE}/config/hospital`);
   if (!res.ok) throw new Error('Failed to load hospital config');
@@ -17,8 +27,18 @@ export async function login({ username, password }) {
   return data;
 }
 
+/** Whether the browser still holds a valid server session. */
+export async function checkSession() {
+  const res = await fetch(`${API_BASE}/session`);
+  return res.ok;
+}
+
+export async function logout() {
+  await fetch(`${API_BASE}/logout`, { method: 'POST' }).catch(() => {});
+}
+
 export async function searchInvestigation({ regNo, fromDate, toDate }) {
-  const res = await fetch(`${API_BASE}/search`, {
+  const res = await apiFetch(`${API_BASE}/search`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     // fromDate/toDate come in as plain "YYYY-MM-DD" from a date-only input —
@@ -35,28 +55,28 @@ export async function searchInvestigation({ regNo, fromDate, toDate }) {
 }
 
 export async function fetchLabDetail(orderid) {
-  const res = await fetch(`${API_BASE}/detail/${encodeURIComponent(orderid)}`);
+  const res = await apiFetch(`${API_BASE}/detail/${encodeURIComponent(orderid)}`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to load detail');
   return data;
 }
 
 export async function fetchReportStatus() {
-  const res = await fetch(`${API_BASE}/reports/status`);
+  const res = await apiFetch(`${API_BASE}/reports/status`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to load automation status');
   return data;
 }
 
 export async function fetchReportDates() {
-  const res = await fetch(`${API_BASE}/reports/dates`);
+  const res = await apiFetch(`${API_BASE}/reports/dates`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to load report dates');
   return data.dates;
 }
 
 export async function fetchReportsForDate(date) {
-  const res = await fetch(`${API_BASE}/reports/${encodeURIComponent(date)}`);
+  const res = await apiFetch(`${API_BASE}/reports/${encodeURIComponent(date)}`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to load reports');
   return data.patients;
@@ -69,14 +89,14 @@ export async function searchReports(filters) {
       params.set(key, value);
     }
   }
-  const res = await fetch(`${API_BASE}/reports/search?${params.toString()}`);
+  const res = await apiFetch(`${API_BASE}/reports/search?${params.toString()}`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Search failed');
   return data.patients;
 }
 
 export async function triggerReportRun() {
-  const res = await fetch(`${API_BASE}/reports/run-now`, { method: 'POST' });
+  const res = await apiFetch(`${API_BASE}/reports/run-now`, { method: 'POST' });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to run discharge check');
   return data.summary;
@@ -91,7 +111,7 @@ export function reportSummaryPdfUrl(date, ipNo) {
 }
 
 export async function sendReportWhatsApp(date, ipNo) {
-  const res = await fetch(`${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/send-whatsapp`, {
+  const res = await apiFetch(`${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/send-whatsapp`, {
     method: 'POST',
   });
   const data = await res.json();
@@ -100,14 +120,14 @@ export async function sendReportWhatsApp(date, ipNo) {
 }
 
 export async function fetchWatiSettings() {
-  const res = await fetch(`${API_BASE}/wati/settings`);
+  const res = await apiFetch(`${API_BASE}/wati/settings`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to load WATI settings');
   return data.settings;
 }
 
 export async function updateWatiSettings(payload) {
-  const res = await fetch(`${API_BASE}/wati/settings`, {
+  const res = await apiFetch(`${API_BASE}/wati/settings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

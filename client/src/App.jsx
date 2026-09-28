@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
+  AUTH_EXPIRED_EVENT,
+  checkSession,
   defaultDateOnly,
   fetchHospitalConfig,
   login,
+  logout,
   searchInvestigation,
 } from './api/client';
 import SearchForm from './components/SearchForm';
@@ -69,6 +72,25 @@ export default function App() {
       .catch(() => setHospital({}));
   }, []);
 
+  // The server session is what actually grants access; the sessionStorage flag
+  // only remembers the UI state. Drop back to the login screen whenever the
+  // server says the session is gone — on load (e.g. after a redeploy or
+  // password change) and on any API call that comes back 401.
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const expire = () => {
+      sessionStorage.removeItem('investigation-auth');
+      setIsAuthenticated(false);
+      setPassword('');
+      setLoginError('Your session has ended — please log in again.');
+    };
+    checkSession()
+      .then((ok) => !ok && expire())
+      .catch(() => {});
+    window.addEventListener(AUTH_EXPIRED_EVENT, expire);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, expire);
+  }, [isAuthenticated]);
+
   async function handleLogin(e) {
     e.preventDefault();
     setLoginLoading(true);
@@ -90,6 +112,7 @@ export default function App() {
   }
 
   function handleLogout() {
+    logout();
     sessionStorage.removeItem('investigation-auth');
     setIsAuthenticated(false);
     setUsername('');

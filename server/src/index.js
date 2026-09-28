@@ -17,6 +17,7 @@ import {
 } from './services/dischargeReportService.js';
 import { pdfExists, reportObjectKey, reportSummaryObjectKey } from './services/storageService.js';
 import { getWatiSettings, updateWatiSettings } from './services/watiSettingsService.js';
+import { clearSessionCookie, getSessionUser, requireSession, setSessionCookie } from './services/sessionService.js';
 
 import fs from 'fs';
 import path from 'path';
@@ -44,6 +45,10 @@ export function createApp() {
   // Serve static frontend files (React dist)
   app.use(express.static(clientDistPath));
 
+  // Everything under /api below needs a logged-in session, except the few
+  // routes the login screen itself uses (see sessionService.js).
+  app.use(requireSession);
+
   app.get('/api/health', (_req, res) => {
     res.json({ ok: true });
   });
@@ -61,7 +66,19 @@ export function createApp() {
       return res.status(401).json({ ok: false, error: 'Invalid username or password' });
     }
 
+    setSessionCookie(req, res, username);
     res.json({ ok: true, username });
+  });
+
+  app.get('/api/session', (req, res) => {
+    const username = getSessionUser(req);
+    if (!username) return res.status(401).json({ ok: false, error: 'Not logged in' });
+    res.json({ ok: true, username });
+  });
+
+  app.post('/api/logout', (req, res) => {
+    clearSessionCookie(req, res);
+    res.json({ ok: true });
   });
 
   app.get('/api/config/hospital', (_req, res) => {
