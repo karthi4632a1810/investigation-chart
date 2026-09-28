@@ -11,3 +11,6 @@ server/auth.txt
 
 # Local secrets scratch file — never commit
 text.txt
+
+# Stray nested clone of this repo — not part of the project
+/investigation-chart/
