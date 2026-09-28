@@ -8,3 +8,6 @@ server/auth.txt
 # Generated patient reports and discharge lists — contain PHI, never commit.
 /reports/
 /discharge.csv
+
+# Local secrets scratch file — never commit
+text.txt
