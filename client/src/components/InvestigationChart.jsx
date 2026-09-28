@@ -186,7 +186,7 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
             )}
           </div>
           <div className="letterhead-title">
-            <div className="chart-title-main">INVESTIGATION CHART</div>
+            <div className="chart-title-main">DIAGNOSIS SUMMARY</div>
             <div className="chart-regno">Reg No: {regNo}</div>
           </div>
         </div>
@@ -233,7 +233,7 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
                 )}
               </div>
               <div className="letterhead-title">
-                <div className="chart-title-main">INVESTIGATION CHART</div>
+                <div className="chart-title-main">DIAGNOSIS SUMMARY</div>
                 <div className="chart-regno">Reg No: {regNo}</div>
               </div>
             </div>
@@ -255,7 +255,7 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
             <div className="page-footer">
               <span>Page {pageIdx + 1} of {printChunks.length}</span>
               <span>Dates: {pageDates[0]} to {pageDates[pageDates.length - 1]}</span>
-              <span>{hospital?.nameEn || 'Investigation Chart'}</span>
+              <span>{hospital?.nameEn || 'Diagnosis Summary'}</span>
             </div>
           </div>
         ))}

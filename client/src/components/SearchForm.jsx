@@ -91,9 +91,9 @@ export default function SearchForm({
             <SearchIcon size={20} />
           </div>
           <div>
-            <h3 className="search-card-heading">Patient Lab Investigation Lookup</h3>
+            <h3 className="search-card-heading">Patient Lab Diagnosis Summary Lookup</h3>
             <p className="search-card-subheading">
-              Enter patient UHID or IP number to retrieve complete chronological investigation charts.
+              Enter patient UHID or IP number to retrieve complete chronological diagnosis summary charts.
             </p>
           </div>
         </div>
@@ -189,7 +189,7 @@ export default function SearchForm({
               className="styled-input with-prefix"
             />
           </div>
-          <span className="field-micro-hint">Start date for investigation orders</span>
+          <span className="field-micro-hint">Start date for diagnosis summary orders</span>
         </div>
 
         {/* Date of Discharge */}
@@ -210,7 +210,7 @@ export default function SearchForm({
               className="styled-input with-prefix"
             />
           </div>
-          <span className="field-micro-hint">End date for investigation orders</span>
+          <span className="field-micro-hint">End date for diagnosis summary orders</span>
         </div>
 
         {/* Action Buttons */}
@@ -231,7 +231,7 @@ export default function SearchForm({
               onClick={() => window.print()}
             >
               <PrinterIcon size={16} />
-              <span>Print Investigation Chart</span>
+              <span>Print Diagnosis Summary</span>
             </button>
           )}
 

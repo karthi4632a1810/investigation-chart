@@ -36,4 +36,13 @@ export const config = {
     accessToken: process.env.WATI_ACCESS_TOKEN,
     templateId: process.env.WATI_TEMPLATE_ID || 'investigation',
   },
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY,
+    endpoint: process.env.GEMINI_API_ENDPOINT || 'https://generativelanguage.googleapis.com/v1beta',
+    // Note: this key's plan currently has a 0-quota limit on Pro-tier models
+    // (gemini-3.1-pro returns 429 RESOURCE_EXHAUSTED; gemini-2.5-pro is fully
+    // retired for new users) — confirmed by direct testing. Flash works fine.
+    // Switch back to a pro model via GEMINI_MODEL once billing/quota allows.
+    model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
+  },
 };

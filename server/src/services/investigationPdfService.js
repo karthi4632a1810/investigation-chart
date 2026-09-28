@@ -95,6 +95,13 @@ function esc(str) {
   return String(str ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
+const STATUS_LEGEND = `
+  <div class="status-legend">
+    <span class="legend-dot legend-dot-normal"></span> Within Normal
+    <span class="legend-dot legend-dot-high"></span> High
+    <span class="legend-dot legend-dot-low"></span> Low
+  </div>`;
+
 function renderChartTable(dates, template, chartValues) {
   const dateColWidth = (56 / Math.max(dates.length, 1)).toFixed(1);
 
@@ -112,7 +119,7 @@ function renderChartTable(dates, template, chartValues) {
       !sectionName || ['INDIVIDUAL TESTS', 'OTHER TESTS', 'STANDALONE'].includes(sectionName);
 
     if (!isIndividualSection) {
-      body += `<tr class="section-row"><td colspan="${2 + dates.length}">${esc(sectionName)}</td></tr>`;
+      body += `<tr class="section-row"><td colspan="${2 + dates.length}">🔬 ${esc(sectionName)}</td></tr>`;
     }
 
     for (const field of activeFields) {
@@ -128,79 +135,146 @@ function renderChartTable(dates, template, chartValues) {
       for (const d of dates) {
         const val = chartValues[field.id]?.[d] ?? '';
         const color = getStatusColor(val, field.range);
+        const tint = color === 'red' ? 'tint-low' : color === '#e67e22' ? 'tint-high' : '';
         const style = color ? ` style="color:${color};font-weight:bold;"` : '';
-        body += `<td class="field-value ${val ? 'filled' : 'empty-val'}"${style}>${esc(val || '—')}</td>`;
+        body += `<td class="field-value ${val ? 'filled' : 'empty-val'} ${tint}"${style}>${esc(val || '—')}</td>`;
       }
       body += '</tr>';
     }
   }
 
   const headCols = dates.map((d) => `<th style="width:${dateColWidth}%;">${esc(d)}</th>`).join('');
-  return `<table class="chart"><thead><tr><th style="width:26%;">Parameter</th><th style="width:18%;">Ref. Range</th>${headCols}</tr></thead><tbody>${body}</tbody></table>`;
+  return `${STATUS_LEGEND}<table class="chart"><thead><tr><th style="width:26%;">Parameter</th><th style="width:18%;">Ref. Range</th>${headCols}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
-let defaultLogoDataUri = '';
-try {
-  const logoFile = new URL('../assets/logo.png', import.meta.url);
-  if (fs.existsSync(logoFile)) {
-    defaultLogoDataUri = `data:image/png;base64,${fs.readFileSync(logoFile).toString('base64')}`;
+function loadAssetDataUri(relPath) {
+  try {
+    const file = new URL(relPath, import.meta.url);
+    if (fs.existsSync(file)) {
+      return `data:image/png;base64,${fs.readFileSync(file).toString('base64')}`;
+    }
+  } catch {
+    // fall through to empty string — caller omits the <img> entirely
   }
-} catch {
-  // fallback to hospital.logoPath if local asset cannot be read
+  return '';
 }
+
+const defaultLogoDataUri = loadAssetDataUri('../assets/logo.png');
+const nablBadgeDataUri = loadAssetDataUri('../assets/nabl.png');
+const nabhBadgeDataUri = loadAssetDataUri('../assets/nabh.png');
 
 function renderLetterhead(hospital, regNo) {
   const logoSrc = defaultLogoDataUri || hospital.logoPath || '';
+  const badges = [
+    nablBadgeDataUri ? `<img class="accred-badge-img" src="${nablBadgeDataUri}" alt="NABL Accredited Laboratory" title="NABL Accredited Laboratory" />` : '',
+    nabhBadgeDataUri ? `<img class="accred-badge-img" src="${nabhBadgeDataUri}" alt="NABH Accredited Hospital" title="NABH Accredited Hospital" />` : '',
+  ].join('');
+
   return `
+    <div class="top-ribbon"></div>
     <div class="letterhead">
-      <div class="letterhead-logo">${logoSrc ? `<img src="${esc(logoSrc)}" onerror="this.style.display='none'" />` : ''}</div>
-      <div class="letterhead-name">
-        <div class="hosp-name-en">${esc(hospital.nameEn)}</div>
-        <div class="hosp-name-ta">${esc(hospital.nameTa)}</div>
-        <div class="hosp-address">${hospital.address || ''}</div>
+      <div class="letterhead-left">
+        <div class="letterhead-logo">${logoSrc ? `<img src="${esc(logoSrc)}" onerror="this.style.display='none'" />` : ''}</div>
+        <div class="letterhead-name">
+          <div class="hosp-name-en">${esc(hospital.nameEn)}</div>
+          <div class="hosp-name-ta">${esc(hospital.nameTa)}</div>
+          <div class="hosp-address">${hospital.address || ''}</div>
+        </div>
       </div>
-      <div class="letterhead-title">
-        <div class="chart-title-main">INVESTIGATION CHART</div>
-        <div class="chart-regno">Reg No: ${esc(regNo)}</div>
+      <div class="letterhead-right">
+        ${badges ? `<div class="accred-badges">${badges}<span class="accred-caption">NABL Lab &amp;<br />NABH Accredited</span></div>` : ''}
+        <div class="doc-type-badge">
+          <span class="doc-type-label">Document Type</span>
+          <span class="doc-type-value">DIAGNOSIS SUMMARY</span>
+        </div>
+        <div class="regno-badge">
+          <span class="regno-label">UHID</span>
+          <span class="regno-value">${esc(regNo)}</span>
+        </div>
       </div>
     </div>`;
 }
 
 function pf(label, value) {
   const hasVal = String(value || '').trim() !== '';
-  return `<div class="pf"><span>${esc(label)}</span><b class="${hasVal ? '' : 'blank'}">${hasVal ? esc(value) : '—'}</b></div>`;
+  return `<div class="pf"><span>${esc(label)}</span><b class="${hasVal ? '' : 'blank'}">${hasVal ? esc(value) : '-'}</b></div>`;
 }
 
-function renderPatientStrip(meta) {
-  return `<div class="patient-strip">
-    ${pf('Patient Name', meta?.name)}
-    ${pf('Age', meta?.age)}
-    ${pf('Sex', meta?.sex)}
-    ${pf('Bed No', meta?.bed)}
-    ${pf('IP No', meta?.ip)}
-    ${pf('Ward', meta?.ward)}
-    ${pf('Unit', meta?.unit)}
+/**
+ * Finds the most recent non-empty value for a test whose label matches
+ * `labelRegex` (e.g. the "BLOOD GROUPING" row already present in the chart
+ * table) — real data already flowing through this patient's chart, just
+ * surfaced a second time as a highlighted tag. Returns '' if never ordered.
+ */
+function findLatestFieldValue(template, chartValues, chartDates, labelRegex) {
+  for (const fields of Object.values(template)) {
+    for (const field of fields) {
+      if (!labelRegex.test(field.label)) continue;
+      for (let i = chartDates.length - 1; i >= 0; i--) {
+        const val = chartValues[field.id]?.[chartDates[i]];
+        if (val && String(val).trim() && val !== '--' && val !== '-' && val !== '—') return val;
+      }
+    }
+  }
+  return '';
+}
+
+function renderPatientStrip(meta, { bloodGroup, physicianName, reportPeriod } = {}) {
+  const deptTag = String(meta?.unit || '').trim()
+    ? `<span class="tag tag-dept">Department: ${esc(meta.unit)}</span>`
+    : '';
+  const ageSex = [meta?.age, meta?.sex].filter((v) => String(v || '').trim()).join(' | ');
+  const clinicalTags = bloodGroup ? `<span class="tag tag-blood">Blood Group: ${esc(bloodGroup)}</span>` : '';
+
+  return `<div class="patient-card">
+    <div class="patient-card-header">
+      <span class="patient-card-title">Patient Demographics &amp; Admission Info</span>
+      <div class="patient-card-tags">${deptTag}</div>
+    </div>
+    <div class="patient-strip">
+      ${pf('Patient Name', meta?.name)}
+      ${pf('Age / Sex', ageSex)}
+      ${pf('IP Number', meta?.ip)}
+      ${pf('Bed No.', meta?.bed)}
+      ${pf('Assigned Ward', meta?.ward)}
+      ${pf('Unit / Specialty', meta?.unit)}
+      ${pf('Treating Physician', physicianName)}
+      ${pf('Report Period', reportPeriod)}
+    </div>
+    ${
+      clinicalTags
+        ? `<div class="clinical-tags-row"><span class="clinical-tags-label">Clinical Tags:</span>${clinicalTags}</div>`
+        : ''
+    }
   </div>`;
 }
 
-export function buildInvestigationChartHtml({ hospital, regNo, chart }) {
+export function buildInvestigationChartHtml({ hospital, regNo, chart, physicianName }) {
   const { chartDates, chartValues, patientMeta, template } = chart;
   const pages = chunkArray(chartDates, 4);
+  const bloodGroup = findLatestFieldValue(template, chartValues, chartDates, /blood\s*group/i);
+  const reportPeriod =
+    chartDates.length > 1 ? `${chartDates[0]} – ${chartDates[chartDates.length - 1]}` : chartDates[0] || '';
+  const patientCard = renderPatientStrip(patientMeta, { bloodGroup, physicianName, reportPeriod });
 
   const pageBlocks = pages
-    .map(
-      (pageDates, idx) => `
+    .map((pageDates, idx) => {
+      const isLast = idx === pages.length - 1;
+      // The disclaimer only belongs once, at the true end of the document —
+      // not repeated on every date-chunk page, and not carrying a "Page X of
+      // Y" count that would be wrong whenever a chunk's table overflows onto
+      // more physical PDF pages than there are chunks.
+      const footer = isLast
+        ? `<div class="page-footer disclaimer-footer"><strong class="disclaimer-label">DISCLAIMER:</strong> This is a system-generated diagnosis summary compiled from laboratory records. Please contact ${esc(hospital.nameEn || 'the hospital')} to verify or for clinical correlation.</div>`
+        : '';
+      return `
     <div class="chart-page-block">
       ${renderLetterhead(hospital, regNo)}
-      ${renderPatientStrip(patientMeta)}
+      ${patientCard}
       <div class="chart-card-body">${renderChartTable(pageDates, template, chartValues)}</div>
-      <div class="page-footer">
-        <span>Page ${idx + 1} of ${pages.length}</span>
-        <span>Dates: ${esc(pageDates[0])} to ${esc(pageDates[pageDates.length - 1])}</span>
-        <span>${esc(hospital.nameEn || 'Investigation Chart')}</span>
-      </div>
-    </div>`,
-    )
+      ${footer}
+    </div>`;
+    })
     .join('\n');
 
   return `<!doctype html>
@@ -209,51 +283,90 @@ export function buildInvestigationChartHtml({ hospital, regNo, chart }) {
 <meta charset="utf-8" />
 <style>
   :root {
-    --primary: #2563eb; --bg: #f1f5f9; --card: #ffffff; --border: #e2e8f0;
-    --text: #1e293b; --muted: #64748b; --letter-blue: #1d4a8f;
+    --brand-900: #0b2956; --brand-800: #144385; --brand-700: #1b56a7; --brand-50: #f0f5fc;
+    --bg: #f1f5f9; --card: #ffffff; --border: #e2e8f0;
+    --text: #1e293b; --muted: #64748b;
+    --success: #10b981; --warning: #e67e22; --danger: #ef4444;
   }
   * { box-sizing: border-box; }
-  body { font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; margin: 0; background: #fff; color: var(--text); }
+  body { font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
   @page { size: A4 portrait; margin: 8mm; }
 
   .chart-page-block {
     background: var(--card);
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
     width: 100%;
+    box-shadow: 0 1px 3px rgba(11, 41, 86, 0.08), 0 4px 14px rgba(11, 41, 86, 0.06);
     page-break-after: always;
     break-after: page;
   }
   .chart-page-block:last-child { page-break-after: auto; break-after: auto; }
 
-  .letterhead { display: flex; align-items: center; gap: 18px; padding: 18px 20px 14px; border-bottom: 3px solid var(--letter-blue); }
-  .letterhead-logo { width: 64px; height: 99px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
+  .top-ribbon { height: 6px; background: linear-gradient(90deg, var(--brand-900), var(--brand-800), var(--brand-700)); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+  .letterhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 16px 20px 14px; border-bottom: 1px solid var(--border); }
+  .letterhead-left { display: flex; align-items: center; gap: 16px; flex: 1 1 auto; min-width: 0; }
+  .letterhead-logo { width: 56px; height: 86px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
   .letterhead-logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
-  .letterhead-name { flex: 1 1 auto; min-width: 220px; }
-  .hosp-name-en { font-size: 22px; font-weight: 800; color: var(--letter-blue); letter-spacing: -0.01em; }
-  .hosp-name-ta { font-size: 15px; font-weight: 700; color: var(--letter-blue); margin-top: 1px; }
-  .hosp-address { font-size: 10.5px; color: var(--muted); margin-top: 5px; line-height: 1.5; }
-  .letterhead-title { flex: 0 0 auto; text-align: right; min-width: 170px; }
-  .chart-title-main { font-size: 18px; font-weight: 800; color: var(--letter-blue); background: #dbeafe; padding: 7px 14px; border-radius: 8px; letter-spacing: 0.02em; display: inline-block; }
-  .chart-regno { margin-top: 8px; font-size: 15px; font-weight: 700; color: var(--text); }
+  .letterhead-name { flex: 1 1 auto; min-width: 0; }
+  .hosp-name-en { font-size: 20px; font-weight: 800; color: var(--brand-800); letter-spacing: -0.01em; }
+  .hosp-name-ta { font-size: 13px; font-weight: 700; color: var(--brand-800); margin-top: 1px; }
+  .hosp-address { font-size: 7.4px; color: var(--muted); margin-top: 5px; line-height: 1.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  .patient-strip { display: flex; flex-wrap: wrap; gap: 22px 30px; padding: 14px 20px 16px; border-bottom: 1px solid var(--border); background: #f8fafc; }
-  .patient-strip .pf { font-size: 13px; display: flex; align-items: baseline; gap: 6px; min-width: 140px; }
-  .patient-strip .pf span { color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.03em; white-space: nowrap; }
-  .patient-strip .pf b { font-weight: 600; color: var(--text); border-bottom: 1px dotted #94a3b8; padding-bottom: 1px; min-width: 60px; display: inline-block; }
-  .patient-strip .pf b.blank { color: #cbd5e1; }
+  .letterhead-right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 9px; }
+  .accred-badges { display: flex; align-items: center; gap: 8px; }
+  .accred-badge-img { height: 38px; width: auto; object-fit: contain; }
+  .accred-caption { font-size: 8px; font-weight: 700; line-height: 1.25; color: var(--muted); text-align: left; }
+  .doc-type-badge { background: var(--brand-50); border: 1px solid #c2dbf3; border-radius: 999px; padding: 5px 16px; text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .doc-type-label { display: block; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--brand-700); }
+  .doc-type-value { display: block; font-size: 14px; font-weight: 800; color: var(--brand-900); letter-spacing: 0.02em; }
+  .regno-badge { text-align: right; }
+  .regno-label { display: block; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .regno-value { display: inline-block; font-size: 13px; font-weight: 800; font-family: 'JetBrains Mono', 'Courier New', monospace; color: var(--brand-900); background: var(--brand-50); border: 1px solid #c2dbf3; border-radius: 5px; padding: 2px 8px; margin-top: 2px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
-  .chart-card-body { padding: 10px; }
-  table.chart { min-width: 0; width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 11px; }
-  table.chart th, table.chart td { border: 1px solid #cbd5e1; padding: 5px 6px; text-align: left; word-break: break-word; overflow-wrap: break-word; }
-  table.chart thead th { background: #1e3a8a; color: #fff; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.03em; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  tr.section-row td { background: #dbeafe; font-weight: 800; color: #1e3a8a; text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.04em; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .patient-card { margin: 12px 20px; padding: 12px 15px; background: linear-gradient(135deg, #f8fafc, var(--brand-50)); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 1px 2px rgba(11, 41, 86, 0.05); }
+  .patient-card-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; padding-bottom: 7px; margin-bottom: 9px; border-bottom: 1px solid #dbe4ef; }
+  .patient-card-title { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; color: var(--brand-800); }
+  .patient-card-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag { font-size: 9.5px; font-weight: 700; border-radius: 999px; padding: 2px 10px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .tag-dept { color: var(--brand-800); background: #e1ecf9; border: 1px solid #c2dbf3; }
+  .tag-blood { color: #9f1239; background: #fce7ee; border: 1px solid #fbcfe0; }
+
+  .patient-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 12px; }
+  .patient-strip .pf { font-size: 11px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .patient-strip .pf span { color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 8px; letter-spacing: 0.03em; white-space: nowrap; }
+  .patient-strip .pf b { font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .patient-strip .pf:first-child b { font-size: 12.5px; font-weight: 800; }
+  .patient-strip .pf b.blank { color: #cbd5e1; font-weight: 500; }
+
+  .clinical-tags-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 10px; padding-top: 8px; border-top: 1px solid #dbe4ef; }
+  .clinical-tags-label { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+
+  .status-legend { display: flex; align-items: center; gap: 14px; padding: 0 4px 8px; font-size: 9.5px; font-weight: 600; color: var(--muted); }
+  .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 3px; vertical-align: middle; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .legend-dot-normal { background: var(--success); }
+  .legend-dot-high { background: var(--warning); }
+  .legend-dot-low { background: var(--danger); }
+
+  .chart-card-body { padding: 0 10px 10px; }
+  table.chart { min-width: 0; width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 11px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  table.chart th, table.chart td { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); padding: 6px 7px; text-align: left; word-break: break-word; overflow-wrap: break-word; }
+  table.chart th:last-child, table.chart td:last-child { border-right: none; }
+  table.chart thead th { background: var(--brand-800); color: #fff; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 2px solid var(--brand-900); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  tr.section-row td { background: var(--brand-50); font-weight: 800; color: var(--brand-900); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.04em; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  tbody tr:nth-child(even):not(.section-row) td.field-value { background: #fbfcfe; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  td.field-value.tint-low { background: #fef2f2 !important; }
+  td.field-value.tint-high { background: #fff7ed !important; }
   td.field-label { font-weight: 600; white-space: nowrap; }
   td.field-range { color: var(--muted); font-size: 10.5px; white-space: nowrap; }
   td.field-value { font-weight: 700; color: #0f172a; }
-  td.field-value.filled { background: #f0fdf4; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  td.field-value.filled { background: #f8fafc; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   td.field-value.empty-val { color: #cbd5e1; }
 
-  .page-footer { display: flex; justify-content: space-between; align-items: center; padding: 10px 20px; background: #f8fafc; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); font-weight: 600; }
+  .page-footer.disclaimer-footer { display: block; text-align: center; padding: 10px 24px; background: #f8fafc; border-top: 1px solid var(--border); font-size: 9.5px; color: #dc2626; font-weight: 700; line-height: 1.5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .page-footer.disclaimer-footer .disclaimer-label { font-weight: 900; letter-spacing: 0.03em; margin-right: 3px; }
 </style>
 </head>
 <body>
@@ -359,7 +472,7 @@ export async function renderHtmlToPdf(html, outPath) {
  *
  * @returns {Promise<{ok: true, dateCount: number, fetchErrors: string[], objectKey: string} | {ok: false, error: string}>}
  */
-export async function generatePatientPdf({ ipNo, regNo, admissionDate, dischargeDate, hospital, date }) {
+export async function generatePatientPdf({ ipNo, regNo, admissionDate, dischargeDate, hospital, date, physicianName }) {
   const searchFromDate = widenWindowStart(admissionDate, PRE_ADMISSION_BUFFER_HOURS);
 
   let result = await searchInvestigation(ipNo, searchFromDate, dischargeDate);
@@ -389,7 +502,11 @@ export async function generatePatientPdf({ ipNo, regNo, admissionDate, discharge
     };
   }
 
-  const html = buildInvestigationChartHtml({ hospital, regNo: ipNo, chart: result.chart });
+  // Display the real Reg No/UHID when the caller has it — the lab EMR search
+  // above only ever needs `ipNo`/`regNo` as alternate *search* identifiers,
+  // but the letterhead should show the patient's actual UHID, not whichever
+  // one happened to be used to find the results.
+  const html = buildInvestigationChartHtml({ hospital, regNo: regNo || ipNo, chart: result.chart, physicianName });
   const tmpPdfPath = path.join(os.tmpdir(), `investigation-pdf-${crypto.randomUUID()}.pdf`);
 
   try {

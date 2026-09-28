@@ -370,6 +370,23 @@ html, body {
   box-shadow: var(--shadow-sm);
 }
 
+/* Flags a generated summary whose PDF came back with no patient data
+   (EMR page had nothing to scrape) — visible next to the Summary button
+   so staff know to double-check the PDF before sending it out. */
+.summary-warning-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-full);
+  padding: 3px 9px;
+  white-space: nowrap;
+}
+
 /* WhatsApp send button — green, distinct from the red/teal document buttons
    since it's an action (send), not a document link. */
 .btn-send-whatsapp {
@@ -410,6 +427,13 @@ html, body {
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 700;
+}
+
+/* Icon-only variant: square, compact — used where a text label would crowd
+   a tight card header (the tooltip/aria-label still carries the meaning). */
+.btn-icon-only {
+  padding: 7px !important;
+  gap: 0 !important;
 }
 
 /* WATI Settings admin screen */
@@ -2071,6 +2095,25 @@ html, body {
   background: #ecfdf5;
   color: #047857;
   border: 1px solid #a7f3d0;
+}
+
+/* Flags a generated summary whose PDF came back with no patient data
+   (EMR page had nothing to scrape) — sits above the summary button so
+   staff know to double-check the PDF before sending it out. */
+.summary-warning-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 7px;
+  padding: 5px 8px;
+  margin-bottom: 8px;
+  text-align: center;
 }
 
 .btn-view-summary:hover {

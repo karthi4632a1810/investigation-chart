@@ -60,8 +60,8 @@ export function dateFolderName(date = new Date()) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function dischargeListQuery(fromDate, toDate) {
-  return `Use kmch_frontoffice EXEC Fo_Rpt_IPPatdetailsprint_QB  @frmdate = '${fromDate}' , @todate = '${toDate}' , @patname = '' , @regno = '' , @ipno = '' , @docid = '0' , @MatrixFormat = '0' , @wardid = '0' , @Status = '1' , @PatType = '0' , @Corporate_type = '0' , @depid = '0' , @BedId = '0' , @RegDocCity = '0' , @optoip = '0' , @ReligionId = '0' , @RefDocDays = '0' , @VisitCategory = '' , @CorporateId = '' , @unit = '0' , @grpby = '0' `;
+function dischargeListQuery(fromDate, toDate, ipno = '') {
+  return `Use kmch_frontoffice EXEC Fo_Rpt_IPPatdetailsprint_QB  @frmdate = '${fromDate}' , @todate = '${toDate}' , @patname = '' , @regno = '' , @ipno = '${ipno}' , @docid = '0' , @MatrixFormat = '0' , @wardid = '0' , @Status = '1' , @PatType = '0' , @Corporate_type = '0' , @depid = '0' , @BedId = '0' , @RegDocCity = '0' , @optoip = '0' , @ReligionId = '0' , @RefDocDays = '0' , @VisitCategory = '' , @CorporateId = '' , @unit = '0' , @grpby = '0' `;
 }
 
 /** The "PATIENT NAME" column is a raw HTML anchor from the EMR. */
@@ -125,14 +125,14 @@ export async function upsertReportBaseline(dateFolder, row, extra = {}) {
   );
 }
 
-export async function fetchDischargeList(fromDate, toDate) {
+export async function fetchDischargeList(fromDate, toDate, ipno = '') {
   // AbortSignal.timeout, not a bare fetch — an unbounded fetch() can hang
   // indefinitely on a connection that never completes, the same failure mode
   // fixed for the EMR client in emrService.js.
   const res = await fetch(config.emr.queryBuilderUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-    body: JSON.stringify({ strQuery: dischargeListQuery(fromDate, toDate), strCon: 'BB_CONSTR' }),
+    body: JSON.stringify({ strQuery: dischargeListQuery(fromDate, toDate, ipno), strCon: 'BB_CONSTR' }),
     signal: AbortSignal.timeout(60_000),
   });
   if (!res.ok) throw new Error(`EMR responded ${res.status}: ${await res.text()}`);
@@ -140,6 +140,23 @@ export async function fetchDischargeList(fromDate, toDate) {
   const data = await res.json();
   const rows = data?.d ? JSON.parse(data.d) : [];
   return (Array.isArray(rows) ? rows : []).filter(isRealPatient);
+}
+
+/**
+ * Looks up one patient's admission record directly from the EMR's live
+ * front-office database, by IP number — a fallback for when the local
+ * discharge.csv snapshot doesn't have them yet (e.g. discharged after the
+ * last CSV refresh, or not discharged at all). Searches the last 6 months;
+ * returns null rather than throwing if nothing matches, since "not found" is
+ * an expected outcome here, not a failure.
+ */
+export async function findAdmissionByIpNo(ipNo) {
+  if (!ipNo) return null;
+  const toDate = new Date();
+  const fromDate = new Date(toDate);
+  fromDate.setMonth(fromDate.getMonth() - 6);
+  const rows = await fetchDischargeList(mmddyyyy(fromDate), mmddyyyy(toDate), ipNo);
+  return rows[0] || null;
 }
 
 export async function getReportRecord(dateFolder, ipNo) {
@@ -337,6 +354,7 @@ async function processDischargeDate(dateFolder, mdy) {
             dischargeDate,
             hospital: config.hospital,
             date: dateFolder,
+            physicianName: row['DOCTOR'],
           });
 
           if (!result.ok) {
@@ -386,7 +404,10 @@ async function processDischargeDate(dateFolder, mdy) {
         try {
           const result = await generateDischargeSummaryPdf({ ipNo, date: dateFolder, hospital: config.hospital });
           if (result.ok) {
-            await upsertReportBaseline(dateFolder, row, { hasSummary: true });
+            await upsertReportBaseline(dateFolder, row, {
+              hasSummary: true,
+              summaryDataMissing: Boolean(result.dataMissing),
+            });
             summary.summaryGenerated += 1;
             console.log(`[discharge] generated discharge summary for ${ipNo} (${patientName})`);
           } else {

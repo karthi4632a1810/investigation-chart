@@ -107,6 +107,7 @@ async function main() {
     dischargeDate,
     hospital: config.hospital,
     date: folderDate,
+    physicianName: row['DOCTOR'],
   });
 
   if (!result.ok) {
