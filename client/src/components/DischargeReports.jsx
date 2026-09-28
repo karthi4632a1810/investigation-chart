@@ -952,7 +952,7 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
   );
 }
 
-export default function DischargeReports() {
+export default function DischargeReports({ navRequest }) {
   const [mode, setMode] = useState('date'); // 'date' | 'search'
   const [date, setDate] = useState(defaultDateOnly());
   const [filters, setFilters] = useState(EMPTY_FILTERS);
@@ -971,6 +971,15 @@ export default function DischargeReports() {
     }
   });
   const [filterText, setFilterText] = useState('');
+
+  // The AI assistant can open this screen at a date, with the list filtered.
+  useEffect(() => {
+    if (navRequest?.view !== 'reports') return;
+    setMode('date');
+    if (navRequest.date) setDate(navRequest.date);
+    setFilterText(navRequest.filter || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navRequest?.id]);
   const [categoryFilter, setCategoryFilter] = useState('all'); // 'all' | 'lab' | 'summary' | 'nolab' | 'corporate'
   const [toast, setToast] = useState(null);
   const toastTimerRef = useRef(null);

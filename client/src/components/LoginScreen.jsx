@@ -197,7 +197,7 @@ export default function LoginScreen({
               <LockIcon size={22} />
             </div>
             <h1 id="lock-card-title">Staff sign in</h1>
-            <p>Diagnosis Summary Portal</p>
+            <p>Diagnostics Summary Portal</p>
           </div>
 
           <form onSubmit={onSubmit} className="login-form">

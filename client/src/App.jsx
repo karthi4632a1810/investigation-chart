@@ -15,8 +15,11 @@ import DetailModal from './components/DetailModal';
 import LoginScreen from './components/LoginScreen';
 import DischargeReports from './components/DischargeReports';
 import WatiSettings from './components/WatiSettings';
+import LabFinder from './components/LabFinder';
+import AssistantPanel from './components/AssistantPanel';
 import {
   FilePdfIcon,
+  FlaskIcon,
   HospitalIcon,
   LogoutIcon,
   SearchIcon,
@@ -48,7 +51,16 @@ function saveRecentSearch(regNo) {
 
 export default function App() {
   const [hospital, setHospital] = useState(null);
-  const [view, setView] = useState('reports'); // 'search' | 'reports'
+  const [view, setView] = useState('reports'); // 'search' | 'reports' | 'labFinder' | 'wati'
+  // Set by the AI assistant to open a screen at a given date / filter / query;
+  // the screen applies it when `id` changes.
+  const [navRequest, setNavRequest] = useState(null);
+
+  function handleAssistantNavigate({ view: nextView, date, filter, query }) {
+    if (!nextView) return;
+    setView(nextView);
+    setNavRequest({ id: Date.now(), view: nextView, date, filter, query });
+  }
   const [regNo, setRegNo] = useState('');
   const [fromDate, setFromDate] = useState(defaultDateOnly());
   const [toDate, setToDate] = useState(defaultDateOnly());
@@ -188,7 +200,7 @@ export default function App() {
               {hospital?.nameEn || 'Adhiparasakthi Hospitals'}
             </div>
             <div className="app-brand-subtitle">
-              <span>Diagnosis Summary Portal</span>
+              <span>Diagnostics Summary Portal</span>
               <span className="brand-badge-pill">EMR Portal</span>
             </div>
           </div>
@@ -214,6 +226,14 @@ export default function App() {
             </button>
             <button
               type="button"
+              className={`nav-segment-btn ${view === 'labFinder' ? 'active' : ''}`}
+              onClick={() => setView('labFinder')}
+            >
+              <FlaskIcon size={16} />
+              <span>Lab Finder</span>
+            </button>
+            <button
+              type="button"
               className={`nav-segment-btn ${view === 'wati' ? 'active' : ''}`}
               onClick={() => setView('wati')}
             >
@@ -235,14 +255,16 @@ export default function App() {
       </header>
 
       <main className="page">
-        {view === 'reports' && <DischargeReports />}
+        {view === 'reports' && <DischargeReports navRequest={navRequest} />}
+
+        {view === 'labFinder' && <LabFinder navRequest={navRequest} />}
 
         {view === 'wati' && <WatiSettings />}
 
         {view === 'search' && (
           <div className="search-view-container">
             <div className="section-header">
-              <h2>Lab Result Search & Diagnosis Summary</h2>
+              <h2>Lab Result Search & Diagnostics Summary</h2>
               <p className="section-subtitle">
                 Retrieve a patient's historical laboratory findings, automated trends, and raw analyzer values.
               </p>
@@ -315,7 +337,7 @@ export default function App() {
             {loading && (
               <div className="loading modern-loading">
                 <div className="spinner"></div>
-                <div>Fetching diagnosis summary data from laboratory servers…</div>
+                <div>Fetching diagnostics summary data from laboratory servers…</div>
               </div>
             )}
 
@@ -332,7 +354,7 @@ export default function App() {
             {result && !result.data?.length && (
               <div className="empty modern-empty">
                 <div className="empty-icon">📂</div>
-                <div className="empty-title">No Diagnosis Summary Records Found</div>
+                <div className="empty-title">No Diagnostics Summary Records Found</div>
                 <p className="empty-subtitle">
                   No verified lab test results were returned for UHID/IP <strong>"{result.regNo || regNo}"</strong> within the selected date range ({fromDate} to {toDate}).
                 </p>
@@ -347,7 +369,7 @@ export default function App() {
                     className={`tab-btn ${activeTab === 'chart' ? 'active' : ''}`}
                     onClick={() => setActiveTab('chart')}
                   >
-                    <span>📋 Diagnosis Summary</span>
+                    <span>📋 Diagnostics Summary</span>
                   </button>
                   <button
                     type="button"
@@ -382,6 +404,8 @@ export default function App() {
           </div>
         )}
       </main>
+
+      <AssistantPanel onNavigate={handleAssistantNavigate} />
     </div>
   );
 }

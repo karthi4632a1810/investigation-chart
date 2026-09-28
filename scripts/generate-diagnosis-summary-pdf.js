@@ -1,5 +1,5 @@
 /**
- * Manual CLI: generate a diagnosis-summary PDF for a single patient by
+ * Manual CLI: generate a diagnostics-summary PDF for a single patient by
  * regNo/UHID + an explicit date range, without going through discharge.csv
  * (which is keyed by IP number and only has rows for discharged inpatients).
  *
@@ -170,6 +170,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error('Failed to generate diagnosis summary PDF:', error.message);
+  console.error('Failed to generate diagnostics summary PDF:', error.message);
   process.exit(1);
 });

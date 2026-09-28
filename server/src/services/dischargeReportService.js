@@ -24,6 +24,7 @@ import { pdfExists, reportObjectKey, reportSummaryObjectKey, getPdfPresignedUrl 
 import { getMongoCollection } from './mongo.js';
 import { getWatiSettings } from './watiSettingsService.js';
 import { sendInvestigationReportWhatsApp, documentLine } from './watiService.js';
+import { saveLabResults } from './labResultsService.js';
 
 const REPORTS_COLLECTION = 'discharge_reports';
 // Patients confirmed to have zero lab orders anywhere in the EMR (checked by both
@@ -408,7 +409,11 @@ async function processDischargeDate(dateFolder, mdy) {
               console.error(`[discharge] ${ipNo}: ${result.error}`);
             }
           } else {
-            await upsertReportRecord(dateFolder, buildReportRecord(row, result));
+            const record = buildReportRecord(row, result);
+            await upsertReportRecord(dateFolder, record);
+            await saveLabResults(dateFolder, record, result.results).catch((error) =>
+              console.error(`[discharge] ${ipNo}: could not store lab values for search: ${error.message}`),
+            );
             summary.generated += 1;
             generatedNow.push('lab');
             console.log(`[discharge] generated lab report for ${ipNo} (${patientName})`);

@@ -18,6 +18,10 @@ import {
 import { pdfExists, reportObjectKey, reportSummaryObjectKey } from './services/storageService.js';
 import { getWatiSettings, updateWatiSettings } from './services/watiSettingsService.js';
 import { clearSessionCookie, getSessionUser, requireSession, setSessionCookie } from './services/sessionService.js';
+import { hasCriteria, labResultsCoverage, listLabTests, normaliseQuery, searchLabResults } from './services/labResultsService.js';
+import { buildExport, EXPORT_FORMATS, exportFileName, shareLabResultsOnWhatsApp } from './services/labExportService.js';
+import { toWatiNumber } from './services/watiService.js';
+import { runAssistant } from './services/assistantService.js';
 
 import fs from 'fs';
 import path from 'path';
@@ -309,6 +313,125 @@ app.get('/api/detail/:orderid', async (req, res) => {
       res.json({ ok: true, sentTo: toNumber, ...result });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /**
+   * Lab Finder — search stored lab values across patients (labResultsService.js),
+   * export them, or share them on WhatsApp. All behind the login session.
+   */
+  function validWhatsAppNumber(raw) {
+    const digits = toWatiNumber(raw);
+    return digits.length >= 11 && digits.length <= 15 ? digits : null;
+  }
+
+  app.get('/api/lab-results/tests', async (req, res) => {
+    try {
+      res.json({ ok: true, tests: await listLabTests(String(req.query.q || '').slice(0, 80)) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.get('/api/lab-results/coverage', async (_req, res) => {
+    try {
+      res.json({ ok: true, ...(await labResultsCoverage()) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.post('/api/lab-results/search', async (req, res) => {
+    const query = normaliseQuery(req.body?.query);
+    if (!hasCriteria(query)) {
+      return res.status(400).json({ ok: false, error: 'Enter a test name, value or patient to search for' });
+    }
+    try {
+      res.json({ ok: true, ...(await searchLabResults(query)) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.post('/api/lab-results/export', async (req, res) => {
+    const format = String(req.body?.format || '');
+    const query = normaliseQuery(req.body?.query);
+    if (!EXPORT_FORMATS[format]) return res.status(400).json({ ok: false, error: 'Format must be pdf, xlsx, docx or csv' });
+    if (!hasCriteria(query)) return res.status(400).json({ ok: false, error: 'Nothing to export — search first' });
+    try {
+      const file = await buildExport(await searchLabResults(query), format);
+      res.setHeader('Content-Type', EXPORT_FORMATS[format].mime);
+      res.setHeader('Content-Disposition', `attachment; filename="${exportFileName(query, format)}"`);
+      res.send(file);
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.post('/api/lab-results/share', async (req, res) => {
+    const query = normaliseQuery(req.body?.query);
+    const toNumber = validWhatsAppNumber(req.body?.toNumber);
+    if (!toNumber) return res.status(400).json({ ok: false, error: 'Enter a valid WhatsApp number' });
+    if (!hasCriteria(query)) return res.status(400).json({ ok: false, error: 'Nothing to share — search first' });
+    try {
+      const search = await searchLabResults(query);
+      if (!search.total) return res.status(404).json({ ok: false, error: 'No results to share' });
+      await shareLabResultsOnWhatsApp(search, { toNumber, recipientName: String(req.body?.recipientName || '').slice(0, 60) });
+      res.json({ ok: true, sentTo: `+${toNumber}` });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  // Staff-chosen number (from the Lab Finder or the assistant) — unlike
+  // send-whatsapp above, this ignores live mode because a person typed the
+  // destination on purpose. Empty summaries are still never sent.
+  app.post('/api/reports/:date/:ip/share', async (req, res) => {
+    const { date, ip } = req.params;
+    if (!DATE_RE.test(date) || !IP_RE.test(ip)) {
+      return res.status(400).json({ ok: false, error: 'Invalid date or IP number' });
+    }
+    const toNumber = validWhatsAppNumber(req.body?.toNumber);
+    if (!toNumber) return res.status(400).json({ ok: false, error: 'Enter a valid WhatsApp number' });
+    try {
+      const [labExists, summaryExists, record, settings] = await Promise.all([
+        pdfExists(reportObjectKey(date, ip)),
+        pdfExists(reportSummaryObjectKey(date, ip)),
+        getReportRecord(date, ip),
+        getWatiSettings(),
+      ]);
+      const kinds = [];
+      if (labExists) kinds.push('lab');
+      if (summaryExists && !record?.summaryDataMissing) kinds.push('summary');
+      if (!kinds.length) return res.status(404).json({ ok: false, error: 'No lab report or discharge summary to send' });
+      const result = await sendReportsWhatsApp({
+        dateFolder: date,
+        ipNo: ip,
+        toNumber,
+        name: record?.name || ip,
+        note: settings.secondParam,
+        kinds,
+      });
+      if (result.failed.length) {
+        return res.status(502).json({ ok: false, ...result, error: result.failed.map((f) => `${f.label}: ${f.error}`).join('; ') });
+      }
+      res.json({ ok: true, sentTo: `+${toNumber}`, ...result });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /**
+   * AI assistant (assistantService.js): the model only picks read-only tools;
+   * the data it finds goes straight to the page as `blocks`, not through the model.
+   */
+  app.post('/api/assistant', async (req, res) => {
+    const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    if (!messages.length) return res.status(400).json({ ok: false, error: 'Ask a question' });
+    try {
+      res.json({ ok: true, ...(await runAssistant({ messages, context: req.body?.context || {} })) });
+    } catch (error) {
+      res.status(502).json({ ok: false, error: error.message });
     }
   });
 

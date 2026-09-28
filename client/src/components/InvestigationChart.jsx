@@ -137,6 +137,23 @@ function ChartTable({ dates, template, chartValues }) {
   );
 }
 
+function LabReportDisclaimer() {
+  return (
+    <div className="disclaimer-footer">
+      <div className="disclaimer-header">
+        <span className="disclaimer-badge">DISCLAIMER</span>
+        <span className="disclaimer-sub">• Diagnostic Notice &amp; Legal Advisory</span>
+      </div>
+      <div className="disclaimer-body">
+        This is a digitally generated diagnostic summary for information only and is not a legal document. The signed report issued by the authorised consultant is final and shall prevail. Please consult your treating doctor for interpretation. This WhatsApp copy is not valid for legal, insurance or other claims.
+        <div className="disclaimer-ta">
+          இது கணினி மூலம் உருவாக்கப்பட்ட பரிசோதனை அறிக்கைச் சுருக்கம்; தகவலுக்காக மட்டுமே வாட்ஸ்அப் மூலம் அனுப்பப்படுகிறது. இது சட்டப்பூர்வ ஆவணம் அல்ல. அங்கீகரிக்கப்பட்ட மருத்துவரால் கையொப்பமிடப்பட்ட அறிக்கையே இறுதியானது. முடிவுகளை உங்கள் சிகிச்சை மருத்துவரிடம் கலந்தாலோசித்து அறிந்து கொள்ளவும். இந்த டிஜிட்டல் பிரதியை சட்ட, காப்பீடு அல்லது வேறு எந்த கோரிக்கைகளுக்கும் பயன்படுத்த இயலாது
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function InvestigationChart({ hospital, regNo, chart }) {
   if (!chart?.chartDates?.length) {
     return <div className="empty">Could not build the chart (no Req No / dates detected).</div>;
@@ -186,7 +203,7 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
             )}
           </div>
           <div className="letterhead-title">
-            <div className="chart-title-main">DIAGNOSIS SUMMARY</div>
+            <div className="chart-title-main">DIAGNOSTICS SUMMARY</div>
             <div className="chart-regno">Reg No: {regNo}</div>
           </div>
         </div>
@@ -204,6 +221,7 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
         <div className="chart-card-body">
           <ChartTable dates={chartDates} template={template} chartValues={chartValues} />
         </div>
+        <LabReportDisclaimer />
       </div>
 
       {/* 2. PRINT / PDF PREVIEW: Formatted cleanly with 5 dates per page */}
@@ -233,7 +251,7 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
                 )}
               </div>
               <div className="letterhead-title">
-                <div className="chart-title-main">DIAGNOSIS SUMMARY</div>
+                <div className="chart-title-main">DIAGNOSTICS SUMMARY</div>
                 <div className="chart-regno">Reg No: {regNo}</div>
               </div>
             </div>
@@ -252,10 +270,12 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
               <ChartTable dates={pageDates} template={template} chartValues={chartValues} />
             </div>
 
+            {pageIdx === printChunks.length - 1 && <LabReportDisclaimer />}
+
             <div className="page-footer">
               <span>Page {pageIdx + 1} of {printChunks.length}</span>
               <span>Dates: {pageDates[0]} to {pageDates[pageDates.length - 1]}</span>
-              <span>{hospital?.nameEn || 'Diagnosis Summary'}</span>
+              <span>{hospital?.nameEn || 'Diagnostics Summary'}</span>
             </div>
           </div>
         ))}

@@ -23,6 +23,7 @@ import {
 } from '../services/dischargeReportService.js';
 import { generateDischargeSummaryPdf } from '../services/dischargeSummaryService.js';
 import { getMongoCollection } from '../services/mongo.js';
+import { saveLabResults } from '../services/labResultsService.js';
 
 const CONCURRENCY = 2; // each worker drives its own Chrome; 2 keeps the server responsive
 const SUMMARY_ATTEMPTS = 3;
@@ -60,9 +61,9 @@ async function regenerateLab(p, date) {
     3,
     5_000,
   );
-  return result.ok
-    ? { ok: true, update: { dateCount: result.dateCount, reqNos: result.reqNos || [], labUpdatedAt: new Date() } }
-    : { ok: false, error: result.error };
+  if (!result.ok) return { ok: false, error: result.error };
+  await saveLabResults(date, p, result.results);
+  return { ok: true, update: { dateCount: result.dateCount, reqNos: result.reqNos || [], labUpdatedAt: new Date() } };
 }
 
 async function regenerateSummary(p, date) {

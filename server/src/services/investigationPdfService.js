@@ -51,7 +51,7 @@ const execFileAsync = promisify(execFile);
 const CHROME_BIN = process.env.CHROME_PATH || 'google-chrome';
 
 /** Mirrors InvestigationChart.jsx's getStatusColor exactly. */
-function getStatusColor(val, rangeStr) {
+export function getStatusColor(val, rangeStr) {
   if (!val || !rangeStr || val === '—' || val === '--') return null;
 
   const cleanVal = String(val).replace(/[<>=\s]/g, '');
@@ -84,6 +84,45 @@ function getStatusColor(val, rangeStr) {
   }
 
   return null;
+}
+
+const EMPTY_VALUES = new Set(['', '-', '--', '—']);
+const STATUS_NAME = { red: 'low', '#e67e22': 'high', green: 'normal' };
+
+/** "28-09-2026" → "2026-09-28" (chart dates are DD-MM-YYYY). */
+function chartDateToIso(d) {
+  const m = String(d).match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+}
+
+/**
+ * Every non-empty value in a patient's chart as one row per test per date —
+ * the shape stored in Mongo for the Lab Finder search (labResultsService.js).
+ * `status` uses the same range logic as the PDF's H/L pills.
+ */
+export function flattenChartResults(chart) {
+  const rows = [];
+  for (const [sectionName, fields] of Object.entries(chart?.template || {})) {
+    const section = ['INDIVIDUAL TESTS', 'OTHER TESTS', 'STANDALONE'].includes(sectionName) ? '' : sectionName || '';
+    for (const field of fields) {
+      for (const [resultDate, raw] of Object.entries(chart.chartValues?.[field.id] || {})) {
+        const value = String(raw ?? '').trim();
+        if (EMPTY_VALUES.has(value)) continue;
+        const numeric = parseFloat(value.replace(/[<>=\s]/g, ''));
+        rows.push({
+          section,
+          test: field.label,
+          range: field.range || '',
+          value,
+          numeric: Number.isFinite(numeric) ? numeric : null,
+          status: STATUS_NAME[getStatusColor(value, field.range)] || null,
+          resultDate,
+          resultDay: chartDateToIso(resultDate),
+        });
+      }
+    }
+  }
+  return rows;
 }
 
 function chunkArray(array, size) {
@@ -207,7 +246,7 @@ export function buildInvestigationChartHtml({ hospital, regNo, ipNo, chart, phys
   const reportPeriod =
     chartDates.length > 1 ? `${chartDates[0]} – ${chartDates[chartDates.length - 1]}` : chartDates[0] || '';
   const letterhead = letterheadHtml(hospital, {
-    title: 'Diagnosis Summary',
+    title: 'Diagnostics Summary',
     subtitle: 'Laboratory investigation chart · admission to discharge',
     meta: `Generated ${formatGeneratedDate()}`,
   });
@@ -221,7 +260,18 @@ export function buildInvestigationChartHtml({ hospital, regNo, ipNo, chart, phys
       // Y" count that would be wrong whenever a chunk's table overflows onto
       // more physical PDF pages than there are chunks.
       const footer = isLast
-        ? `<div class="disclaimer-footer"><strong>Disclaimer</strong> This is a system-generated diagnosis summary compiled from laboratory records. Please contact ${esc(hospital.nameEn || 'the hospital')} to verify or for clinical correlation.</div>`
+        ? `<div class="disclaimer-footer">
+            <div class="disclaimer-header">
+              <span class="disclaimer-badge">DISCLAIMER</span>
+              <span class="disclaimer-sub">• Diagnostic Notice &amp; Legal Advisory</span>
+            </div>
+            <div class="disclaimer-body">
+              This is a digitally generated diagnostic summary for information only and is not a legal document. The signed report issued by the authorised consultant is final and shall prevail. Please consult your treating doctor for interpretation. This WhatsApp copy is not valid for legal, insurance or other claims.
+              <div class="disclaimer-ta">
+                இது கணினி மூலம் உருவாக்கப்பட்ட பரிசோதனை அறிக்கைச் சுருக்கம்; தகவலுக்காக மட்டுமே வாட்ஸ்அப் மூலம் அனுப்பப்படுகிறது. இது சட்டப்பூர்வ ஆவணம் அல்ல. அங்கீகரிக்கப்பட்ட மருத்துவரால் கையொப்பமிடப்பட்ட அறிக்கையே இறுதியானது. முடிவுகளை உங்கள் சிகிச்சை மருத்துவரிடம் கலந்தாலோசித்து அறிந்து கொள்ளவும். இந்த டிஜிட்டல் பிரதியை சட்ட, காப்பீடு அல்லது வேறு எந்த கோரிக்கைகளுக்கும் பயன்படுத்த இயலாது
+              </div>
+            </div>
+          </div>`
         : '';
       return `
     <div class="chart-page-block">
@@ -269,8 +319,12 @@ ${BRAND_CSS}
   .v-high { color: #b45309; background: #fff7ed; border-color: #fed7aa; font-weight: 700; }
   .v-low { color: #b91c1c; background: #fef2f2; border-color: #fecaca; font-weight: 700; }
 
-  .disclaimer-footer { margin-top: 10px; padding: 8px 12px; border: 1px solid #fecaca; border-left: 3px solid #dc2626; border-radius: 8px; background: #fffafa; font-size: 8.5px; line-height: 1.5; color: #475569; break-inside: avoid; }
-  .disclaimer-footer strong { color: #dc2626; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; margin-right: 4px; }
+  .disclaimer-footer { margin-top: 10px; padding: 7px 11px; border: 1px solid #fecaca; border-left: 3px solid #dc2626; border-radius: 8px; background: #fffafa; break-inside: avoid; page-break-inside: avoid; }
+  .disclaimer-header { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  .disclaimer-badge { font-size: 9.5px; font-weight: 900; color: #dc2626 !important; letter-spacing: 0.07em; text-transform: uppercase; background: #fee2e2; border: 1px solid #fca5a5; border-radius: 4px; padding: 1.5px 7px; display: inline-block; }
+  .disclaimer-sub { font-size: 8px; font-weight: 700; color: #991b1b; text-transform: uppercase; letter-spacing: 0.04em; }
+  .disclaimer-body { font-size: 8px; color: #475569; line-height: 1.4; text-align: justify; }
+  .disclaimer-ta { font-size: 7.8px; color: #7f1d1d; line-height: 1.35; margin-top: 3px; padding-top: 3px; border-top: 1px dashed #fecaca; }
 </style>
 </head>
 <body>
@@ -376,7 +430,13 @@ export async function renderHtmlToPdf(html, outPath) {
  *
  * @returns {Promise<{ok: true, dateCount: number, fetchErrors: string[], objectKey: string} | {ok: false, error: string}>}
  */
-export async function generatePatientPdf({ ipNo, regNo, admissionDate, dischargeDate, hospital, date, physicianName }) {
+/**
+ * The EMR fetch half of generatePatientPdf (window widening + REG NO fallback,
+ * see below), shared with the lab-results backfill so both find exactly the
+ * same orders. Returns the same shape as generatePatientPdf's failures, or
+ * `{ ok: true, chart }`.
+ */
+export async function fetchPatientChart({ ipNo, regNo, admissionDate, dischargeDate }) {
   const searchFromDate = widenWindowStart(admissionDate, PRE_ADMISSION_BUFFER_HOURS);
 
   let result = await searchInvestigation(ipNo, searchFromDate, dischargeDate);
@@ -405,6 +465,13 @@ export async function generatePatientPdf({ ipNo, regNo, admissionDate, discharge
       error: 'No lab orders found for this patient (checked both IP and REG number, admission week onward).',
     };
   }
+  return { ok: true, chart: result.chart };
+}
+
+export async function generatePatientPdf({ ipNo, regNo, admissionDate, dischargeDate, hospital, date, physicianName }) {
+  const fetched = await fetchPatientChart({ ipNo, regNo, admissionDate, dischargeDate });
+  if (!fetched.ok) return fetched;
+  const result = fetched;
 
   // Display the real Reg No/UHID when the caller has it — the lab EMR search
   // above only ever needs `ipNo`/`regNo` as alternate *search* identifiers,
@@ -424,6 +491,8 @@ export async function generatePatientPdf({ ipNo, regNo, admissionDate, discharge
       fetchErrors: result.chart.fetchErrors || [],
       patientMeta: result.chart.patientMeta,
       reqNos: result.chart.reqNos || [],
+      // Every value in the chart as flat rows, stored for the Lab Finder search.
+      results: flattenChartResults(result.chart),
       objectKey,
     };
   } finally {

@@ -137,6 +137,77 @@ export async function updateWatiSettings(payload) {
   return data.settings;
 }
 
+async function postJson(url, body) {
+  const res = await apiFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+// ---- Lab Finder -----------------------------------------------------------
+
+export async function fetchLabTests(q) {
+  const res = await apiFetch(`${API_BASE}/lab-results/tests?q=${encodeURIComponent(q || '')}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load test names');
+  return data.tests;
+}
+
+export async function fetchLabCoverage() {
+  const res = await apiFetch(`${API_BASE}/lab-results/coverage`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load coverage');
+  return data;
+}
+
+export function searchLabResults(query) {
+  return postJson(`${API_BASE}/lab-results/search`, { query });
+}
+
+export const EXPORT_LABELS = { pdf: 'PDF', xlsx: 'Excel', docx: 'Word', csv: 'CSV' };
+
+/** Downloads a Lab Finder export (pdf | xlsx | docx | csv) as a file. */
+export async function downloadLabResults(query, format) {
+  const res = await apiFetch(`${API_BASE}/lab-results/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, format }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Download failed');
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || `lab-results.${format}`;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return name;
+}
+
+export function shareLabResults(query, toNumber, recipientName) {
+  return postJson(`${API_BASE}/lab-results/share`, { query, toNumber, recipientName });
+}
+
+/** One patient's lab report + discharge summary to a number the user typed. */
+export function sharePatientReports(date, ipNo, toNumber) {
+  return postJson(`${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/share`, { toNumber });
+}
+
+// ---- Ask AI ---------------------------------------------------------------
+
+export function askAssistant(messages, context) {
+  return postJson(`${API_BASE}/assistant`, { messages, context });
+}
+
 export function defaultDateOnly() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');

@@ -29,6 +29,9 @@ services:
       # this at the server's real hostname/IP for anything beyond local testing.
       MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-localhost}
       MINIO_PUBLIC_PORT: 4003
+      # "Ask AI" assistant key, from the root .env (assistantService.js). Named
+      # GROQ_API, not GROQ_API_KEY, so a GROQ_API_KEY in server/.env still wins.
+      GROQ_API: ${GROQ_API:-}
     # A single templated bind string (not a second "ports:" list in an override
     # file) — Compose concatenates list-valued keys across -f files instead of
     # replacing them, so a docker-compose.prod.yml override here would leave

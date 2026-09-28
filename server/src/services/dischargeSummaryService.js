@@ -805,9 +805,9 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital, keepEx
         }
 
         // Diagnosis Header & Value Capture (handles multi-line or next-line diagnosis text)
-        if (/^(FINAL\s+)?DIAGNOSIS\s*:?/i.test(txt)) {
+        if (/^(FINAL\s+)?DIAGNOS(IS|TICS)\s*:?/i.test(txt)) {
           // One line per diagnosis ("1. …", "2. …") rather than one run-on sentence.
-          const diagLines = [txt.replace(/^(FINAL\s+)?DIAGNOSIS\s*:?\s*/i, '').trim()].filter(Boolean);
+          const diagLines = [txt.replace(/^(FINAL\s+)?DIAGNOS(IS|TICS)\s*:?\s*/i, '').trim()].filter(Boolean);
 
           // If diagnosis value was on following paragraph(s), collect them!
           let nextEl = p.nextElementSibling;
@@ -1008,9 +1008,9 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital, keepEx
             <span class="pi-disclaimer-sub">• Hospital Discharge Notice &amp; Legal Advisory</span>
           </div>
           <div class="pi-disclaimer-body">
-            This Discharge Summary is an official electronic medical document prepared based on the patient's hospital course, investigations, and clinical status at the time of discharge. It reflects the clinical condition and treatment administered during this admission. In case of any acute medical emergency, persistent or worsening symptoms, or clarification regarding medications, please visit the emergency department immediately or contact the hospital helpline.
+            This is a digitally generated summary for information only and is not a legal document. The signed copy issued by the treating consultant is final and shall prevail. This WhatsApp copy is not valid for legal, insurance or other claims.
             <div class="pi-disclaimer-ta">
-              குறிப்பு: இந்நிகழ்வு அறிக்கை மருத்துவமனையில் வழங்கப்பட்ட சிகிச்சையின் மருத்துவ சுருக்கமாகும். ஏதேனும் அவசர மருத்துவ உதவி தேவைப்பட்டால் உடனடியாக மருத்துவமனை அவசர சிகிச்சைப் பிரிவை அணுகவும்.
+              இது கணினி மூலம் உருவாக்கப்பட்ட டிஸ்சார்ஜ் சுருக்கம்; தகவலுக்காக மட்டுமே வாட்ஸ்அப் மூலம் அனுப்பப்படுகிறது. இது சட்டப்பூர்வ ஆவணம் அல்ல. சிகிச்சை அளித்த மருத்துவரால் கையொப்பமிடப்பட்ட பிரதியே இறுதியானது. இந்த டிஜிட்டல் பிரதியை சட்ட, காப்பீடு அல்லது வேறு எந்த கோரிக்கைகளுக்கும் பயன்படுத்த இயலாது.
             </div>
           </div>
         </div>
