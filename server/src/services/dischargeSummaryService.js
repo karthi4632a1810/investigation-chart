@@ -383,6 +383,14 @@ ${BRAND_CSS}
     color: #334155 !important;
     margin: 2px 0 !important;
   }
+  /* Paragraph content moved into list items keeps the EMR's inline font
+     sizes (often 12pt) — normalise it the same way paragraphs are above. */
+  .pi-section-list li * {
+    font-size: 10px !important;
+    font-family: inherit !important;
+    line-height: inherit !important;
+    letter-spacing: normal !important;
+  }
 
   /* Gemini-flagged possible typo/unclear text */
   .pi-flag {
