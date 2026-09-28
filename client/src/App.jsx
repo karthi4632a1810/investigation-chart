@@ -165,7 +165,7 @@ export default function App() {
               {hospital?.nameEn || 'Adhiparasakthi Hospitals'}
             </div>
             <div className="app-brand-subtitle">
-              <span>Investigation Chart Portal</span>
+              <span>Diagnosis Summary Portal</span>
               <span className="brand-badge-pill">EMR Portal</span>
             </div>
           </div>
@@ -219,7 +219,7 @@ export default function App() {
         {view === 'search' && (
           <div className="search-view-container">
             <div className="section-header">
-              <h2>Lab Result Search & Investigation Chart</h2>
+              <h2>Lab Result Search & Diagnosis Summary</h2>
               <p className="section-subtitle">
                 Retrieve a patient's historical laboratory findings, automated trends, and raw analyzer values.
               </p>
@@ -292,7 +292,7 @@ export default function App() {
             {loading && (
               <div className="loading modern-loading">
                 <div className="spinner"></div>
-                <div>Fetching investigation data from laboratory servers…</div>
+                <div>Fetching diagnosis summary data from laboratory servers…</div>
               </div>
             )}
 
@@ -309,7 +309,7 @@ export default function App() {
             {result && !result.data?.length && (
               <div className="empty modern-empty">
                 <div className="empty-icon">📂</div>
-                <div className="empty-title">No Investigation Records Found</div>
+                <div className="empty-title">No Diagnosis Summary Records Found</div>
                 <p className="empty-subtitle">
                   No verified lab test results were returned for UHID/IP <strong>"{result.regNo || regNo}"</strong> within the selected date range ({fromDate} to {toDate}).
                 </p>
@@ -324,7 +324,7 @@ export default function App() {
                     className={`tab-btn ${activeTab === 'chart' ? 'active' : ''}`}
                     onClick={() => setActiveTab('chart')}
                   >
-                    <span>📋 Investigation Chart</span>
+                    <span>📋 Diagnosis Summary</span>
                   </button>
                   <button
                     type="button"

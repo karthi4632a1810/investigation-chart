@@ -211,7 +211,7 @@ function AutomationStatus({ status, onRunNow, running }) {
   );
 }
 
-function CopyableChip({ value, label, className = '', onToast }) {
+function CopyableChip({ value, label, className = '', onToast, iconOnly = false }) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy(e) {
@@ -238,7 +238,7 @@ function CopyableChip({ value, label, className = '', onToast }) {
       title={copied ? 'Copied to clipboard!' : `Click to copy ${label ? label + ': ' : ''}${value}`}
       aria-label={`Copy ${label || ''} ${value}`}
     >
-      <span className="copyable-text">{value}</span>
+      {!iconOnly && <span className="copyable-text">{value}</span>}
       <span className="copyable-indicator" aria-hidden="true">
         {copied ? (
           <CheckIcon size={12} className="copy-icon-copied" />
@@ -296,23 +296,25 @@ function SendWhatsAppButton({ date, ipNo, name, onToast }) {
 
   if (status === 'sent') {
     return (
-      <span className="btn btn-whatsapp-sent" title="WhatsApp message sent">
+      <span className="btn btn-whatsapp-sent btn-icon-only" title="WhatsApp message sent" aria-label="WhatsApp message sent">
         <WhatsAppIcon size={15} />
-        <span>Sent ✓</span>
       </span>
     );
   }
 
+  const label =
+    status === 'sending' ? 'Sending WhatsApp message…' : status === 'error' ? `Failed: ${error} — click to retry` : `Send investigation report to ${name} via WhatsApp`;
+
   return (
     <button
       type="button"
-      className="btn btn-send-whatsapp"
+      className="btn btn-send-whatsapp btn-icon-only"
       onClick={handleClick}
       disabled={status === 'sending'}
-      title={status === 'error' ? `Failed: ${error} — click to retry` : `Send investigation report to ${name} via WhatsApp`}
+      title={label}
+      aria-label={label}
     >
       <WhatsAppIcon size={15} />
-      <span>{status === 'sending' ? 'Sending…' : status === 'error' ? 'Retry' : 'WhatsApp'}</span>
     </button>
   );
 }
@@ -388,15 +390,16 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                 <td className="cell-mobile">
                   {p.mobile ? (
                     <div className="mobile-interactive-wrap">
-                      <a href={`tel:${p.mobile}`} className="tel-link" title={`Call ${p.mobile}`}>
+                      <a href={`tel:+91${p.mobile}`} className="tel-link" title={`Call +91 ${p.mobile}`}>
                         <PhoneIcon size={12} />
-                        <span>{p.mobile}</span>
+                        <span>+91 {p.mobile}</span>
                       </a>
                       <CopyableChip
-                        value={p.mobile}
+                        value={`+91${p.mobile}`}
                         label="Mobile"
                         className="mini-copy-chip"
                         onToast={onToast}
+                        iconOnly
                       />
                     </div>
                   ) : (
@@ -445,6 +448,14 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                         <span>Summary</span>
                       </a>
                     )}
+                    {p.hasSummary && p.summaryDataMissing && (
+                      <span
+                        className="summary-warning-pill"
+                        title="The EMR returned no patient data for this summary — verify the PDF before sending it"
+                      >
+                        ⚠ No Data
+                      </span>
+                    )}
                     {p.dateCount !== undefined && (
                       <SendWhatsAppButton
                         date={p.date}
@@ -487,18 +498,6 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                 </div>
               </div>
               <div className="card-header-actions">
-                {p.hasSummary && (
-                  <a
-                    className="btn btn-view-summary btn-card-pdf"
-                    href={getSummaryPdfUrl(p)}
-                    target="_blank"
-                    rel="noreferrer"
-                    title={`Open discharge summary for ${p.name}`}
-                  >
-                    <FilePdfIcon size={14} />
-                    <span>Summary</span>
-                  </a>
-                )}
                 {hasLab && (
                   <SendWhatsAppButton
                     date={p.date}
@@ -587,14 +586,15 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                     <div className="mobile-action-flex">
                       {p.mobile ? (
                         <>
-                          <a href={`tel:${p.mobile}`} className="mobile-tel-link" title={`Call ${p.mobile}`}>
-                            {p.mobile}
+                          <a href={`tel:+91${p.mobile}`} className="mobile-tel-link" title={`Call +91 ${p.mobile}`}>
+                            +91 {p.mobile}
                           </a>
                           <CopyableChip
-                            value={p.mobile}
+                            value={`+91${p.mobile}`}
                             label="Mobile"
                             className="mini-copy-chip"
                             onToast={onToast}
+                            iconOnly
                           />
                         </>
                       ) : (
@@ -635,6 +635,14 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
 
             {/* Bottom Action Bar (Pinned to bottom for perfect row alignment) */}
             <div className="card-action-bar">
+              {p.hasSummary && p.summaryDataMissing && (
+                <div
+                  className="summary-warning-badge"
+                  title="The EMR returned no patient data for this summary — verify the PDF before sending it"
+                >
+                  ⚠ Summary has no patient data — please verify
+                </div>
+              )}
               {hasLab && p.hasSummary ? (
                 <div className="card-action-dual">
                   <a

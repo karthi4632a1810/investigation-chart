@@ -15,7 +15,7 @@ export default function LoginScreen({
           <div className="login-badge">🏥</div>
           <div>
             <h2>{hospital?.nameEn || 'Sign in to continue'}</h2>
-            <p>{hospital?.nameEn ? 'Investigation Chart Portal' : 'Access the investigation chart dashboard with your configured credentials.'}</p>
+            <p>{hospital?.nameEn ? 'Diagnosis Summary Portal' : 'Access the diagnosis summary dashboard with your configured credentials.'}</p>
           </div>
         </div>
 
