@@ -430,7 +430,8 @@ async function processDischargeDate(dateFolder, mdy) {
               summaryDataMissing: Boolean(result.dataMissing),
             });
             summary.summaryGenerated += 1;
-            generatedNow.push('summary');
+            // An empty summary (EMR had no patient data) is never sent to a patient.
+            if (!result.dataMissing) generatedNow.push('summary');
             console.log(`[discharge] generated discharge summary for ${ipNo} (${patientName})`);
           } else {
             summary.summaryFailed += 1;

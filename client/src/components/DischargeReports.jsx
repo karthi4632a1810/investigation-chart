@@ -441,7 +441,11 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                         <span>Lab Report</span>
                       </a>
                     )}
-                    {p.hasSummary && (
+                    {p.hasSummary && p.summaryDataMissing ? (
+                      <span className="btn btn-summary-missing" title={SUMMARY_NO_DATA_TITLE}>
+                        No Summary
+                      </span>
+                    ) : p.hasSummary ? (
                       <a
                         className="btn btn-view-summary"
                         href={getSummaryPdfUrl(p)}
@@ -452,16 +456,8 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                         <FilePdfIcon size={15} />
                         <span>Summary</span>
                       </a>
-                    )}
-                    {p.hasSummary && p.summaryDataMissing && (
-                      <span
-                        className="summary-warning-pill"
-                        title="The EMR returned no patient data for this summary — verify the PDF before sending it"
-                      >
-                        ⚠ No Data
-                      </span>
-                    )}
-                    {(p.dateCount !== undefined || p.hasSummary) && (
+                    ) : null}
+                    {hasSendableDocument(p) && (
                       <SendWhatsAppButton
                         date={p.date}
                         ipNo={p.ipNo}
@@ -491,6 +487,19 @@ function patientInitials(name) {
     .split(/[^A-Za-z]+/)
     .filter(Boolean);
   return (words.slice(0, 2).map((w) => w[0]).join('') || '?').toUpperCase();
+}
+
+const SUMMARY_NO_DATA_TITLE = 'The EMR returned no patient data for this discharge summary, so it is not shown or sent';
+
+// A summary the EMR returned empty is never sent (see the send-whatsapp route).
+function hasSendableDocument(p) {
+  return p.dateCount !== undefined || (p.hasSummary && !p.summaryDataMissing);
+}
+
+// The name printed as "Prepared & Approved by" on the summary PDF. Records
+// generated before that was stored fall back to the discharging doctor.
+function summaryApprover(p) {
+  return p.summaryApprovedBy || p.doctor || 'Treating Consultant';
 }
 
 function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast }) {
@@ -580,12 +589,24 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
             </dl>
 
             <footer className="pcard-actions">
-              {p.hasSummary && p.summaryDataMissing && (
+              {/* Always one line, whichever state, so every card in a row keeps the same height. */}
+              {p.hasSummary && p.summaryDataMissing ? (
+                <div className="pcard-status" title={SUMMARY_NO_DATA_TITLE}>
+                  <span>Discharge summary unavailable</span>
+                </div>
+              ) : p.hasSummary ? (
                 <div
-                  className="summary-warning-badge"
-                  title="The EMR returned no patient data for this summary — verify the PDF before sending it"
+                  className="pcard-status is-approved"
+                  title={`Discharge summary prepared & approved by ${summaryApprover(p)}`}
                 >
-                  ⚠ Summary has no patient data — please verify
+                  <CheckIcon size={13} />
+                  <span>
+                    Approved by <b>{summaryApprover(p)}</b>
+                  </span>
+                </div>
+              ) : (
+                <div className="pcard-status" title="Discharge summary not generated yet">
+                  <span>Discharge summary pending</span>
                 </div>
               )}
               <div className="pcard-buttons">
@@ -605,7 +626,11 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                     <span>No lab data</span>
                   </span>
                 )}
-                {p.hasSummary ? (
+                {p.hasSummary && p.summaryDataMissing ? (
+                  <span className="btn pcard-btn btn-summary-missing" title={SUMMARY_NO_DATA_TITLE}>
+                    <span>No Summary</span>
+                  </span>
+                ) : p.hasSummary ? (
                   <a
                     className="btn btn-view-summary pcard-btn"
                     href={getSummaryPdfUrl(p)}
@@ -621,7 +646,7 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                     <span>No summary</span>
                   </span>
                 )}
-                {(hasLab || p.hasSummary) && (
+                {hasSendableDocument(p) && (
                   <SendWhatsAppButton date={p.date} ipNo={p.ipNo} name={p.name} onToast={onToast} />
                 )}
               </div>

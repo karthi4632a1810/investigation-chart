@@ -268,15 +268,20 @@ app.get('/api/detail/:orderid', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Invalid date or IP number' });
     }
     try {
-      const [labExists, summaryExists] = await Promise.all([
+      const [labExists, summaryExists, record, settings] = await Promise.all([
         pdfExists(reportObjectKey(date, ip)),
         pdfExists(reportSummaryObjectKey(date, ip)),
+        getReportRecord(date, ip),
+        getWatiSettings(),
       ]);
-      if (!labExists && !summaryExists) {
+      // A summary the EMR returned with no patient data is never sent.
+      const kinds = [];
+      if (labExists) kinds.push('lab');
+      if (summaryExists && !record?.summaryDataMissing) kinds.push('summary');
+      if (!kinds.length) {
         return res.status(404).json({ ok: false, error: 'No lab report or discharge summary to send' });
       }
 
-      const [record, settings] = await Promise.all([getReportRecord(date, ip), getWatiSettings()]);
       const toNumber = settings.liveEnabled ? record?.mobile : settings.fixedNumber;
       if (!toNumber) {
         return res.status(400).json({
@@ -294,6 +299,7 @@ app.get('/api/detail/:orderid', async (req, res) => {
         toNumber,
         name: record?.name || ip,
         note: settings.secondParam,
+        kinds,
       });
       if (result.failed.length) {
         const sentNote = result.sent.length ? `${result.sent.map((d) => d.label).join(' and ')} sent; ` : '';

@@ -392,14 +392,6 @@ ${BRAND_CSS}
     letter-spacing: normal !important;
   }
 
-  /* Gemini-flagged possible typo/unclear text */
-  .pi-flag {
-    text-decoration: underline dotted #b45309 !important;
-    text-decoration-thickness: 1.5px !important;
-    text-underline-offset: 2px !important;
-    cursor: help;
-  }
-
   /* Verification and Signature Block */
   .pi-verif-strip {
     display: flex;
@@ -578,7 +570,7 @@ async function resolveIpid(client, ipNo) {
  *
  * @returns {Promise<{ok: true, objectKey: string, dataMissing: boolean} | {ok: false, error: string}>}
  */
-export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
+export async function generateDischargeSummaryPdf({ ipNo, date, hospital, keepExistingOnNoData = false }) {
   const jar = new CookieJar();
   const client = wrapper(axios.create({ jar, withCredentials: true, timeout: SUMMARY_TIMEOUT_MS }));
 
@@ -1062,6 +1054,7 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
         regNo,
         admitDt,
         dischDt,
+        consultantName,
       };
     }, letterheadHtml(hospital || config.hospital || {}, {
       title: 'Discharge Summary',
@@ -1071,9 +1064,16 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
 
     const dataMissing = !extraction?.patName && !extraction?.regNo && !extraction?.admitDt && !extraction?.dischDt;
 
+    // A rerun of an existing summary must not replace it with a blank one when
+    // the EMR momentarily returns no patient data — keep the stored PDF instead.
+    if (dataMissing && keepExistingOnNoData) {
+      return { ok: false, keptExisting: true, error: 'EMR returned no patient data — kept the existing summary' };
+    }
+
     // Best-effort AI review of the already-rendered content: decides
-    // list-vs-paragraph presentation per section and flags suspected typos
-    // (never auto-corrects). Never blocks generation — any failure
+    // list-vs-paragraph presentation per section. The review's suspected-typo
+    // flags are not marked in the PDF — it goes to patients as the doctor
+    // wrote it. Never blocks generation — any failure
     // (unconfigured, network, timeout, bad JSON) just means the document
     // renders exactly as it already does above.
     let review = null;
@@ -1085,28 +1085,6 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
 
     if (review) {
       await page.evaluate((sectionsByLabel) => {
-        function wrapFlagText(el, text, title) {
-          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-          let node;
-          while ((node = walker.nextNode())) {
-            const idx = node.nodeValue.indexOf(text);
-            if (idx === -1) continue;
-            const range = document.createRange();
-            range.setStart(node, idx);
-            range.setEnd(node, idx + text.length);
-            const span = document.createElement('span');
-            span.className = 'pi-flag';
-            span.title = title;
-            try {
-              range.surroundContents(span);
-              return true;
-            } catch {
-              return false; // would cross an element boundary — skip rather than risk corrupting markup
-            }
-          }
-          return false;
-        }
-
         const headings = Array.from(document.querySelectorAll('.pi-section-heading'));
         for (const heading of headings) {
           const info = sectionsByLabel[heading.innerText.trim()];
@@ -1124,12 +1102,6 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
             el = el.nextElementSibling;
           }
           if (!siblings.length) continue;
-
-          for (const flag of info.flags || []) {
-            for (const p of siblings) {
-              if (wrapFlagText(p, flag.text, `AI review: ${flag.reason || 'possible issue'} — verify`)) break;
-            }
-          }
 
           if (info.structure === 'list') {
             const list = document.createElement('ul');
@@ -1160,7 +1132,9 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
 
       const objectKey = reportSummaryObjectKey(date, ipNo);
       await uploadPdfFile(objectKey, tmpPdfPath);
-      return { ok: true, objectKey, dataMissing };
+      // approvedBy: the name printed as "Prepared & Approved by" on the PDF,
+      // stored on the report record so the Discharge Reports cards can show it.
+      return { ok: true, objectKey, dataMissing, approvedBy: extraction?.consultantName || '' };
     } finally {
       fs.rmSync(tmpPdfPath, { force: true });
     }

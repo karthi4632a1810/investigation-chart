@@ -86,6 +86,9 @@ async function run() {
             ipNo,
             date: targetDate,
             hospital: config.hospital,
+            // Don't replace a summary that had patient data with a blank one
+            // when the EMR momentarily returns nothing.
+            keepExistingOnNoData: !patient.summaryDataMissing,
           });
 
           const elapsedMs = Date.now() - t0;
@@ -100,7 +103,7 @@ async function run() {
             console.log(`${progressPrefix}: SUCCESS in ${elapsedMs}ms -> ${result.objectKey}${dataMissingNote}`);
             await collection.updateOne(
               { date: targetDate, ipNo },
-              { $set: { hasSummary: true, summaryDataMissing: Boolean(result.dataMissing), summaryUpdatedAt: new Date() } }
+              { $set: { hasSummary: true, summaryDataMissing: Boolean(result.dataMissing), summaryApprovedBy: result.approvedBy || '', summaryUpdatedAt: new Date() } }
             ).catch(() => {});
             break;
           } else {

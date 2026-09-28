@@ -69,12 +69,24 @@ async function regenerateSummary(p, date) {
   let lastError;
   for (let attempt = 1; attempt <= SUMMARY_ATTEMPTS; attempt++) {
     try {
-      const result = await generateDischargeSummaryPdf({ ipNo: p.ipNo, date, hospital: config.hospital });
+      // A summary that had patient data is kept as-is if the EMR now returns
+      // none (a transient EMR problem shouldn't blank a good PDF).
+      const result = await generateDischargeSummaryPdf({
+        ipNo: p.ipNo,
+        date,
+        hospital: config.hospital,
+        keepExistingOnNoData: !p.summaryDataMissing,
+      });
       if (result.ok) {
         return {
           ok: true,
           dataMissing: Boolean(result.dataMissing),
-          update: { hasSummary: true, summaryDataMissing: Boolean(result.dataMissing), summaryUpdatedAt: new Date() },
+          update: {
+            hasSummary: true,
+            summaryDataMissing: Boolean(result.dataMissing),
+            summaryApprovedBy: result.approvedBy || '',
+            summaryUpdatedAt: new Date(),
+          },
         };
       }
       lastError = result.error;
