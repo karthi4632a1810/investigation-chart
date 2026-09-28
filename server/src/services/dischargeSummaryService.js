@@ -23,71 +23,10 @@ import { config } from '../config.js';
 import { doLogin } from './emrService.js';
 import { reportSummaryObjectKey, uploadPdfFile } from './storageService.js';
 import { reviewDischargeSummary } from './geminiService.js';
+import { BRAND_CSS, formatGeneratedDate, letterheadHtml } from './pdfBranding.js';
 
 const CHROME_BIN = process.env.CHROME_PATH || 'google-chrome';
 const SUMMARY_TIMEOUT_MS = 45_000;
-
-function esc(str) {
-  return String(str ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-}
-
-function loadAssetDataUri(relPath) {
-  try {
-    const file = new URL(relPath, import.meta.url);
-    if (fs.existsSync(file)) {
-      return `data:image/png;base64,${fs.readFileSync(file).toString('base64')}`;
-    }
-  } catch {
-    // fall through to empty string — caller omits the <img> entirely
-  }
-  return '';
-}
-
-const defaultLogoDataUri = loadAssetDataUri('../assets/logo.png');
-const nablBadgeDataUri = loadAssetDataUri('../assets/nabl.png');
-const nabhBadgeDataUri = loadAssetDataUri('../assets/nabh.png');
-
-/**
- * Same letterhead structure as investigationPdfService.js's Diagnosis Summary
- * (logo/name/address on the left; accreditation badges + document-type badge
- * on the right) for visual consistency between the two documents. The UHID
- * isn't known yet at this point (it only exists inside the EMR's own summary
- * page, extracted later in page.evaluate()) — `.pi-regno-slot` is filled in
- * from there once `regNo` is resolved.
- */
-function buildLetterheadHtml(hospital) {
-  const logoSrc = defaultLogoDataUri || hospital?.logoPath || '';
-  const badges = [
-    nablBadgeDataUri ? `<img class="pi-accred-badge-img" src="${nablBadgeDataUri}" alt="NABL Accredited Laboratory" title="NABL Accredited Laboratory" />` : '',
-    nabhBadgeDataUri ? `<img class="pi-accred-badge-img" src="${nabhBadgeDataUri}" alt="NABH Accredited Hospital" title="NABH Accredited Hospital" />` : '',
-  ].join('');
-
-  // A single root element — the extraction code below only ever moves
-  // `letterheadWrap.firstElementChild` into the document, so the ribbon and
-  // letterhead must be nested inside one wrapper, not sibling top-level nodes.
-  return `
-    <div class="pi-letterhead-wrap">
-      <div class="pi-top-ribbon"></div>
-      <div class="pi-letterhead">
-        <div class="pi-letterhead-left">
-          <div class="pi-letterhead-logo">${logoSrc ? `<img src="${logoSrc}" onerror="this.style.display='none'" />` : ''}</div>
-          <div class="pi-letterhead-name">
-            <div class="pi-hosp-name-en">${esc(hospital?.nameEn || 'Adhiparasakthi Hospitals')}</div>
-            <div class="pi-hosp-name-ta">${esc(hospital?.nameTa || 'ஆதிபராசக்தி மருத்துவமனை')}</div>
-            <div class="pi-hosp-address">${hospital?.address || ''}</div>
-          </div>
-        </div>
-        <div class="pi-letterhead-right">
-          ${badges ? `<div class="pi-accred-badges">${badges}<span class="pi-accred-caption">NABL Lab &amp;<br />NABH Accredited</span></div>` : ''}
-          <div class="pi-title-badge">
-            <span class="pi-title-badge-label">Document Type</span>
-            <span class="pi-title-badge-value">DISCHARGE SUMMARY</span>
-          </div>
-          <div class="pi-regno-slot"></div>
-        </div>
-      </div>
-    </div>`;
-}
 
 /**
  * The summary content itself is free-text rich content the doctor authored per
@@ -120,6 +59,11 @@ const OVERRIDE_CSS = `
     padding: 0 !important;
   }
 
+  /* The EMR's own stylesheet sets a serif face on the summary content */
+  #divSummary, #divSummary * {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+  }
+
   /* Reset outer table container */
   #tblMain {
     width: 100% !important;
@@ -134,264 +78,45 @@ const OVERRIDE_CSS = `
     border: none !important;
   }
 
-  /* Letterhead */
-  .pi-letterhead-wrap {
-    margin-bottom: 8px;
-    break-inside: avoid;
-  }
-  .pi-top-ribbon {
-    height: 5px;
-    background: linear-gradient(90deg, #0b2956 0%, #144385 50%, #2563eb 100%);
-    border-radius: 3px;
-    margin-bottom: 8px;
-  }
-  .pi-letterhead {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 14px;
-    padding: 0 0 8px 0;
-    border-bottom: 1.5px solid #cbd5e1;
-    break-inside: avoid;
-  }
-  .pi-letterhead-left {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-  .pi-letterhead-logo {
-    width: 54px;
-    height: 82px;
-    flex: 0 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .pi-letterhead-logo img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-    image-rendering: -webkit-optimize-contrast;
-  }
-  .pi-letterhead-name {
-    flex: 1 1 auto;
-    min-width: 200px;
-  }
-  .pi-hosp-name-en {
-    font-size: 20px;
-    font-weight: 800;
-    color: #144385;
-    letter-spacing: -0.01em;
-    line-height: 1.15;
-  }
-  .pi-hosp-name-ta {
-    font-size: 13px;
-    font-weight: 700;
-    color: #144385;
-    margin-top: 1px;
-    line-height: 1.2;
-  }
-  .pi-hosp-address {
-    font-size: 8.5px;
-    color: #64748b;
-    margin-top: 3px;
-    line-height: 1.4;
-  }
-  .pi-letterhead-right {
-    flex: 0 0 auto;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    gap: 6px;
-  }
-  .pi-accred-badges {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .pi-accred-badge-img {
-    height: 32px;
-    width: auto;
-    object-fit: contain;
-  }
-  .pi-accred-caption {
-    font-size: 7.5px;
-    font-weight: 700;
-    line-height: 1.2;
-    color: #64748b;
-    text-align: left;
-  }
-  .pi-title-badge {
-    background: linear-gradient(135deg, #0b2956, #144385);
-    border: 1px solid #0b2956;
-    border-radius: 8px;
-    padding: 5px 14px;
-    text-align: center;
-    box-shadow: 0 2px 4px rgba(11, 41, 86, 0.12);
-  }
-  .pi-title-badge-label {
-    display: block;
-    font-size: 7.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #93c5fd;
-  }
-  .pi-title-badge-value {
-    display: block;
-    font-size: 12px;
-    font-weight: 800;
-    color: #ffffff;
-    letter-spacing: 0.03em;
-  }
-  .pi-regno-badge {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    margin-top: 1px;
-  }
-  .pi-regno-label {
-    font-size: 8px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #64748b;
-  }
-  .pi-regno-value {
-    font-size: 11.5px;
-    font-weight: 800;
-    color: #0b2956;
-    background: #f0f5fc;
-    border: 1px solid #bfdbfe;
-    border-radius: 5px;
-    padding: 1.5px 7px;
-    font-family: 'JetBrains Mono', 'Courier New', monospace;
-  }
-
-  /* Executive Patient Demographics Card */
-  .pi-patient-card {
-    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-    border: 1.5px solid #cbd5e1;
-    border-radius: 10px;
-    padding: 9px 12px;
-    margin-bottom: 7px;
-    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
-    break-inside: avoid;
-  }
-  .pi-patient-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid #e2e8f0;
-    padding-bottom: 6px;
-    margin-bottom: 7px;
-  }
-  .pi-patient-name {
-    font-size: 13.5px;
-    font-weight: 800;
-    color: #0b2956;
-    letter-spacing: -0.01em;
-  }
-  .pi-patient-tags {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-  }
-  .pi-tag {
-    font-size: 9px;
-    font-weight: 700;
-    padding: 2.5px 9px;
-    border-radius: 999px;
-    background: #f1f5f9;
-    border: 1px solid #cbd5e1;
-    color: #334155;
-  }
-  .pi-tag-blue {
-    background: #e0f2fe;
-    border-color: #bae6fd;
-    color: #0369a1;
-  }
-  .pi-tag-ward {
-    background: #ecfdf5;
-    border-color: #a7f3d0;
-    color: #047857;
-  }
-  .pi-patient-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 6px 8px;
-    font-size: 10px;
-  }
-  .pi-field {
-    display: flex;
-    flex-direction: column;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 6px;
-    padding: 4px 7px;
-  }
-  .pi-field-label {
-    font-size: 7.5px;
-    font-weight: 800;
-    text-transform: uppercase;
-    color: #64748b;
-    letter-spacing: 0.04em;
-    margin-bottom: 2px;
-  }
-  .pi-field-val {
-    font-weight: 700;
-    color: #1e293b;
-    font-size: 10.5px;
-  }
-  .pi-field-val.highlight {
-    color: #144385;
-    font-family: 'JetBrains Mono', 'Courier New', monospace;
-    font-weight: 800;
-  }
-
+${BRAND_CSS}
   /* Consultant Banner */
   .pi-consultant-banner {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
-    border: 1px solid #bfdbfe;
-    border-left: 4px solid #144385;
+    gap: 10px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
     border-radius: 8px;
-    padding: 5px 12px;
-    margin-bottom: 7px;
+    padding: 6px 12px;
+    margin-bottom: 8px;
     break-inside: avoid;
   }
   .pi-cb-left {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     gap: 8px;
   }
   .pi-cb-label {
-    font-size: 8px;
+    font-size: 7px;
     font-weight: 800;
-    color: #ffffff;
-    background: #144385;
+    color: #64748b;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    border-radius: 4px;
-    padding: 2px 6px;
+    letter-spacing: 0.1em;
   }
   .pi-cb-name {
-    font-size: 12px;
+    font-size: 11.5px;
     font-weight: 800;
     color: #0f172a;
   }
   .pi-cb-dept {
-    font-size: 9px;
+    font-size: 8.5px;
     font-weight: 700;
-    color: #1e40af;
-    background: #dbeafe;
+    color: #1d4ed8;
+    background: #eff6ff;
     border: 1px solid #bfdbfe;
     border-radius: 999px;
-    padding: 1.5px 8px;
+    padding: 2px 9px;
   }
 
   /* Discharge Status Banner (e.g. AT REQUEST DISCHARGE) */
@@ -399,24 +124,20 @@ const OVERRIDE_CSS = `
     display: flex;
     align-items: center;
     gap: 8px;
-    background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+    background: #fffbeb;
     border: 1px solid #fde68a;
-    border-left: 4.5px solid #d97706;
+    border-left: 3px solid #d97706;
     border-radius: 8px;
-    padding: 4px 10px;
-    margin: 5px 0 7px 0;
+    padding: 5px 10px;
+    margin: 5px 0 8px 0;
     break-inside: avoid;
   }
   .pi-status-label {
-    font-size: 8px;
+    font-size: 7px;
     font-weight: 800;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    background: #fde68a;
-    color: #92400e;
-    border: 1px solid #fcd34d;
-    border-radius: 4px;
-    padding: 1.5px 6px;
+    letter-spacing: 0.1em;
+    color: #b45309;
   }
   .pi-status-value {
     font-size: 10.5px;
@@ -427,31 +148,23 @@ const OVERRIDE_CSS = `
 
   /* Diagnosis Card */
   .pi-diagnosis-card {
-    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
-    border: 1.5px solid #93c5fd;
-    border-left: 5px solid #144385;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-left: 3px solid #1d4ed8;
     border-radius: 8px;
     padding: 7px 12px;
     margin: 6px 0 8px 0;
-    box-shadow: 0 1px 2px rgba(20, 67, 133, 0.05);
     break-inside: avoid;
   }
   .pi-diag-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 3px;
+    margin-bottom: 2px;
   }
   .pi-diag-label {
-    font-size: 8px;
+    font-size: 7px;
     font-weight: 800;
-    color: #ffffff;
-    background: #144385;
+    color: #1d4ed8;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
-    border-radius: 4px;
-    padding: 1.5px 6px;
-    display: inline-block;
+    letter-spacing: 0.1em;
   }
   .pi-diag-val {
     font-size: 11.5px;
@@ -473,20 +186,25 @@ const OVERRIDE_CSS = `
     display: flex;
     align-items: center;
     gap: 7px;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 800;
     color: #0b2956;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
-    background: linear-gradient(90deg, #f0f5fc 0%, #ffffff 100%);
-    border: 1px solid #dbeafe;
-    border-left: 4px solid #144385;
-    border-radius: 6px;
-    padding: 4px 9px;
-    margin: 8px 0 4px 0;
+    letter-spacing: 0.1em;
+    padding: 0 0 4px 0;
+    margin: 10px 0 5px 0;
+    border-bottom: 1px solid #dbe4f0;
     break-after: avoid !important;
     page-break-after: avoid !important;
     break-inside: avoid !important;
+  }
+  .pi-section-heading::before {
+    content: '';
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    border-radius: 2px;
+    background: #1d4ed8;
   }
 
   /* Content Reset & Normalization */
@@ -528,7 +246,7 @@ const OVERRIDE_CSS = `
     background: #ffffff !important;
     box-shadow: none !important;
     display: table !important;
-    border: 1.5px solid #cbd5e1 !important;
+    border: 1px solid #e2e8f0 !important;
     border-radius: 8px !important;
     overflow: hidden !important;
   }
@@ -585,10 +303,10 @@ const OVERRIDE_CSS = `
   /* Medication / Data Tables (Treatment Given, Discharge Advice, Anthropometry) */
   table.pi-data-table th,
   table.pi-data-table tr.pi-header-row td {
-    background: linear-gradient(135deg, #0b2956, #144385) !important;
+    background: #0b2956 !important;
     color: #ffffff !important;
     font-weight: 800 !important;
-    font-size: 8.5px !important;
+    font-size: 8px !important;
     text-transform: uppercase !important;
     letter-spacing: 0.04em !important;
     border-bottom: 1px solid #0b2956 !important;
@@ -640,12 +358,12 @@ const OVERRIDE_CSS = `
 
   /* Review Advice container */
   .pi-review-advice-block {
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-    border: 1px solid #cbd5e1;
-    border-left: 4px solid #144385;
+    background: #f0fdfa;
+    border: 1px solid #99f6e4;
+    border-left: 3px solid #0d9488;
     border-radius: 8px;
     padding: 7px 12px;
-    margin: 5px 0 7px 0;
+    margin: 5px 0 8px 0;
     break-inside: avoid;
   }
   .pi-review-advice-block p {
@@ -679,10 +397,10 @@ const OVERRIDE_CSS = `
     display: flex;
     justify-content: space-between;
     background: #f8fafc;
-    border: 1px solid #cbd5e1;
-    border-radius: 7px;
-    padding: 5px 12px;
-    margin: 8px 0 6px 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 6px 12px;
+    margin: 10px 0 6px 0;
     break-inside: avoid;
   }
   .pi-verif-item {
@@ -707,9 +425,9 @@ const OVERRIDE_CSS = `
   /* Emergency Helpline Box */
   .pi-emergency-banner {
     margin-top: 8px;
-    background: linear-gradient(135deg, #fff5f5 0%, #fef2f2 100%);
-    border: 1.5px solid #fca5a5;
-    border-left: 5px solid #dc2626;
+    background: #fff1f2;
+    border: 1px solid #fecdd3;
+    border-left: 3px solid #dc2626;
     border-radius: 8px;
     padding: 6px 12px;
     display: flex;
@@ -718,9 +436,9 @@ const OVERRIDE_CSS = `
     break-inside: avoid;
   }
   .pi-em-icon {
-    font-size: 15px;
-    color: #dc2626;
     flex: 0 0 auto;
+    display: flex;
+    color: #dc2626;
   }
   .pi-em-text {
     flex: 1 1 auto;
@@ -743,8 +461,8 @@ const OVERRIDE_CSS = `
     margin-top: 8px;
     margin-bottom: 4px;
     background: #fffafa;
-    border: 1.5px solid #fecaca;
-    border-left: 5px solid #dc2626;
+    border: 1px solid #fecaca;
+    border-left: 3px solid #dc2626;
     border-radius: 8px;
     padding: 7px 11px;
     break-inside: avoid !important;
@@ -904,6 +622,17 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
       const container = document.getElementById('divSummary') || document.body;
       const tblMain = document.getElementById('tblMain');
 
+      // 0. Some summaries are authored as one <div> per line rather than
+      // Word-style <p class="MsoNormal"> paragraphs. Turn those line divs into
+      // <p>s so the heading / diagnosis / section handling below (and the
+      // Gemini pass) treats both authoring styles the same way.
+      document.querySelectorAll('.sumContent > div').forEach((div) => {
+        if (div.querySelector('div, p, table, ul, ol')) return;
+        const para = document.createElement('p');
+        para.append(...div.childNodes);
+        div.replaceWith(para);
+      });
+
       // 1. Insert Letterhead
       const letterheadWrap = document.createElement('div');
       letterheadWrap.innerHTML = letterheadHtml;
@@ -942,14 +671,6 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
       const ward = findVal('Ward Name');
       const bed = findVal('Bed No');
 
-      // UHID badge in the letterhead — added here rather than in
-      // buildLetterheadHtml() because regNo only exists on the EMR's own
-      // summary page, extracted above, after the letterhead is already inserted.
-      const regnoSlot = document.querySelector('.pi-regno-slot');
-      if (regnoSlot && regNo) {
-        regnoSlot.innerHTML = `<div class="pi-regno-badge"><span class="pi-regno-label">UHID</span><span class="pi-regno-value">${regNo}</span></div>`;
-      }
-
       // Consultant
       const docEl = document.querySelector('.txtdochdr') || document.querySelector('.Disdochdr');
       const consultantName = docEl ? docEl.innerText.replace(/^Dr\.\s*/i, 'Dr. ').trim() : '';
@@ -978,32 +699,29 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
       // 3. Build Executive Patient Demographics Card
       const card = document.createElement('div');
       card.className = 'pi-patient-card';
+      // Same structure/classes as pdfBranding.js's patientCardHtml() (built
+      // here in the browser because these values only exist on the EMR page):
+      // UHID leads the identifier row rather than sitting in the letterhead.
+      const cleanName = patName.replace(/[\s,;:]+$/, '');
+      const field = (label, val, cls = '') =>
+        `<div class="pi-field ${cls.includes('key') ? 'is-key' : ''}"><span class="pi-field-label">${label}</span><span class="pi-field-val ${cls.includes('id') ? 'is-id' : ''} ${val ? '' : 'is-blank'}">${val || '—'}</span></div>`;
       card.innerHTML = `
         <div class="pi-patient-top">
-          <div class="pi-patient-name">${patName || 'Patient Record'}</div>
+          <div class="pi-patient-id">
+            <div class="pi-eyebrow">Patient</div>
+            <div class="pi-patient-name">${cleanName || 'Patient Record'}</div>
+          </div>
           <div class="pi-patient-tags">
             ${ageSex ? `<span class="pi-tag pi-tag-blue">${ageSex}</span>` : ''}
-            ${ward ? `<span class="pi-tag pi-tag-ward">Ward: <strong>${ward}</strong></span>` : ''}
-            ${bed ? `<span class="pi-tag">Bed: <strong>${bed}</strong></span>` : ''}
+            ${ward ? `<span class="pi-tag pi-tag-green">Ward: ${ward}</span>` : ''}
+            ${bed ? `<span class="pi-tag">Bed ${bed}</span>` : ''}
           </div>
         </div>
         <div class="pi-patient-grid">
-          <div class="pi-field">
-            <span class="pi-field-label">UHID / Reg No</span>
-            <span class="pi-field-val">${regNo || '—'}</span>
-          </div>
-          <div class="pi-field">
-            <span class="pi-field-label">IP Number</span>
-            <span class="pi-field-val highlight">${ipNo || '—'}</span>
-          </div>
-          <div class="pi-field">
-            <span class="pi-field-label">Admitted On</span>
-            <span class="pi-field-val">${admitDt || '—'}</span>
-          </div>
-          <div class="pi-field">
-            <span class="pi-field-label">Discharged On</span>
-            <span class="pi-field-val">${dischDt || '—'}</span>
-          </div>
+          ${field('UHID', regNo, 'id key')}
+          ${field('IP Number', ipNo, 'id')}
+          ${field('Admitted On', admitDt)}
+          ${field('Discharged On', dischDt)}
         </div>
       `;
 
@@ -1032,8 +750,8 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
         el.style.display = 'none';
       });
 
-      // Insert card and consultant banner right after letterhead
-      const letterhead = container.querySelector('.pi-letterhead');
+      // Insert card and consultant banner right after the letterhead (and its title band)
+      const letterhead = container.querySelector('.pi-letterhead-wrap');
       if (letterhead) {
         letterhead.after(card);
         if (consultantWrap.firstElementChild) {
@@ -1088,7 +806,8 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
 
         // Diagnosis Header & Value Capture (handles multi-line or next-line diagnosis text)
         if (/^(FINAL\s+)?DIAGNOSIS\s*:?/i.test(txt)) {
-          let diagVal = txt.replace(/^(FINAL\s+)?DIAGNOSIS\s*:?\s*/i, '').trim();
+          // One line per diagnosis ("1. …", "2. …") rather than one run-on sentence.
+          const diagLines = [txt.replace(/^(FINAL\s+)?DIAGNOSIS\s*:?\s*/i, '').trim()].filter(Boolean);
 
           // If diagnosis value was on following paragraph(s), collect them!
           let nextEl = p.nextElementSibling;
@@ -1112,8 +831,7 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
               break;
             }
 
-            if (diagVal) diagVal += ' ' + nextTxt;
-            else diagVal = nextTxt;
+            diagLines.push(nextTxt);
 
             const toRemove = nextEl;
             nextEl = nextEl.nextElementSibling;
@@ -1126,7 +844,7 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
             <div class="pi-diag-header">
               <span class="pi-diag-label">Final Diagnosis</span>
             </div>
-            <div class="pi-diag-val">${diagVal || '—'}</div>
+            <div class="pi-diag-val">${diagLines.join('<br />') || '—'}</div>
           `;
           p.replaceWith(diagBox);
           continue;
@@ -1194,6 +912,17 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
         tbl.style.width = '100%';
         tbl.style.marginLeft = '0';
         tbl.style.marginRight = '0';
+
+        // Word-exported cells carry fixed heights and blank spacer paragraphs
+        // that leave rows several times taller than their text.
+        tbl.querySelectorAll('tr, td, th').forEach((el) => {
+          el.removeAttribute('height');
+          el.style.height = '';
+        });
+        tbl.querySelectorAll('td p, th p').forEach((cellP) => {
+          const blank = !(cellP.innerText || '').replace(/[\uFEFF\u200B-\u200D\u00A0\s]/g, '');
+          if (blank && !cellP.querySelector('img')) cellP.remove();
+        });
 
         // Remove completely empty rows
         const rows = Array.from(tbl.querySelectorAll('tr'));
@@ -1266,7 +995,7 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
         <div class="pi-approved-by">Prepared &amp; Approved by ${consultantName || 'Treating Consultant'}</div>
 
         <div class="pi-emergency-banner">
-          <div class="pi-em-icon">☎</div>
+          <div class="pi-em-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg></div>
           <div class="pi-em-text">
             <div><strong>24/7 EMERGENCY HELPLINE:</strong> 044 2752 8528 &nbsp;|&nbsp; Toll-Free: <strong>1800 599 0999</strong></div>
             <div class="pi-em-tamil">அவசர உதவிக்கு: 044 2752 8528 | கட்டணமில்லா தொலைபேசி எண்: 1800 599 0999</div>
@@ -1326,7 +1055,11 @@ export async function generateDischargeSummaryPdf({ ipNo, date, hospital }) {
         admitDt,
         dischDt,
       };
-    }, buildLetterheadHtml(hospital || config.hospital || {}), date || new Date().toISOString().slice(0, 10));
+    }, letterheadHtml(hospital || config.hospital || {}, {
+      title: 'Discharge Summary',
+      subtitle: 'Clinical summary of the hospital stay',
+      meta: `Generated ${formatGeneratedDate()}`,
+    }), date || new Date().toISOString().slice(0, 10));
 
     const dataMissing = !extraction?.patName && !extraction?.regNo && !extraction?.admitDt && !extraction?.dischDt;
 

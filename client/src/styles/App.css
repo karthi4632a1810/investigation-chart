@@ -1645,75 +1645,23 @@ html, body {
 }
 
 /* ==========================================================================
-/* ==========================================================================
-   RESPONSIVE PATIENT CARDS & USER-FRIENDLY CONTROLS (IMAGE.PNG MATCH)
+   CARD CONTROLS SHARED WITH THE TABLE VIEW (copy chips, badges, PDF buttons)
    ========================================================================== */
-.patient-cards-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(285px, 1fr));
-  gap: 16px;
-  margin-top: 14px;
-  align-items: stretch;
-}
 
-@media (min-width: 1400px) {
-  .patient-cards-grid {
-    grid-template-columns: repeat(4, 1fr);
-  }
-}
 
-.patient-mobile-card {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  padding: 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.02);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 12px;
-  height: 100%;
-  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s ease;
-  position: relative;
-}
 
-.patient-mobile-card:hover {
-  border-color: #cbd5e1;
-  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.08), 0 4px 8px -2px rgba(0, 0, 0, 0.04);
-  transform: translateY(-2px);
-}
 
-.card-top-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  flex-wrap: nowrap;
-}
 
-.card-patient-info {
-  flex: 1 1 auto;
-  min-width: 0;
-}
 
-.card-patient-name {
-  font-size: 14.5px;
-  font-weight: 800;
-  color: #0f172a;
-  letter-spacing: -0.01em;
-  text-transform: uppercase;
-  line-height: 1.25;
-  overflow-wrap: break-word;
-  word-break: break-word;
-}
 
-.card-patient-chips {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 5px;
-  flex-wrap: wrap;
-}
+
+
+
+
+
+
+
+
 
 .type-badge {
   font-size: 11px;
@@ -1736,64 +1684,17 @@ html, body {
   border: 1px solid #bfdbfe;
 }
 
-.card-date-chip {
-  font-size: 10.5px;
-  font-weight: 600;
-  background: #f1f5f9;
-  color: #475569;
-  padding: 2px 7px;
-  border-radius: 9999px;
-}
 
-.card-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
 
-.card-header-actions .btn-view-summary,
-.card-header-actions .btn-card-pdf {
-  padding: 4px 9px;
-  font-size: 11.5px;
-  font-weight: 700;
-  border-radius: 6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  text-decoration: none;
-  white-space: nowrap;
-}
 
-/* Card ID Strip */
-.card-id-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  background: #f8fafc;
-  border: 1px solid #f1f5f9;
-  border-radius: 8px;
-  padding: 8px 10px;
-  gap: 6px;
-  align-items: center;
-}
 
-.card-id-col {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
 
-.card-id-label {
-  font-size: 9px;
-  font-weight: 700;
-  color: #64748b;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+
+
+
+
+
+
 
 /* Copyable Chip */
 .copyable-chip {
@@ -1907,153 +1808,39 @@ html, body {
   font-size: 10.5px;
 }
 
-/* ==========================================================================
-   Clinical & Location Information (Dedicated spacing, zero text overlap)
-   ========================================================================== */
-.card-clinical-box {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 2px 0;
-  flex: 1 1 auto;
-}
 
-/* Full Width Row for Department & Ward */
-.clinical-row-full {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  min-width: 0;
-  background: #f8fafc;
-  border: 1px solid #f1f5f9;
-  border-radius: 8px;
-  padding: 7px 9px;
-}
 
-/* Balanced 2-Column Split Row (Doctor & Mobile, Created User & Date) */
-.clinical-row-split {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 10px;
-  min-width: 0;
-}
 
-.clinical-split-col {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  min-width: 0;
-}
 
-.clinical-icon-cell {
-  flex-shrink: 0;
-  margin-top: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #64748b;
-}
 
-.clinical-text-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5px;
-  min-width: 0;
-  flex: 1 1 auto;
-}
 
-.clinical-tag-label {
-  font-size: 9px;
-  font-weight: 700;
-  color: #64748b;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
-.clinical-dept-ward {
-  font-size: 11.5px;
-  line-height: 1.35;
-  color: #1e293b;
-  word-break: break-word;
-}
 
-.dept-title {
-  font-weight: 800;
-  color: #0f172a;
-  text-transform: uppercase;
-  letter-spacing: 0.01em;
-}
 
-.ward-bullet {
-  margin: 0 4px;
-  color: #94a3b8;
-  font-weight: 700;
-}
 
-.ward-text {
-  font-weight: 600;
-  color: #475569;
-  text-transform: uppercase;
-}
 
-.doctor-name-text {
-  font-size: 12px;
-  font-weight: 700;
-  color: #1e293b;
-  text-transform: uppercase;
-  line-height: 1.35;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
-}
 
-.mobile-action-flex {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
 
-.mobile-tel-link {
-  font-size: 12px;
-  font-weight: 700;
-  color: #2563eb;
-  text-decoration: none;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
-.mobile-tel-link:hover {
-  text-decoration: underline;
-  color: #1d4ed8;
-}
 
-.user-login-text {
-  font-size: 11px;
-  font-weight: 600;
-  color: #475569;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
-}
 
-.date-meta-text {
-  font-size: 11.5px;
-  font-weight: 700;
-  color: #334155;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 .text-truncate {
   overflow: hidden;
@@ -2068,27 +1855,9 @@ html, body {
   gap: 4px;
 }
 
-/* Card Action Bar & Buttons (Pinned to bottom for equal row alignment) */
-.card-action-bar {
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid #f1f5f9;
-}
 
-.btn-card-full-pdf {
-  width: 100%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 700;
-  text-decoration: none;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
+
+
 
 /* Summary Button - Teal/Mint matching image.png */
 .btn-view-summary {
@@ -2138,29 +1907,376 @@ html, body {
   box-shadow: 0 2px 5px rgba(37, 99, 235, 0.15);
 }
 
-.card-action-dual {
+
+
+
+
+
+
+/* ==========================================================================
+   PATIENT CARDS (Discharge Reports → Cards view)
+   Every value wraps rather than truncating or sharing a line with a sibling,
+   so long names, wards and doctor names can't overlap anything; the action
+   row is pinned to the bottom so cards in the same grid row line up.
+   ========================================================================== */
+.patient-cards-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 272px), 1fr));
+  gap: 16px;
+  margin-top: 14px;
+  align-items: stretch;
+}
+
+.pcard {
+  --pcard-accent: #0d9488;
+  --pcard-accent-soft: #f0fdfa;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 18px 16px 16px;
+  background: var(--bg-surface);
+  border: 1px solid #e6ebf2;
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px -6px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.pcard.is-corporate {
+  --pcard-accent: #2563eb;
+  --pcard-accent-soft: #eff6ff;
+}
+
+/* Thin accent along the top edge — teal for general, blue for corporate */
+.pcard::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--pcard-accent);
+}
+
+.pcard:hover {
+  transform: translateY(-2px);
+  border-color: #d5dde8;
+  box-shadow: 0 12px 28px -10px rgba(15, 23, 42, 0.16), 0 4px 10px -4px rgba(15, 23, 42, 0.06);
+}
+
+.pcard a:focus-visible,
+.pcard button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Header: initials avatar + name + tags */
+.pcard-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.pcard-avatar {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--pcard-accent-soft);
+  color: var(--pcard-accent);
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.pcard-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pcard-name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text-main);
+  text-transform: uppercase;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+  /* Two lines max; the full name stays in the title tooltip */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.pcard-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pcard-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pcard-tag.is-ready {
+  background: var(--green-bg);
+  color: var(--green);
+  border-color: var(--green-border);
+}
+
+/* IP No / UHID — side-by-side tiles, each value on its own line */
+.pcard-ids {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.btn-card-dual {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
+.pcard-id {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
   padding: 8px 10px;
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 700;
-  text-decoration: none;
-  text-align: center;
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
 }
 
-.card-no-actions {
+.pcard-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+
+.copyable-chip.pcard-id-value {
+  max-width: 100%;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.copyable-chip.pcard-id-value.is-ip {
+  color: var(--primary);
+}
+
+.pcard-id-value .copyable-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pcard-id-value:hover .copyable-text {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Department & ward */
+.pcard-dept {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.pcard-dept-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--primary-subtle);
+  color: var(--primary);
+}
+
+.pcard-dept-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pcard-dept-name {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text-main);
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  overflow-wrap: anywhere;
+}
+
+.pcard-ward {
+  margin-top: 2px;
   font-size: 12px;
-  text-align: center;
-  padding: 6px 0;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+/* Label / value rows — fixed label column so every value starts at the same x */
+.pcard-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  padding-top: 12px;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.pcard-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.pcard-row dt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.pcard-row dt svg {
+  flex: 0 0 auto;
+  color: var(--text-subtle);
+}
+
+.pcard-row dd {
+  margin: 0;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #1e293b;
+  overflow-wrap: anywhere;
+}
+
+.pcard-row dd.pcard-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.pcard-mobile {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pcard-mobile a {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.pcard-mobile a:hover {
+  text-decoration: underline;
+}
+
+/* Actions — pinned to the card bottom */
+.pcard-actions {
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid #eef2f7;
+}
+
+.pcard-buttons {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: auto;
+  gap: 8px;
+}
+
+.btn.pcard-btn {
+  min-width: 0;
+  height: 36px;
+  padding: 0 8px;
+  gap: 6px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.pcard-btn > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.btn.pcard-btn.is-empty {
+  background: var(--bg-subtle);
+  color: var(--text-subtle);
+  border: 1px dashed var(--border-strong);
+  font-weight: 600;
+  cursor: default;
+}
+
+.pcard-buttons .btn-send-whatsapp,
+.pcard-buttons .btn-whatsapp-sent {
+  width: 36px;
+  height: 36px;
+  justify-content: center;
+  border-radius: 10px;
+}
+
+/* Narrow cards (4-up on smaller laptops): drop the PDF icons so the button
+   labels keep their full text instead of truncating. */
+.pcard {
+  container-type: inline-size;
+}
+
+@container (max-width: 300px) {
+  .pcard-btn svg {
+    display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .pcard {
+    padding: 16px 14px 14px;
+  }
+
+  .pcard-row {
+    grid-template-columns: 90px minmax(0, 1fr);
+  }
+}
+
+@media (hover: none), (prefers-reduced-motion: reduce) {
+  .pcard,
+  .pcard:hover {
+    transform: none;
+    transition: none;
+  }
 }
 
 /* Category Filter Bar */
@@ -3401,10 +3517,18 @@ table.unmapped tbody tr:nth-child(even) {
 
   .toolbar-date-input-wrap {
     flex: 1 1 auto;
+    min-width: 0;
   }
 
   .toolbar-date-input {
     width: 100%;
+    min-width: 0;
+  }
+
+  /* The picker already shows the date; the "Sat, Sep 26" pill beside it is
+     what pushed the Today button off-screen on phones. */
+  .date-human-pill {
+    display: none;
   }
 
   .in-table-filter {
@@ -3412,13 +3536,9 @@ table.unmapped tbody tr:nth-child(even) {
     width: 100%;
   }
 
-  .patient-cards-grid {
-    grid-template-columns: 1fr;
-  }
+  
 
-  .card-details-grid {
-    grid-template-columns: 1fr;
-  }
+  
 
   .section-header h2 {
     font-size: 20px;
@@ -3452,22 +3572,21 @@ table.unmapped tbody tr:nth-child(even) {
     padding: 12px;
   }
 
-  .patient-mobile-card {
-    padding: 14px;
-  }
+  
 
-  .card-id-strip {
-    grid-template-columns: 1fr 1fr;
-  }
+  
 
-  .card-id-strip .card-id-col:last-child {
-    grid-column: span 2;
-  }
+  
 
   .nav-segment-btn {
     padding: 6px 8px;
     font-size: 11.5px;
     gap: 4px;
+  }
+
+  /* Labels alone fit a 360px screen; with icons the nav overflowed it. */
+  .nav-segment-btn svg {
+    display: none;
   }
 
   .btn-page-number {

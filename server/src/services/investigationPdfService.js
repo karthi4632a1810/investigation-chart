@@ -12,6 +12,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { searchInvestigation } from './emrService.js';
 import { reportObjectKey, uploadPdfFile } from './storageService.js';
+import { BRAND_CSS, cleanPatientName, esc, formatGeneratedDate, letterheadHtml, patientCardHtml } from './pdfBranding.js';
 
 /**
  * Pulls the search window's start back by `hoursBack` hours. Confirmed against
@@ -91,16 +92,26 @@ function chunkArray(array, size) {
   return results;
 }
 
-function esc(str) {
-  return String(str ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-}
+// Status → value treatment. Abnormal values also carry an H/L letter so they
+// still read correctly on a black-and-white printout.
+const STATUS_CLASS = { red: 'v-low', '#e67e22': 'v-high', green: 'v-ok' };
+const STATUS_LETTER = { red: 'L', '#e67e22': 'H' };
 
 const STATUS_LEGEND = `
   <div class="status-legend">
-    <span class="legend-dot legend-dot-normal"></span> Within Normal
-    <span class="legend-dot legend-dot-high"></span> High
-    <span class="legend-dot legend-dot-low"></span> Low
+    <span class="lg lg-ok">Within normal</span>
+    <span class="lg lg-high"><b>H</b> Above range</span>
+    <span class="lg lg-low"><b>L</b> Below range</span>
   </div>`;
+
+function renderValueCell(val, range) {
+  if (!val) return '<td class="field-value is-empty">—</td>';
+  const color = getStatusColor(val, range);
+  const cls = STATUS_CLASS[color] || '';
+  const letter = STATUS_LETTER[color];
+  // Every value sits in a .v span (bordered or not) so all rows share one height.
+  return `<td class="field-value"><span class="v ${cls}">${esc(val)}${letter ? `<i>${letter}</i>` : ''}</span></td>`;
+}
 
 function renderChartTable(dates, template, chartValues) {
   const dateColWidth = (56 / Math.max(dates.length, 1)).toFixed(1);
@@ -118,9 +129,9 @@ function renderChartTable(dates, template, chartValues) {
     const isIndividualSection =
       !sectionName || ['INDIVIDUAL TESTS', 'OTHER TESTS', 'STANDALONE'].includes(sectionName);
 
-    if (!isIndividualSection) {
-      body += `<tr class="section-row"><td colspan="${2 + dates.length}">🔬 ${esc(sectionName)}</td></tr>`;
-    }
+    // Standalone tests get their own heading too, so they don't read as part
+    // of whichever panel happens to come before them.
+    body += `<tr class="section-row"><td colspan="${2 + dates.length}">${esc(isIndividualSection ? 'Other Tests' : sectionName)}</td></tr>`;
 
     for (const field of activeFields) {
       const isNarrativeRange =
@@ -133,71 +144,14 @@ function renderChartTable(dates, template, chartValues) {
 
       body += `<tr><td class="field-label">${esc(field.label)}</td><td class="field-range">${esc(displayRange)}</td>`;
       for (const d of dates) {
-        const val = chartValues[field.id]?.[d] ?? '';
-        const color = getStatusColor(val, field.range);
-        const tint = color === 'red' ? 'tint-low' : color === '#e67e22' ? 'tint-high' : '';
-        const style = color ? ` style="color:${color};font-weight:bold;"` : '';
-        body += `<td class="field-value ${val ? 'filled' : 'empty-val'} ${tint}"${style}>${esc(val || '—')}</td>`;
+        body += renderValueCell(chartValues[field.id]?.[d] ?? '', field.range);
       }
       body += '</tr>';
     }
   }
 
-  const headCols = dates.map((d) => `<th style="width:${dateColWidth}%;">${esc(d)}</th>`).join('');
+  const headCols = dates.map((d) => `<th class="th-date" style="width:${dateColWidth}%;">${esc(d)}</th>`).join('');
   return `${STATUS_LEGEND}<table class="chart"><thead><tr><th style="width:26%;">Parameter</th><th style="width:18%;">Ref. Range</th>${headCols}</tr></thead><tbody>${body}</tbody></table>`;
-}
-
-function loadAssetDataUri(relPath) {
-  try {
-    const file = new URL(relPath, import.meta.url);
-    if (fs.existsSync(file)) {
-      return `data:image/png;base64,${fs.readFileSync(file).toString('base64')}`;
-    }
-  } catch {
-    // fall through to empty string — caller omits the <img> entirely
-  }
-  return '';
-}
-
-const defaultLogoDataUri = loadAssetDataUri('../assets/logo.png');
-const nablBadgeDataUri = loadAssetDataUri('../assets/nabl.png');
-const nabhBadgeDataUri = loadAssetDataUri('../assets/nabh.png');
-
-function renderLetterhead(hospital, regNo) {
-  const logoSrc = defaultLogoDataUri || hospital.logoPath || '';
-  const badges = [
-    nablBadgeDataUri ? `<img class="accred-badge-img" src="${nablBadgeDataUri}" alt="NABL Accredited Laboratory" title="NABL Accredited Laboratory" />` : '',
-    nabhBadgeDataUri ? `<img class="accred-badge-img" src="${nabhBadgeDataUri}" alt="NABH Accredited Hospital" title="NABH Accredited Hospital" />` : '',
-  ].join('');
-
-  return `
-    <div class="top-ribbon"></div>
-    <div class="letterhead">
-      <div class="letterhead-left">
-        <div class="letterhead-logo">${logoSrc ? `<img src="${esc(logoSrc)}" onerror="this.style.display='none'" />` : ''}</div>
-        <div class="letterhead-name">
-          <div class="hosp-name-en">${esc(hospital.nameEn)}</div>
-          <div class="hosp-name-ta">${esc(hospital.nameTa)}</div>
-          <div class="hosp-address">${hospital.address || ''}</div>
-        </div>
-      </div>
-      <div class="letterhead-right">
-        ${badges ? `<div class="accred-badges">${badges}<span class="accred-caption">NABL Lab &amp;<br />NABH Accredited</span></div>` : ''}
-        <div class="doc-type-badge">
-          <span class="doc-type-label">Document Type</span>
-          <span class="doc-type-value">DIAGNOSIS SUMMARY</span>
-        </div>
-        <div class="regno-badge">
-          <span class="regno-label">UHID</span>
-          <span class="regno-value">${esc(regNo)}</span>
-        </div>
-      </div>
-    </div>`;
-}
-
-function pf(label, value) {
-  const hasVal = String(value || '').trim() !== '';
-  return `<div class="pf"><span>${esc(label)}</span><b class="${hasVal ? '' : 'blank'}">${hasVal ? esc(value) : '-'}</b></div>`;
 }
 
 /**
@@ -219,43 +173,45 @@ function findLatestFieldValue(template, chartValues, chartDates, labelRegex) {
   return '';
 }
 
-function renderPatientStrip(meta, { bloodGroup, physicianName, reportPeriod } = {}) {
-  const deptTag = String(meta?.unit || '').trim()
-    ? `<span class="tag tag-dept">Department: ${esc(meta.unit)}</span>`
-    : '';
-  const ageSex = [meta?.age, meta?.sex].filter((v) => String(v || '').trim()).join(' | ');
-  const clinicalTags = bloodGroup ? `<span class="tag tag-blood">Blood Group: ${esc(bloodGroup)}</span>` : '';
-
-  return `<div class="patient-card">
-    <div class="patient-card-header">
-      <span class="patient-card-title">Patient Demographics &amp; Admission Info</span>
-      <div class="patient-card-tags">${deptTag}</div>
-    </div>
-    <div class="patient-strip">
-      ${pf('Patient Name', meta?.name)}
-      ${pf('Age / Sex', ageSex)}
-      ${pf('IP Number', meta?.ip)}
-      ${pf('Bed No.', meta?.bed)}
-      ${pf('Assigned Ward', meta?.ward)}
-      ${pf('Unit / Specialty', meta?.unit)}
-      ${pf('Treating Physician', physicianName)}
-      ${pf('Report Period', reportPeriod)}
-    </div>
-    ${
-      clinicalTags
-        ? `<div class="clinical-tags-row"><span class="clinical-tags-label">Clinical Tags:</span>${clinicalTags}</div>`
-        : ''
-    }
-  </div>`;
+/**
+ * UHID leads the identifier row (with IP number, bed and report period), not a
+ * separate badge in the letterhead. The EMR's IP column sometimes repeats the
+ * prefix ("IP IP07026996"), so the caller's own IP number wins when known.
+ */
+function renderPatientCard(meta, { regNo, ipNo, bloodGroup, physicianName, reportPeriod }) {
+  const ageSex = [meta?.age, meta?.sex].filter((v) => String(v || '').trim()).join(' · ');
+  const ip = ipNo || String(meta?.ip || '').replace(/^IP\s+(?=IP)/i, '');
+  return patientCardHtml({
+    name: cleanPatientName(meta?.name),
+    tags: [
+      { text: ageSex, tone: 'blue' },
+      { text: meta?.unit, tone: 'green' },
+      { text: bloodGroup ? `Blood Group ${bloodGroup}` : '', tone: 'rose' },
+    ],
+    fields: [
+      { label: 'UHID', value: regNo, id: true, key: true },
+      { label: 'IP Number', value: ip, id: true },
+      { label: 'Bed No.', value: meta?.bed },
+      { label: 'Report Period', value: reportPeriod },
+      { label: 'Assigned Ward', value: meta?.ward, wide: true },
+      { label: 'Unit / Specialty', value: meta?.unit },
+      { label: 'Treating Physician', value: physicianName },
+    ],
+  });
 }
 
-export function buildInvestigationChartHtml({ hospital, regNo, chart, physicianName }) {
+export function buildInvestigationChartHtml({ hospital, regNo, ipNo, chart, physicianName }) {
   const { chartDates, chartValues, patientMeta, template } = chart;
   const pages = chunkArray(chartDates, 4);
   const bloodGroup = findLatestFieldValue(template, chartValues, chartDates, /blood\s*group/i);
   const reportPeriod =
     chartDates.length > 1 ? `${chartDates[0]} – ${chartDates[chartDates.length - 1]}` : chartDates[0] || '';
-  const patientCard = renderPatientStrip(patientMeta, { bloodGroup, physicianName, reportPeriod });
+  const letterhead = letterheadHtml(hospital, {
+    title: 'Diagnosis Summary',
+    subtitle: 'Laboratory investigation chart · admission to discharge',
+    meta: `Generated ${formatGeneratedDate()}`,
+  });
+  const patientCard = renderPatientCard(patientMeta, { regNo, ipNo, bloodGroup, physicianName, reportPeriod });
 
   const pageBlocks = pages
     .map((pageDates, idx) => {
@@ -265,13 +221,13 @@ export function buildInvestigationChartHtml({ hospital, regNo, chart, physicianN
       // Y" count that would be wrong whenever a chunk's table overflows onto
       // more physical PDF pages than there are chunks.
       const footer = isLast
-        ? `<div class="page-footer disclaimer-footer"><strong class="disclaimer-label">DISCLAIMER:</strong> This is a system-generated diagnosis summary compiled from laboratory records. Please contact ${esc(hospital.nameEn || 'the hospital')} to verify or for clinical correlation.</div>`
+        ? `<div class="disclaimer-footer"><strong>Disclaimer</strong> This is a system-generated diagnosis summary compiled from laboratory records. Please contact ${esc(hospital.nameEn || 'the hospital')} to verify or for clinical correlation.</div>`
         : '';
       return `
     <div class="chart-page-block">
-      ${renderLetterhead(hospital, regNo)}
+      ${letterhead}
       ${patientCard}
-      <div class="chart-card-body">${renderChartTable(pageDates, template, chartValues)}</div>
+      ${renderChartTable(pageDates, template, chartValues)}
       ${footer}
     </div>`;
     })
@@ -282,91 +238,39 @@ export function buildInvestigationChartHtml({ hospital, regNo, chart, physicianN
 <head>
 <meta charset="utf-8" />
 <style>
-  :root {
-    --brand-900: #0b2956; --brand-800: #144385; --brand-700: #1b56a7; --brand-50: #f0f5fc;
-    --bg: #f1f5f9; --card: #ffffff; --border: #e2e8f0;
-    --text: #1e293b; --muted: #64748b;
-    --success: #10b981; --warning: #e67e22; --danger: #ef4444;
-  }
-  * { box-sizing: border-box; }
-  body { font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
-  @page { size: A4 portrait; margin: 8mm; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-family: -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; margin: 0; background: #ffffff; color: #1e293b; }
+  @page { size: A4 portrait; margin: 9mm 10mm; }
 
-  .chart-page-block {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    overflow: hidden;
-    width: 100%;
-    box-shadow: 0 1px 3px rgba(11, 41, 86, 0.08), 0 4px 14px rgba(11, 41, 86, 0.06);
-    page-break-after: always;
-    break-after: page;
-  }
+  .chart-page-block { width: 100%; page-break-after: always; break-after: page; }
   .chart-page-block:last-child { page-break-after: auto; break-after: auto; }
+${BRAND_CSS}
+  .status-legend { display: flex; justify-content: flex-end; gap: 6px; margin: 0 0 6px; }
+  .lg { font-size: 8px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid; }
+  .lg b { font-weight: 900; margin-right: 2px; }
+  .lg-ok { color: #047857; background: #ecfdf5; border-color: #a7f3d0; }
+  .lg-high { color: #b45309; background: #fff7ed; border-color: #fed7aa; }
+  .lg-low { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
 
-  .top-ribbon { height: 6px; background: linear-gradient(90deg, var(--brand-900), var(--brand-800), var(--brand-700)); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  table.chart { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 10px; border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; }
+  table.chart th, table.chart td { padding: 5px 8px; text-align: left; border-bottom: 1px solid #eef2f7; overflow-wrap: anywhere; vertical-align: middle; }
+  table.chart thead th { background: #0b2956; color: #ffffff; font-size: 8px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; padding: 7px 8px; border-bottom: none; }
+  table.chart thead th.th-date { text-align: center; letter-spacing: 0.04em; }
+  table.chart tbody tr:last-child td { border-bottom: none; }
+  tbody tr:nth-child(even):not(.section-row) td { background: #fbfcfe; }
+  tr.section-row td { background: #eff6ff; color: #0b2956; font-size: 8.5px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; padding: 5px 8px; box-shadow: inset 3px 0 0 #1d4ed8; }
+  td.field-label { font-weight: 600; color: #1e293b; }
+  td.field-range { color: #64748b; font-size: 9px; border-right: 1px solid #eef2f7; }
+  td.field-value { text-align: center; font-weight: 600; color: #0f172a; font-variant-numeric: tabular-nums; }
+  td.field-value.is-empty { color: #cbd5e1; font-weight: 400; }
+  .v { display: inline-block; padding: 1px 7px; border-radius: 999px; border: 1px solid transparent; }
+  .v i { font-style: normal; font-size: 7px; font-weight: 900; margin-left: 3px; vertical-align: 1px; }
+  .v-ok { color: #047857; font-weight: 700; }
+  .v-high { color: #b45309; background: #fff7ed; border-color: #fed7aa; font-weight: 700; }
+  .v-low { color: #b91c1c; background: #fef2f2; border-color: #fecaca; font-weight: 700; }
 
-  .letterhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 16px 20px 14px; border-bottom: 1px solid var(--border); }
-  .letterhead-left { display: flex; align-items: center; gap: 16px; flex: 1 1 auto; min-width: 0; }
-  .letterhead-logo { width: 56px; height: 86px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; }
-  .letterhead-logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
-  .letterhead-name { flex: 1 1 auto; min-width: 0; }
-  .hosp-name-en { font-size: 20px; font-weight: 800; color: var(--brand-800); letter-spacing: -0.01em; }
-  .hosp-name-ta { font-size: 13px; font-weight: 700; color: var(--brand-800); margin-top: 1px; }
-  .hosp-address { font-size: 7.4px; color: var(--muted); margin-top: 5px; line-height: 1.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  .letterhead-right { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 9px; }
-  .accred-badges { display: flex; align-items: center; gap: 8px; }
-  .accred-badge-img { height: 38px; width: auto; object-fit: contain; }
-  .accred-caption { font-size: 8px; font-weight: 700; line-height: 1.25; color: var(--muted); text-align: left; }
-  .doc-type-badge { background: var(--brand-50); border: 1px solid #c2dbf3; border-radius: 999px; padding: 5px 16px; text-align: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .doc-type-label { display: block; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--brand-700); }
-  .doc-type-value { display: block; font-size: 14px; font-weight: 800; color: var(--brand-900); letter-spacing: 0.02em; }
-  .regno-badge { text-align: right; }
-  .regno-label { display: block; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-  .regno-value { display: inline-block; font-size: 13px; font-weight: 800; font-family: 'JetBrains Mono', 'Courier New', monospace; color: var(--brand-900); background: var(--brand-50); border: 1px solid #c2dbf3; border-radius: 5px; padding: 2px 8px; margin-top: 2px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-
-  .patient-card { margin: 12px 20px; padding: 12px 15px; background: linear-gradient(135deg, #f8fafc, var(--brand-50)); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 1px 2px rgba(11, 41, 86, 0.05); }
-  .patient-card-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; padding-bottom: 7px; margin-bottom: 9px; border-bottom: 1px solid #dbe4ef; }
-  .patient-card-title { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; color: var(--brand-800); }
-  .patient-card-tags { display: flex; flex-wrap: wrap; gap: 6px; }
-  .tag { font-size: 9.5px; font-weight: 700; border-radius: 999px; padding: 2px 10px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .tag-dept { color: var(--brand-800); background: #e1ecf9; border: 1px solid #c2dbf3; }
-  .tag-blood { color: #9f1239; background: #fce7ee; border: 1px solid #fbcfe0; }
-
-  .patient-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 12px; }
-  .patient-strip .pf { font-size: 11px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  .patient-strip .pf span { color: var(--muted); font-weight: 700; text-transform: uppercase; font-size: 8px; letter-spacing: 0.03em; white-space: nowrap; }
-  .patient-strip .pf b { font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .patient-strip .pf:first-child b { font-size: 12.5px; font-weight: 800; }
-  .patient-strip .pf b.blank { color: #cbd5e1; font-weight: 500; }
-
-  .clinical-tags-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 10px; padding-top: 8px; border-top: 1px solid #dbe4ef; }
-  .clinical-tags-label { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
-
-  .status-legend { display: flex; align-items: center; gap: 14px; padding: 0 4px 8px; font-size: 9.5px; font-weight: 600; color: var(--muted); }
-  .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 3px; vertical-align: middle; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .legend-dot-normal { background: var(--success); }
-  .legend-dot-high { background: var(--warning); }
-  .legend-dot-low { background: var(--danger); }
-
-  .chart-card-body { padding: 0 10px 10px; }
-  table.chart { min-width: 0; width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: 11px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  table.chart th, table.chart td { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); padding: 6px 7px; text-align: left; word-break: break-word; overflow-wrap: break-word; }
-  table.chart th:last-child, table.chart td:last-child { border-right: none; }
-  table.chart thead th { background: var(--brand-800); color: #fff; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 2px solid var(--brand-900); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  tr.section-row td { background: var(--brand-50); font-weight: 800; color: var(--brand-900); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.04em; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  tbody tr:nth-child(even):not(.section-row) td.field-value { background: #fbfcfe; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  td.field-value.tint-low { background: #fef2f2 !important; }
-  td.field-value.tint-high { background: #fff7ed !important; }
-  td.field-label { font-weight: 600; white-space: nowrap; }
-  td.field-range { color: var(--muted); font-size: 10.5px; white-space: nowrap; }
-  td.field-value { font-weight: 700; color: #0f172a; }
-  td.field-value.filled { background: #f8fafc; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  td.field-value.empty-val { color: #cbd5e1; }
-
-  .page-footer.disclaimer-footer { display: block; text-align: center; padding: 10px 24px; background: #f8fafc; border-top: 1px solid var(--border); font-size: 9.5px; color: #dc2626; font-weight: 700; line-height: 1.5; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .page-footer.disclaimer-footer .disclaimer-label { font-weight: 900; letter-spacing: 0.03em; margin-right: 3px; }
+  .disclaimer-footer { margin-top: 10px; padding: 8px 12px; border: 1px solid #fecaca; border-left: 3px solid #dc2626; border-radius: 8px; background: #fffafa; font-size: 8.5px; line-height: 1.5; color: #475569; break-inside: avoid; }
+  .disclaimer-footer strong { color: #dc2626; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; margin-right: 4px; }
 </style>
 </head>
 <body>
@@ -506,7 +410,7 @@ export async function generatePatientPdf({ ipNo, regNo, admissionDate, discharge
   // above only ever needs `ipNo`/`regNo` as alternate *search* identifiers,
   // but the letterhead should show the patient's actual UHID, not whichever
   // one happened to be used to find the results.
-  const html = buildInvestigationChartHtml({ hospital, regNo: regNo || ipNo, chart: result.chart, physicianName });
+  const html = buildInvestigationChartHtml({ hospital, regNo: regNo || ipNo, ipNo, chart: result.chart, physicianName });
   const tmpPdfPath = path.join(os.tmpdir(), `investigation-pdf-${crypto.randomUUID()}.pdf`);
 
   try {

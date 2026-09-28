@@ -285,9 +285,10 @@ function SendWhatsAppButton({ date, ipNo, name, onToast }) {
     setStatus('sending');
     setError('');
     try {
-      await sendReportWhatsApp(date, ipNo);
+      const result = await sendReportWhatsApp(date, ipNo);
       setStatus('sent');
-      if (onToast) onToast(`WhatsApp report sent for ${name}!`);
+      const docs = result.sent.map((d) => d.label).join(' + ');
+      if (onToast) onToast(`WhatsApp sent to ${result.sentTo}: ${docs}`);
     } catch (err) {
       setStatus('error');
       setError(err.message);
@@ -296,14 +297,18 @@ function SendWhatsAppButton({ date, ipNo, name, onToast }) {
 
   if (status === 'sent') {
     return (
-      <span className="btn btn-whatsapp-sent btn-icon-only" title="WhatsApp message sent" aria-label="WhatsApp message sent">
+      <span className="btn btn-whatsapp-sent btn-icon-only" title="Sent on WhatsApp" aria-label="Sent on WhatsApp">
         <WhatsAppIcon size={15} />
       </span>
     );
   }
 
   const label =
-    status === 'sending' ? 'Sending WhatsApp message…' : status === 'error' ? `Failed: ${error} — click to retry` : `Send investigation report to ${name} via WhatsApp`;
+    status === 'sending'
+      ? 'Sending lab report and discharge summary…'
+      : status === 'error'
+        ? `Failed: ${error} — click to retry`
+        : `Send lab report + discharge summary to ${name} via WhatsApp`;
 
   return (
     <button
@@ -456,7 +461,7 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                         ⚠ No Data
                       </span>
                     )}
-                    {p.dateCount !== undefined && (
+                    {(p.dateCount !== undefined || p.hasSummary) && (
                       <SendWhatsAppButton
                         date={p.date}
                         ipNo={p.ipNo}
@@ -476,6 +481,18 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
   );
 }
 
+// Honorifics the EMR prefixes onto names ("MR.", "BABY OF.") — skipped so the
+// avatar shows the patient's own initials.
+const NAME_TITLE_RE = /^(?:baby\s+of|mrs|mr|ms|miss|master|baby|dr|smt|shri|sri)\b\.?\s*/i;
+
+function patientInitials(name) {
+  const words = String(name || '')
+    .replace(NAME_TITLE_RE, '')
+    .split(/[^A-Za-z]+/)
+    .filter(Boolean);
+  return (words.slice(0, 2).map((w) => w[0]).join('') || '?').toUpperCase();
+}
+
 function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast }) {
   if (!patients.length) return null;
 
@@ -485,156 +502,84 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
         const isCorporate = p.patientType?.toLowerCase().includes('corp');
         const hasLab = p.dateCount !== undefined;
         return (
-          <div key={`${p.date}-${p.ipNo}`} className="patient-mobile-card">
-            {/* Top Header: Name, Category, Quick Summary/WhatsApp */}
-            <div className="card-top-header">
-              <div className="card-patient-info">
-                <div className="card-patient-name" title={p.name}>{p.name}</div>
-                <div className="card-patient-chips">
+          <article key={`${p.date}-${p.ipNo}`} className={`pcard ${isCorporate ? 'is-corporate' : ''}`}>
+            <header className="pcard-head">
+              <div className="pcard-avatar" aria-hidden="true">{patientInitials(p.name)}</div>
+              <div className="pcard-title">
+                <h3 className="pcard-name" title={p.name}>{p.name}</h3>
+                <div className="pcard-tags">
                   <span className={`type-badge ${isCorporate ? 'type-corporate' : 'type-general'}`}>
                     {p.patientType || 'General'}
                   </span>
-                  {dateColumn && <span className="card-date-chip">{p.date}</span>}
+                  {hasLab ? (
+                    <span className="pcard-tag is-ready" title={`${p.dateCount} dates with completed lab tests`}>
+                      {p.dateCount} lab date{p.dateCount === 1 ? '' : 's'}
+                    </span>
+                  ) : (
+                    <span className="pcard-tag" title="No laboratory test orders found in EMR">
+                      No lab data
+                    </span>
+                  )}
                 </div>
               </div>
-              <div className="card-header-actions">
-                {hasLab && (
-                  <SendWhatsAppButton
-                    date={p.date}
-                    ipNo={p.ipNo}
-                    name={p.name}
-                    onToast={onToast}
-                  />
-                )}
+            </header>
+
+            <div className="pcard-ids">
+              <div className="pcard-id">
+                <span className="pcard-label">IP No</span>
+                <CopyableChip value={p.ipNo} label="IP No" className="pcard-id-value is-ip" onToast={onToast} />
+              </div>
+              <div className="pcard-id">
+                <span className="pcard-label" title="Registration number">UHID</span>
+                <CopyableChip value={p.regNo} label="UHID" className="pcard-id-value" onToast={onToast} />
               </div>
             </div>
 
-            {/* ID Strip with 1-Click Copy */}
-            <div className="card-id-strip">
-              <div className="card-id-col">
-                <span className="card-id-label">IP NO</span>
-                <CopyableChip
-                  value={p.ipNo}
-                  label="IP No"
-                  className="code-chip code-chip-ip"
-                  onToast={onToast}
-                />
-              </div>
-              <div className="card-id-col">
-                <span className="card-id-label" title="UHID (Registration Number)">UHID (REG NO)</span>
-                <CopyableChip
-                  value={p.regNo}
-                  label="UHID"
-                  className="code-chip code-chip-reg"
-                  onToast={onToast}
-                />
-              </div>
-              <div className="card-id-col lab-dates-col">
-                <span className="card-id-label">LAB DATES</span>
-                {hasLab ? (
-                  <span
-                    className="dates-pill dates-pill-ready"
-                    title={`${p.dateCount} dates with completed lab tests`}
-                  >
-                    {p.dateCount} date{p.dateCount === 1 ? '' : 's'}
-                  </span>
-                ) : (
-                  <span className="dates-pill dates-pill-muted" title="No laboratory test orders found in EMR">
-                    no lab data
-                  </span>
-                )}
+            <div className="pcard-dept">
+              <span className="pcard-dept-icon" aria-hidden="true">
+                <WardIcon size={15} />
+              </span>
+              <div className="pcard-dept-text">
+                <div className="pcard-dept-name">{p.department || 'General'}</div>
+                {p.ward && <div className="pcard-ward">{p.ward}</div>}
               </div>
             </div>
 
-            {/* Clinical & Location Information - Dedicated spacing prevents text overlaps */}
-            <div className="card-clinical-box">
-              {/* Department & Ward (Full Width Row) */}
-              <div className="clinical-row-full">
-                <div className="clinical-icon-cell">
-                  <WardIcon size={14} className="clinical-icon" />
-                </div>
-                <div className="clinical-text-cell">
-                  <span className="clinical-tag-label">DEPARTMENT &amp; WARD</span>
-                  <div className="clinical-dept-ward" title={`${p.department || ''} · ${p.ward || ''}`}>
-                    <span className="dept-title">{p.department || 'General'}</span>
-                    {p.ward && <span className="ward-bullet">•</span>}
-                    {p.ward && <span className="ward-text">{p.ward}</span>}
-                  </div>
-                </div>
+            <dl className="pcard-meta">
+              <div className="pcard-row">
+                <dt><DoctorIcon size={14} />Doctor</dt>
+                <dd>{p.doctor || '—'}</dd>
               </div>
-
-              {/* Doctor & Mobile (Balanced 2-Column Split) */}
-              <div className="clinical-row-split">
-                <div className="clinical-split-col">
-                  <div className="clinical-icon-cell">
-                    <DoctorIcon size={14} className="clinical-icon" />
-                  </div>
-                  <div className="clinical-text-cell">
-                    <span className="clinical-tag-label">DOCTOR</span>
-                    <span className="doctor-name-text" title={p.doctor || '—'}>
-                      {p.doctor || '—'}
+              <div className="pcard-row">
+                <dt><PhoneIcon size={13} />Mobile</dt>
+                <dd>
+                  {p.mobile ? (
+                    <span className="pcard-mobile">
+                      <a href={`tel:+91${p.mobile}`} title={`Call +91 ${p.mobile}`}>+91 {p.mobile}</a>
+                      <CopyableChip
+                        value={`+91${p.mobile}`}
+                        label="Mobile"
+                        className="mini-copy-chip"
+                        onToast={onToast}
+                        iconOnly
+                      />
                     </span>
-                  </div>
-                </div>
-
-                <div className="clinical-split-col">
-                  <div className="clinical-icon-cell">
-                    <PhoneIcon size={13} className="clinical-icon" />
-                  </div>
-                  <div className="clinical-text-cell">
-                    <span className="clinical-tag-label">MOBILE</span>
-                    <div className="mobile-action-flex">
-                      {p.mobile ? (
-                        <>
-                          <a href={`tel:+91${p.mobile}`} className="mobile-tel-link" title={`Call +91 ${p.mobile}`}>
-                            +91 {p.mobile}
-                          </a>
-                          <CopyableChip
-                            value={`+91${p.mobile}`}
-                            label="Mobile"
-                            className="mini-copy-chip"
-                            onToast={onToast}
-                            iconOnly
-                          />
-                        </>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                </dd>
               </div>
-
-              {/* Created User Row */}
-              <div className="clinical-row-split sub-meta-row">
-                <div className="clinical-split-col">
-                  <div className="clinical-icon-cell">
-                    <UserIcon size={13} className="clinical-icon" />
-                  </div>
-                  <div className="clinical-text-cell">
-                    <span className="clinical-tag-label">CREATED USER</span>
-                    <span className="user-login-text" title={p.createdUser || '—'}>
-                      {p.createdUser || '—'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="clinical-split-col">
-                  <div className="clinical-icon-cell">
-                    <CalendarIcon size={13} className="clinical-icon" />
-                  </div>
-                  <div className="clinical-text-cell">
-                    <span className="clinical-tag-label">DISCHARGE DATE</span>
-                    <span className="date-meta-text" title={p.date}>
-                      {p.date ? (dateColumn ? p.date : getHumanDate(p.date)) : '—'}
-                    </span>
-                  </div>
-                </div>
+              <div className="pcard-row">
+                <dt><UserIcon size={13} />Created by</dt>
+                <dd className="pcard-mono">{p.createdUser || '—'}</dd>
               </div>
-            </div>
+              <div className="pcard-row">
+                <dt><CalendarIcon size={13} />Discharged</dt>
+                <dd>{p.date ? (dateColumn ? p.date : getHumanDate(p.date)) : '—'}</dd>
+              </div>
+            </dl>
 
-            {/* Bottom Action Bar (Pinned to bottom for perfect row alignment) */}
-            <div className="card-action-bar">
+            <footer className="pcard-actions">
               {p.hasSummary && p.summaryDataMissing && (
                 <div
                   className="summary-warning-badge"
@@ -643,58 +588,45 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                   ⚠ Summary has no patient data — please verify
                 </div>
               )}
-              {hasLab && p.hasSummary ? (
-                <div className="card-action-dual">
+              <div className="pcard-buttons">
+                {hasLab ? (
                   <a
-                    className="btn btn-view-pdf btn-card-dual"
+                    className="btn btn-view-pdf pcard-btn"
                     href={getPdfUrl(p)}
                     target="_blank"
                     rel="noreferrer"
-                    title={`Open investigation report for ${p.name}`}
+                    title={`Open lab report for ${p.name}`}
                   >
-                    <FilePdfIcon size={15} />
+                    <FilePdfIcon size={14} />
                     <span>Lab Report</span>
                   </a>
+                ) : (
+                  <span className="btn pcard-btn is-empty" title="No laboratory test orders found in EMR">
+                    <span>No lab data</span>
+                  </span>
+                )}
+                {p.hasSummary ? (
                   <a
-                    className="btn btn-view-summary btn-card-dual"
+                    className="btn btn-view-summary pcard-btn"
                     href={getSummaryPdfUrl(p)}
                     target="_blank"
                     rel="noreferrer"
                     title={`Open discharge summary for ${p.name}`}
                   >
-                    <FilePdfIcon size={15} />
+                    <FilePdfIcon size={14} />
                     <span>Summary</span>
                   </a>
-                </div>
-              ) : hasLab ? (
-                <a
-                  className="btn btn-view-pdf btn-card-full-pdf"
-                  href={getPdfUrl(p)}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={`Open investigation report PDF for ${p.name}`}
-                >
-                  <FilePdfIcon size={16} />
-                  <span>View Full Investigation PDF</span>
-                </a>
-              ) : p.hasSummary ? (
-                <a
-                  className="btn btn-view-summary btn-card-full-pdf"
-                  href={getSummaryPdfUrl(p)}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={`Open discharge summary for ${p.name}`}
-                >
-                  <FilePdfIcon size={16} />
-                  <span>View Discharge Summary</span>
-                </a>
-              ) : (
-                <div className="card-no-actions text-muted">
-                  No documents ready yet
-                </div>
-              )}
-            </div>
-          </div>
+                ) : (
+                  <span className="btn pcard-btn is-empty" title="Discharge summary not generated yet">
+                    <span>No summary</span>
+                  </span>
+                )}
+                {(hasLab || p.hasSummary) && (
+                  <SendWhatsAppButton date={p.date} ipNo={p.ipNo} name={p.name} onToast={onToast} />
+                )}
+              </div>
+            </footer>
+          </article>
         );
       })}
     </div>

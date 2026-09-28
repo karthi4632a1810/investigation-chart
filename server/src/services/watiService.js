@@ -12,6 +12,30 @@ import { config } from '../config.js';
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
 
+/**
+ * WATI expects the WhatsApp number as country-code-prefixed digits only, e.g.
+ * "919384508490" — no "+", spaces, or leading zero. EMR mobiles and numbers
+ * typed into WATI Settings are usually bare 10-digit Indian numbers, which WATI
+ * would otherwise reject or route to the wrong country, so those get "91".
+ */
+export function toWatiNumber(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (digits.length === 10) return `91${digits}`;
+  if (digits.length === 11 && digits.startsWith('0')) return `91${digits.slice(1)}`;
+  return digits;
+}
+
+/**
+ * The template's {{2}} line. Each document goes out as its own message (a
+ * WhatsApp template carries at most one document header), so the line names
+ * which document this one is, followed by the optional extra text from WATI
+ * Settings. Template params can't contain newlines, hence a single line.
+ */
+export function documentLine(label, extra) {
+  const text = String(extra || '').trim();
+  return text ? `Attached: ${label} — ${text}` : `Attached: ${label}`;
+}
+
 export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pdfUrl }) {
   if (!config.wati.endpoint || !config.wati.accessToken) {
     throw new Error('WATI is not configured — set API_ENDPOINT and WATI_ACCESS_TOKEN in server/.env');
@@ -19,9 +43,7 @@ export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pd
   if (!toNumber) throw new Error('toNumber is required');
   if (!pdfUrl) throw new Error('pdfUrl is required');
 
-  // WATI expects the WhatsApp number as country-code-prefixed digits only,
-  // e.g. "919384508490" — no "+", spaces, or leading zero.
-  const digits = String(toNumber).replace(/\D/g, '');
+  const digits = toWatiNumber(toNumber);
 
   const payload = {
     template_name: config.wati.templateId,

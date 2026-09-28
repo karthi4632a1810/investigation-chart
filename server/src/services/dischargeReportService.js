@@ -23,7 +23,7 @@ import { generateDischargeSummaryPdf } from './dischargeSummaryService.js';
 import { pdfExists, reportObjectKey, reportSummaryObjectKey, getPdfPresignedUrl } from './storageService.js';
 import { getMongoCollection } from './mongo.js';
 import { getWatiSettings } from './watiSettingsService.js';
-import { sendInvestigationReportWhatsApp } from './watiService.js';
+import { sendInvestigationReportWhatsApp, documentLine } from './watiService.js';
 
 const REPORTS_COLLECTION = 'discharge_reports';
 // Patients confirmed to have zero lab orders anywhere in the EMR (checked by both
@@ -275,6 +275,44 @@ export async function markNoData(dateFolder, ipNo, name) {
   );
 }
 
+// Sent in this order, one WhatsApp message each — a template message can only
+// carry a single document header.
+const WHATSAPP_DOCUMENTS = [
+  { kind: 'lab', label: 'Lab Report', objectKey: reportObjectKey },
+  { kind: 'summary', label: 'Discharge Summary', objectKey: reportSummaryObjectKey },
+];
+// WATI/Meta fetch the PDF from this link when the message is sent; an hour
+// leaves room for WATI-side queueing without handing out a long-lived link.
+const WHATSAPP_LINK_TTL_SECONDS = 60 * 60;
+
+/**
+ * Sends a patient's documents over WhatsApp — lab report first, then discharge
+ * summary — skipping any that don't exist yet. One document failing doesn't
+ * stop the next. Returns which kinds were sent / missing / failed.
+ */
+export async function sendReportsWhatsApp({ dateFolder, ipNo, toNumber, name, note, kinds = ['lab', 'summary'] }) {
+  const result = { sent: [], missing: [], failed: [] };
+  for (const doc of WHATSAPP_DOCUMENTS.filter((d) => kinds.includes(d.kind))) {
+    const key = doc.objectKey(dateFolder, ipNo);
+    try {
+      if (!(await pdfExists(key))) {
+        result.missing.push(doc.kind);
+        continue;
+      }
+      await sendInvestigationReportWhatsApp({
+        toNumber,
+        name,
+        note: documentLine(doc.label, note),
+        pdfUrl: await getPdfPresignedUrl(key, WHATSAPP_LINK_TTL_SECONDS),
+      });
+      result.sent.push({ kind: doc.kind, label: doc.label });
+    } catch (error) {
+      result.failed.push({ kind: doc.kind, label: doc.label, error: error.message });
+    }
+  }
+  return result;
+}
+
 export async function upsertReportRecord(dateFolder, entry) {
   const collection = await getMongoCollection(REPORTS_COLLECTION);
   await collection.updateOne(
@@ -342,6 +380,9 @@ async function processDischargeDate(dateFolder, mdy) {
 
       const admissionDate = row['ADMISSION DATE'];
       const dischargeDate = row['DISCHARGE DATE'];
+      // Documents generated on this pass — the only ones auto-sent below, so a
+      // patient never gets the same document twice across scheduler ticks.
+      const generatedNow = [];
 
       // Lab investigation chart — independent of the summary below, so a
       // failure here doesn't skip attempting the summary (and vice versa).
@@ -369,28 +410,8 @@ async function processDischargeDate(dateFolder, mdy) {
           } else {
             await upsertReportRecord(dateFolder, buildReportRecord(row, result));
             summary.generated += 1;
+            generatedNow.push('lab');
             console.log(`[discharge] generated lab report for ${ipNo} (${patientName})`);
-
-            // WhatsApp auto-send — lab report only, never the discharge summary,
-            // and only when live mode is on (see watiSettingsService.js). A send
-            // failure here shouldn't affect the report itself, which already
-            // succeeded — it's logged and left for a manual resend if needed.
-            try {
-              const watiSettings = await getWatiSettings();
-              const mobile = row['MOBILE'];
-              if (watiSettings.liveEnabled && mobile) {
-                const pdfUrl = await getPdfPresignedUrl(labKey);
-                await sendInvestigationReportWhatsApp({
-                  toNumber: mobile,
-                  name: patientName,
-                  note: watiSettings.secondParam,
-                  pdfUrl,
-                });
-                console.log(`[discharge] sent WhatsApp lab report to ${mobile} for ${ipNo}`);
-              }
-            } catch (error) {
-              console.error(`[discharge] ${ipNo}: WhatsApp auto-send failed: ${error.message}`);
-            }
           }
         } catch (error) {
           summary.failed += 1;
@@ -409,6 +430,7 @@ async function processDischargeDate(dateFolder, mdy) {
               summaryDataMissing: Boolean(result.dataMissing),
             });
             summary.summaryGenerated += 1;
+            generatedNow.push('summary');
             console.log(`[discharge] generated discharge summary for ${ipNo} (${patientName})`);
           } else {
             summary.summaryFailed += 1;
@@ -417,6 +439,35 @@ async function processDischargeDate(dateFolder, mdy) {
         } catch (error) {
           summary.summaryFailed += 1;
           console.error(`[discharge] ${ipNo}: unexpected error generating summary: ${error.message}`);
+        }
+      }
+
+      // WhatsApp auto-send — only when live mode is on (watiSettingsService.js),
+      // and only the documents generated on this pass: lab report, then discharge
+      // summary, as two messages. A send failure never affects the reports
+      // themselves — it's logged and left for a manual resend.
+      if (generatedNow.length) {
+        try {
+          const watiSettings = await getWatiSettings();
+          const mobile = row['MOBILE'];
+          if (watiSettings.liveEnabled && mobile) {
+            const sendResult = await sendReportsWhatsApp({
+              dateFolder,
+              ipNo,
+              toNumber: mobile,
+              name: patientName,
+              note: watiSettings.secondParam,
+              kinds: generatedNow,
+            });
+            if (sendResult.sent.length) {
+              console.log(`[discharge] sent WhatsApp ${sendResult.sent.map((d) => d.kind).join(' + ')} to ${mobile} for ${ipNo}`);
+            }
+            for (const failure of sendResult.failed) {
+              console.error(`[discharge] ${ipNo}: WhatsApp ${failure.kind} auto-send failed: ${failure.error}`);
+            }
+          }
+        } catch (error) {
+          console.error(`[discharge] ${ipNo}: WhatsApp auto-send failed: ${error.message}`);
         }
       }
     }

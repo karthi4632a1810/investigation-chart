@@ -61,8 +61,8 @@ export default function WatiSettings() {
       <div className="section-header">
         <h2>WhatsApp (WATI) Settings</h2>
         <p className="section-subtitle">
-          Controls whether lab reports send automatically to patients over WhatsApp, or stay in manual
-          test mode.
+          Controls whether the lab report and discharge summary send automatically to patients over
+          WhatsApp (two messages, one per document), or stay in manual test mode.
         </p>
       </div>
 
@@ -74,8 +74,8 @@ export default function WatiSettings() {
               <div className="wati-toggle-title">WATI Live</div>
               <div className="wati-toggle-desc">
                 {settings.liveEnabled
-                  ? 'ON — new lab reports auto-send to each patient’s own mobile number. The manual button also sends to the real patient.'
-                  : 'OFF — nothing sends automatically. The manual button sends to the fixed test number below instead of real patients.'}
+                  ? 'ON — each new lab report and discharge summary auto-sends to the patient’s own mobile number. The manual button also sends to the real patient.'
+                  : 'OFF — nothing sends automatically. The manual button sends both documents to the fixed test number below instead of real patients.'}
               </div>
             </div>
           </div>
@@ -106,8 +106,9 @@ export default function WatiSettings() {
             </button>
           </div>
           <p className="wati-fixed-number-hint">
-            Inserted into the template's second line (the one after "report attached."), for both manual
-            and automatic sends. Defaults to a single space if left blank.
+            Each message's second line names its document ("Attached: Lab Report" / "Attached: Discharge
+            Summary"); text saved here is added after it, for both manual and automatic sends. Leave blank
+            for just the document name.
           </p>
         </form>
 
@@ -118,7 +119,7 @@ export default function WatiSettings() {
               <input
                 id="wati-fixed-number"
                 type="tel"
-                placeholder="e.g. 9384508490"
+                placeholder="e.g. +919962460782"
                 value={fixedNumberInput}
                 onChange={(e) => setFixedNumberInput(e.target.value)}
               />
@@ -128,8 +129,8 @@ export default function WatiSettings() {
             </div>
             <p className="wati-fixed-number-hint">
               While live mode is off, every manual "Send WhatsApp" click on the Discharge Reports screen
-              goes to this number instead of the patient's own — safe for testing the whole flow without
-              messaging real patients.
+              sends the lab report and discharge summary to this number instead of the patient's own — safe
+              for testing the whole flow without messaging real patients. A 10-digit number is sent as +91.
             </p>
           </form>
         )}

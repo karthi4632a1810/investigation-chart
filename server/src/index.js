@@ -12,11 +12,11 @@ import {
   runBackfillForDate,
   runDischargeCheck,
   searchReports,
+  sendReportsWhatsApp,
   startDischargeScheduler,
 } from './services/dischargeReportService.js';
 import { pdfExists, reportObjectKey, reportSummaryObjectKey } from './services/storageService.js';
 import { getWatiSettings, updateWatiSettings } from './services/watiSettingsService.js';
-import { sendInvestigationReportWhatsApp } from './services/watiService.js';
 
 import fs from 'fs';
 import path from 'path';
@@ -251,8 +251,12 @@ app.get('/api/detail/:orderid', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Invalid date or IP number' });
     }
     try {
-      if (!(await pdfExists(reportObjectKey(date, ip)))) {
-        return res.status(404).json({ ok: false, error: 'Lab report not found' });
+      const [labExists, summaryExists] = await Promise.all([
+        pdfExists(reportObjectKey(date, ip)),
+        pdfExists(reportSummaryObjectKey(date, ip)),
+      ]);
+      if (!labExists && !summaryExists) {
+        return res.status(404).json({ ok: false, error: 'No lab report or discharge summary to send' });
       }
 
       const [record, settings] = await Promise.all([getReportRecord(date, ip), getWatiSettings()]);
@@ -266,14 +270,20 @@ app.get('/api/detail/:orderid', async (req, res) => {
         });
       }
 
-      const pdfUrl = await getReportPdfUrl(date, ip);
-      const result = await sendInvestigationReportWhatsApp({
+      // Lab report, then discharge summary — two messages (see sendReportsWhatsApp).
+      const result = await sendReportsWhatsApp({
+        dateFolder: date,
+        ipNo: ip,
         toNumber,
         name: record?.name || ip,
         note: settings.secondParam,
-        pdfUrl,
       });
-      res.json({ ok: true, sentTo: toNumber, result });
+      if (result.failed.length) {
+        const sentNote = result.sent.length ? `${result.sent.map((d) => d.label).join(' and ')} sent; ` : '';
+        const failedNote = result.failed.map((f) => `${f.label} failed: ${f.error}`).join('; ');
+        return res.status(502).json({ ok: false, sentTo: toNumber, ...result, error: sentNote + failedNote });
+      }
+      res.json({ ok: true, sentTo: toNumber, ...result });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
     }
