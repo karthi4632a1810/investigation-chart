@@ -56,11 +56,11 @@ export default function App() {
   // Set by the AI assistant to open a screen at a given date / filter / query;
   // the screen applies it when `id` changes.
   const [navRequest, setNavRequest] = useState(null);
-  // ?dev=1 / ?admin=1 (or =true) shows Ask AI and Lab Search — see utils/devMode.js.
+  // ?dev=1 / ?admin=1 (or =true) shows Ask AI and Lab Finder — see utils/devMode.js.
   const devMode = useDevMode();
 
   useEffect(() => {
-    if (!devMode && view === 'search') setView('reports');
+    if (!devMode && view === 'labFinder') setView('reports');
   }, [devMode, view]);
 
   function handleAssistantNavigate({ view: nextView, date, filter, query }) {
@@ -215,16 +215,14 @@ export default function App() {
 
         <div className="page-header-actions">
           <nav className="nav-segmented-control no-print" aria-label="Main Navigation">
-            {devMode && (
-              <button
-                type="button"
-                className={`nav-segment-btn ${view === 'search' ? 'active' : ''}`}
-                onClick={() => setView('search')}
-              >
-                <SearchIcon size={16} />
-                <span>Lab Search</span>
-              </button>
-            )}
+            <button
+              type="button"
+              className={`nav-segment-btn ${view === 'search' ? 'active' : ''}`}
+              onClick={() => setView('search')}
+            >
+              <SearchIcon size={16} />
+              <span>Lab Search</span>
+            </button>
             <button
               type="button"
               className={`nav-segment-btn ${view === 'reports' ? 'active' : ''}`}
@@ -233,14 +231,16 @@ export default function App() {
               <FilePdfIcon size={16} />
               <span>Discharge Reports</span>
             </button>
-            <button
-              type="button"
-              className={`nav-segment-btn ${view === 'labFinder' ? 'active' : ''}`}
-              onClick={() => setView('labFinder')}
-            >
-              <FlaskIcon size={16} />
-              <span>Lab Finder</span>
-            </button>
+            {devMode && (
+              <button
+                type="button"
+                className={`nav-segment-btn ${view === 'labFinder' ? 'active' : ''}`}
+                onClick={() => setView('labFinder')}
+              >
+                <FlaskIcon size={16} />
+                <span>Lab Finder</span>
+              </button>
+            )}
             <button
               type="button"
               className={`nav-segment-btn ${view === 'wati' ? 'active' : ''}`}
@@ -266,11 +266,11 @@ export default function App() {
       <main className="page">
         {view === 'reports' && <DischargeReports navRequest={navRequest} />}
 
-        {view === 'labFinder' && <LabFinder navRequest={navRequest} />}
+        {devMode && view === 'labFinder' && <LabFinder navRequest={navRequest} />}
 
         {view === 'wati' && <WatiSettings />}
 
-        {devMode && view === 'search' && (
+        {view === 'search' && (
           <div className="search-view-container">
             <div className="section-header">
               <h2>Lab Result Search & Diagnostics Summary</h2>

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 const ON = new Set(['1', 'true', 'yes', 'on']);
 
 /**
- * Staff-only extras (Ask AI, Lab Search) show when the address has
+ * Staff-only extras (Ask AI, Lab Finder) show when the address has
  * ?dev=1 / ?dev=true / ?admin=1 / ?admin=true, and hide otherwise
  * (including ?dev=0 / ?dev=false). This only changes what the page shows —
  * the API stays behind the normal login either way.
