@@ -168,21 +168,6 @@ function Blocks({ blocks, onNavigate }) {
 }
 
 export default function AssistantPanel({ onNavigate }) {
-  const [showAi, setShowAi] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    const val = new URLSearchParams(window.location.search).get('ai');
-    return val === 'true' || val === '1';
-  });
-
-  useEffect(() => {
-    const check = () => {
-      const val = new URLSearchParams(window.location.search).get('ai');
-      setShowAi(val === 'true' || val === '1');
-    };
-    window.addEventListener('popstate', check);
-    return () => window.removeEventListener('popstate', check);
-  }, []);
-
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -226,7 +211,6 @@ export default function AssistantPanel({ onNavigate }) {
     }
   }
 
-  if (!showAi) return null;
 
   return (
     <>

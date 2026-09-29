@@ -17,6 +17,7 @@ import DischargeReports from './components/DischargeReports';
 import WatiSettings from './components/WatiSettings';
 import LabFinder from './components/LabFinder';
 import AssistantPanel from './components/AssistantPanel';
+import { useDevMode } from './utils/devMode';
 import {
   FilePdfIcon,
   FlaskIcon,
@@ -55,6 +56,12 @@ export default function App() {
   // Set by the AI assistant to open a screen at a given date / filter / query;
   // the screen applies it when `id` changes.
   const [navRequest, setNavRequest] = useState(null);
+  // ?dev=1 / ?admin=1 (or =true) shows Ask AI and Lab Search — see utils/devMode.js.
+  const devMode = useDevMode();
+
+  useEffect(() => {
+    if (!devMode && view === 'search') setView('reports');
+  }, [devMode, view]);
 
   function handleAssistantNavigate({ view: nextView, date, filter, query }) {
     if (!nextView) return;
@@ -208,14 +215,16 @@ export default function App() {
 
         <div className="page-header-actions">
           <nav className="nav-segmented-control no-print" aria-label="Main Navigation">
-            <button
-              type="button"
-              className={`nav-segment-btn ${view === 'search' ? 'active' : ''}`}
-              onClick={() => setView('search')}
-            >
-              <SearchIcon size={16} />
-              <span>Lab Search</span>
-            </button>
+            {devMode && (
+              <button
+                type="button"
+                className={`nav-segment-btn ${view === 'search' ? 'active' : ''}`}
+                onClick={() => setView('search')}
+              >
+                <SearchIcon size={16} />
+                <span>Lab Search</span>
+              </button>
+            )}
             <button
               type="button"
               className={`nav-segment-btn ${view === 'reports' ? 'active' : ''}`}
@@ -261,7 +270,7 @@ export default function App() {
 
         {view === 'wati' && <WatiSettings />}
 
-        {view === 'search' && (
+        {devMode && view === 'search' && (
           <div className="search-view-container">
             <div className="section-header">
               <h2>Lab Result Search & Diagnostics Summary</h2>
@@ -405,7 +414,7 @@ export default function App() {
         )}
       </main>
 
-      <AssistantPanel onNavigate={handleAssistantNavigate} />
+      {devMode && <AssistantPanel onNavigate={handleAssistantNavigate} />}
     </div>
   );
 }

@@ -16,28 +16,39 @@ import { loadReportIndex } from './dischargeReportService.js';
 import { labResultsCoverage, listLabTests, normaliseQuery, searchLabResults, hasCriteria } from './labResultsService.js';
 
 const GROQ_KEY = process.env.GROQ_API_KEY || process.env.GROQ_API;
+const GROQ_URL = 'https://api.groq.com/openai/v1';
+const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
 
-// Tried in order. Groq's free tier limits tokens per minute per model, so a
-// second Groq model (separate limit) comes before falling back to Gemini.
+function listFromEnv(value, fallback) {
+  const list = String(value || '')
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+  return list.length ? list : fallback;
+}
+
+// Tried in order. Free tiers limit requests/tokens per model, and each model
+// has its own limit — so several models from each provider, before the
+// rule-based answer at the very end (ruleBasedAnswer) that needs no AI at all.
+// Override with GROQ_MODELS / GEMINI_CHAT_MODELS (comma-separated).
 const PROVIDERS = [
-  {
-    name: 'groq',
-    baseUrl: 'https://api.groq.com/openai/v1',
+  ...listFromEnv(process.env.GROQ_MODELS, ['openai/gpt-oss-120b', 'qwen/qwen3.8-27b', 'openai/gpt-oss-20b']).map((model) => ({
+    name: `groq:${model}`,
+    baseUrl: GROQ_URL,
     key: GROQ_KEY,
-    model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
-  },
-  {
-    name: 'groq-fallback',
-    baseUrl: 'https://api.groq.com/openai/v1',
-    key: GROQ_KEY,
-    model: process.env.GROQ_FALLBACK_MODEL || 'qwen/qwen3.8-27b',
-  },
-  {
-    name: 'gemini',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    model,
+  })),
+  ...listFromEnv(process.env.GEMINI_CHAT_MODELS, [
+    config.gemini?.model || 'gemini-3.6-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-flash-lite-latest',
+  ]).map((model) => ({
+    name: `gemini:${model}`,
+    baseUrl: GEMINI_URL,
     key: process.env.GEMINI_API_KEY,
-    model: process.env.GEMINI_CHAT_MODEL || config.gemini?.model || 'gemini-3.6-flash',
-  },
+    model,
+  })),
 ].filter((p) => p.key);
 
 const MAX_TOOL_ROUNDS = 6;
@@ -322,45 +333,62 @@ const handlers = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// A model that just said "rate limited" / "overloaded" is skipped for a while,
+// so the next question goes straight to one that works instead of waiting on it.
+const cooldownUntil = new Map();
+
+class ProviderError extends Error {
+  constructor(message, { busy = false, retryAfter = 0 } = {}) {
+    super(message);
+    this.busy = busy;
+    this.retryAfter = retryAfter;
+  }
+}
+
 async function callProvider(provider, messages, tools) {
-  // One retry when the provider says the rate limit clears within a few seconds.
+  // One retry when the provider says the limit clears within a few seconds.
   for (let attempt = 1; ; attempt++) {
     const res = await fetch(`${provider.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${provider.key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: provider.model, messages, tools, tool_choice: 'auto', temperature: 0.2 }),
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(25_000),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
       const message = data.choices?.[0]?.message;
-      if (!message) throw new Error('empty response');
+      if (!message) throw new ProviderError('empty response');
       return message;
     }
     const detail = data?.error?.message || data?.[0]?.error?.message || `HTTP ${res.status}`;
-    const wait = parseFloat(/try again in ([\d.]+)s/i.exec(detail)?.[1]);
-    if (res.status === 429 && attempt === 1 && wait > 0 && wait <= 6) {
+    const wait = parseFloat(/try again in ([\d.]+)s/i.exec(detail)?.[1]) || 0;
+    if (res.status === 429 && attempt === 1 && wait > 0 && wait <= 4) {
       await sleep(wait * 1000 + 250);
       continue;
     }
-    throw new Error(detail);
+    const busy = res.status === 429 || res.status === 503;
+    throw new ProviderError(detail, { busy, retryAfter: wait });
   }
 }
 
+/** First model that answers wins; returns null if none could. */
 async function chatCompletion(messages) {
-  if (!PROVIDERS.length) throw new Error('No AI key configured — set GROQ_API_KEY or GEMINI_API_KEY');
   const tools = TOOLS.map((t) => ({ type: 'function', function: t }));
-  let lastError;
-  for (const provider of PROVIDERS) {
+  const now = Date.now();
+  const ready = PROVIDERS.filter((p) => (cooldownUntil.get(p.name) || 0) <= now);
+  // If every model is cooling down, try them anyway rather than give up.
+  for (const provider of ready.length ? ready : PROVIDERS) {
     try {
-      return await callProvider(provider, messages, tools);
+      const message = await callProvider(provider, messages, tools);
+      cooldownUntil.delete(provider.name);
+      return message;
     } catch (error) {
-      lastError = error;
-      console.warn(`[assistant] ${provider.name}: ${error.message.slice(0, 200)}`);
+      const seconds = error.busy ? Math.max(error.retryAfter || 0, 45) : 20;
+      cooldownUntil.set(provider.name, Date.now() + seconds * 1000);
+      console.warn(`[assistant] ${provider.name}: ${String(error.message).slice(0, 160)}`);
     }
   }
-  const busy = /rate limit|quota|429/i.test(lastError?.message || '');
-  throw new Error(busy ? 'The AI service is busy right now — please try again in a minute.' : 'The AI service is not responding right now — please try again.');
+  return null;
 }
 
 function sanitiseHistory(messages) {
@@ -376,6 +404,129 @@ function sanitiseHistory(messages) {
  *                 so "download that as Excel" knows what "that" is
  * @returns { reply, blocks }
  */
+// ---- Rule-based answer: used only when no AI model responds ----------------
+
+const HOW_TO = `Here's how to do the common tasks:
+1. Reports for a patient: open Discharge Reports, pick the discharge date, and type the name or IP number in the filter box.
+2. Send reports on WhatsApp: press the green WhatsApp button on the patient's card (lab report + discharge summary go as two messages).
+3. Find patients by lab result: open Lab Finder, enter the test (e.g. urine glucose), the result (e.g. Negative) and dates, then Search. Download as PDF, Excel, Word or CSV, or share on WhatsApp.
+4. Test or live WhatsApp sending: WATI Settings.`;
+
+const FORMAT_WORDS = { pdf: 'pdf', excel: 'xlsx', xlsx: 'xlsx', xls: 'xlsx', spreadsheet: 'xlsx', word: 'docx', docx: 'docx', doc: 'docx', csv: 'csv' };
+const VALUE_WORDS = ['non reactive', 'non-reactive', 'negative', 'positive', 'reactive', 'absent', 'present', 'trace', 'nil'];
+const STATUS_WORDS = { high: 'high', raised: 'high', elevated: 'high', low: 'low', abnormal: 'abnormal', normal: 'normal' };
+const STOP_WORDS = new Set(
+  'a an the of in on at to for from with and or by is are was were who which what whose had has have show list find get give me all any patient patients their his her result results report reports lab labs test tests value values level levels between during date dates discharged discharge last this past week weeks month months day days today yesterday please can you i want need see search who find check'.split(' '),
+);
+
+function isoDaysAgo(days) {
+  const now = new Date(Date.now() + 5.5 * 3600 * 1000 - days * 86400 * 1000);
+  return now.toISOString().slice(0, 10);
+}
+
+/** Dates mentioned in the text, as YYYY-MM-DD, in order. */
+function findDates(text) {
+  const dates = [];
+  const re = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b|\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const [y, mo, d] = m[1] ? [m[1], m[2], m[3]] : [m[6], m[5], m[4]];
+    dates.push(`${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
+  }
+  if (/\btoday\b/i.test(text)) dates.push(isoDaysAgo(0));
+  if (/\byesterday\b/i.test(text)) dates.push(isoDaysAgo(1));
+  return dates;
+}
+
+function dateRange(text) {
+  const dates = findDates(text).sort();
+  if (dates.length >= 2) return { from: dates[0], to: dates[dates.length - 1] };
+  if (dates.length === 1) return { from: dates[0], to: dates[0] };
+  if (/\b(last|past)\s+week\b/i.test(text)) return { from: isoDaysAgo(7), to: isoDaysAgo(0) };
+  if (/\b(last|past)\s+month\b|\bthis month\b/i.test(text)) return { from: isoDaysAgo(30), to: isoDaysAgo(0) };
+  return {};
+}
+
+async function ruleBasedAnswer(messages, ctx) {
+  const text = String([...messages].reverse().find((m) => m.role === 'user')?.content || '');
+  const lower = text.toLowerCase();
+  const blocks = [];
+  const run = async (tool, args) => {
+    const outcome = await handlers[tool](args, ctx);
+    if (outcome.block) blocks.push(outcome.block);
+    return outcome.forModel;
+  };
+  const busyNote = 'The AI helper is busy right now, so I ran a direct search.';
+
+  // WhatsApp share with a number
+  const phone = /(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}\b/.exec(text)?.[0];
+  if (/whats\s*app|share|send/i.test(text) && (ctx.lastLabQuery || ctx.lastPatient || /\bip\s*\d/i.test(text))) {
+    const ipNo = /\bip\s*0?\d{6,}\b/i.exec(text)?.[0]?.replace(/\s+/g, '').toUpperCase();
+    const target = ipNo || (!ctx.lastLabQuery && ctx.lastPatient) ? 'patient' : 'lab_results';
+    const r = await run('offer_whatsapp_share', { target, to_number: phone, ip_no: ipNo });
+    if (!r.error) return { reply: `${busyNote} Check the number, then press Send.`, blocks };
+  }
+
+  // Download in a format
+  const formatWord = Object.keys(FORMAT_WORDS).find((w) => new RegExp(`\\b${w}\\b`, 'i').test(text));
+  if (formatWord && /download|export|\bas\b|file|get/i.test(text) && (ctx.lastLabQuery || ctx.lastPatient || /\bip\s*\d/i.test(text))) {
+    const ipNo = /\bip\s*0?\d{6,}\b/i.exec(text)?.[0]?.replace(/\s+/g, '').toUpperCase();
+    const target = ipNo || (!ctx.lastLabQuery && ctx.lastPatient) ? 'patient' : 'lab_results';
+    const r = await run('offer_download', { format: FORMAT_WORDS[formatWord], target, ip_no: ipNo });
+    if (!r.error) return { reply: `${busyNote} Your download is below.`, blocks };
+  }
+
+  // A specific patient by IP number or UHID
+  const ip = /\bip\s*0?\d{6,}\b/i.exec(text)?.[0]?.replace(/\s+/g, '').toUpperCase();
+  const uhid = /\b(?:uhid|reg(?:istration)?\s*(?:no|number)?)\D{0,4}(\d{5,})/i.exec(text)?.[1];
+  if (ip || uhid) {
+    const r = await run('find_patient', { query: ip || uhid });
+    return { reply: r.count ? `${busyNote} Found ${r.count} match${r.count === 1 ? '' : 'es'} — shown below.` : `${busyNote} No discharged patient found for ${ip || uhid}.`, blocks };
+  }
+
+  // Discharges on a date
+  const range = dateRange(text);
+  if (/discharg/i.test(lower) && range.from && !/\b(glucose|haemoglobin|hemoglobin|creatinine|sodium|potassium|platelet|urea|wbc|rbc)\b/i.test(lower)) {
+    const r = await run('list_discharges', { date: range.to });
+    return { reply: r.count ? `${busyNote} ${r.count} patient${r.count === 1 ? '' : 's'} discharged on ${range.to.split('-').reverse().join('-')} — shown below.` : `${busyNote} No discharges recorded for that date.`, blocks };
+  }
+
+  // How-to questions
+  if (/^\s*(how|where|what is|what's|help)\b/i.test(text)) {
+    return { reply: HOW_TO, blocks };
+  }
+
+  // Lab search: test words + value / flag + dates
+  const value = VALUE_WORDS.find((v) => lower.includes(v));
+  const statusWord = Object.keys(STATUS_WORDS).find((w) => new RegExp(`\\b${w}\\b`).test(lower));
+  let rest = lower;
+  for (const v of VALUE_WORDS) rest = rest.split(v).join(' ');
+  rest = rest
+    .replace(/\b\d{4}-\d{1,2}-\d{1,2}\b|\b\d{1,2}[-/.]\d{1,2}[-/.]\d{4}\b/g, ' ')
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w && !STOP_WORDS.has(w) && !STATUS_WORDS[w] && !/^\d+$/.test(w))
+    .join(' ');
+  if (rest || value || statusWord) {
+    const r = await run('search_lab_results', { test: rest, value, status: statusWord ? STATUS_WORDS[statusWord] : undefined, from: range.from, to: range.to });
+    // Nothing found from bare words (no result/flag given) is more likely not
+    // a lab question at all — give the usage hint instead of an empty table.
+    if (!r.error && !r.total && !value && !statusWord) blocks.length = 0;
+    else if (!r.error) {
+      return {
+        reply: r.total
+          ? `${busyNote} ${r.total} result${r.total === 1 ? '' : 's'} for ${r.patients} patient${r.patients === 1 ? '' : 's'} — shown below. You can download them or share on WhatsApp.`
+          : `${busyNote} No matching lab results.${r.similarTests?.length ? ` Similar tests: ${r.similarTests.slice(0, 4).join(', ')}.` : ''}`,
+        blocks,
+      };
+    }
+  }
+
+  return {
+    reply: `The AI helper is busy right now. Try a direct question like "IP07028148 lab report", "discharges on ${isoDaysAgo(1).split('-').reverse().join('-')}" or "urine glucose negative last week" — or use Lab Finder.`,
+    blocks,
+  };
+}
+
 function sanitiseContext(context = {}) {
   const ctx = {};
   if (context.lastLabQuery && typeof context.lastLabQuery === 'object') {
@@ -396,6 +547,12 @@ export async function runAssistant({ messages, context = {} }) {
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const message = await chatCompletion(convo);
+    if (!message) {
+      // No AI model answered. If tools already ran this turn, show what they
+      // found; otherwise answer the question with the rule-based matcher.
+      if (blocks.length) return { reply: 'Here is what I found.', blocks, fallback: true };
+      return { ...(await ruleBasedAnswer(messages, ctx)), fallback: true };
+    }
     const calls = message.tool_calls || [];
     if (!calls.length) {
       return { reply: String(message.content || '').trim() || 'Done.', blocks };
