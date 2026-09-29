@@ -22,6 +22,14 @@ import { hasCriteria, labResultsCoverage, listLabTests, normaliseQuery, searchLa
 import { buildExport, EXPORT_FORMATS, exportFileName, shareLabResultsOnWhatsApp } from './services/labExportService.js';
 import { toWatiNumber } from './services/watiService.js';
 import { runAssistant } from './services/assistantService.js';
+import {
+  getWhatsappMessage,
+  listWhatsappMessages,
+  pollWhatsAppStatuses,
+  startWhatsAppStatusPoller,
+  whatsappActivity,
+  whatsappSummary,
+} from './services/whatsappLogService.js';
 
 import fs from 'fs';
 import path from 'path';
@@ -304,6 +312,13 @@ app.get('/api/detail/:orderid', async (req, res) => {
         name: record?.name || ip,
         note: settings.secondParam,
         kinds,
+        log: {
+          trigger: 'manual',
+          triggeredBy: getSessionUser(req),
+          patientName: record?.name || '',
+          department: record?.department || '',
+          liveMode: settings.liveEnabled,
+        },
       });
       if (result.failed.length) {
         const sentNote = result.sent.length ? `${result.sent.map((d) => d.label).join(' and ')} sent; ` : '';
@@ -376,7 +391,11 @@ app.get('/api/detail/:orderid', async (req, res) => {
     try {
       const search = await searchLabResults(query);
       if (!search.total) return res.status(404).json({ ok: false, error: 'No results to share' });
-      await shareLabResultsOnWhatsApp(search, { toNumber, recipientName: String(req.body?.recipientName || '').slice(0, 60) });
+      await shareLabResultsOnWhatsApp(search, {
+        toNumber,
+        recipientName: String(req.body?.recipientName || '').slice(0, 60),
+        log: { trigger: 'share', via: shareVia(req.body?.via), triggeredBy: getSessionUser(req) },
+      });
       res.json({ ok: true, sentTo: `+${toNumber}` });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
@@ -411,11 +430,80 @@ app.get('/api/detail/:orderid', async (req, res) => {
         name: record?.name || ip,
         note: settings.secondParam,
         kinds,
+        log: {
+          trigger: 'share',
+          via: shareVia(req.body?.via),
+          triggeredBy: getSessionUser(req),
+          patientName: record?.name || '',
+          department: record?.department || '',
+        },
       });
       if (result.failed.length) {
         return res.status(502).json({ ok: false, ...result, error: result.failed.map((f) => `${f.label}: ${f.error}`).join('; ') });
       }
       res.json({ ok: true, sentTo: `+${toNumber}`, ...result });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  function shareVia(via) {
+    return ['lab_finder', 'assistant', 'reports'].includes(via) ? via : null;
+  }
+
+  /**
+   * /admin WhatsApp monitor (whatsappLogService.js): analytics, message list,
+   * one message's timeline, the live activity feed, and an on-demand WATI
+   * status check. Behind the login like everything else.
+   */
+  const adminQuery = (req) => ({
+    from: req.query.from,
+    to: req.query.to,
+    status: req.query.status,
+    document: req.query.document,
+    trigger: req.query.trigger,
+    q: req.query.q,
+    page: req.query.page,
+    limit: req.query.limit,
+  });
+
+  app.get('/api/admin/whatsapp/summary', async (req, res) => {
+    try {
+      res.json({ ok: true, ...(await whatsappSummary(adminQuery(req))) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.get('/api/admin/whatsapp/messages', async (req, res) => {
+    try {
+      res.json({ ok: true, ...(await listWhatsappMessages(adminQuery(req))) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.get('/api/admin/whatsapp/messages/:id', async (req, res) => {
+    try {
+      const message = await getWhatsappMessage(req.params.id);
+      if (!message) return res.status(404).json({ ok: false, error: 'Message not found' });
+      res.json({ ok: true, message });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.get('/api/admin/whatsapp/activity', async (req, res) => {
+    try {
+      res.json({ ok: true, events: await whatsappActivity(parseInt(req.query.limit, 10) || 25) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.post('/api/admin/whatsapp/refresh', async (_req, res) => {
+    try {
+      res.json({ ok: true, poll: await pollWhatsAppStatuses() });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
     }
@@ -453,3 +541,9 @@ app.listen(config.port, () => {
 });
 
 startDischargeScheduler();
+
+// WhatsApp monitor: import earlier test-number messages once, then check
+// delivered / read status every minute.
+getWatiSettings()
+  .then((settings) => startWhatsAppStatusPoller([settings.fixedNumber]))
+  .catch((error) => console.warn(`[whatsapp] status poller not started: ${error.message}`));

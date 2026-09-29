@@ -193,13 +193,51 @@ export async function downloadLabResults(query, format) {
   return name;
 }
 
-export function shareLabResults(query, toNumber, recipientName) {
-  return postJson(`${API_BASE}/lab-results/share`, { query, toNumber, recipientName });
+export function shareLabResults(query, toNumber, recipientName, via) {
+  return postJson(`${API_BASE}/lab-results/share`, { query, toNumber, recipientName, via });
 }
 
 /** One patient's lab report + discharge summary to a number the user typed. */
-export function sharePatientReports(date, ipNo, toNumber) {
-  return postJson(`${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/share`, { toNumber });
+export function sharePatientReports(date, ipNo, toNumber, via) {
+  return postJson(`${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/share`, { toNumber, via });
+}
+
+// ---- /admin WhatsApp monitor ---------------------------------------------
+
+async function getJson(url) {
+  const res = await apiFetch(url);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+function adminParams(params) {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(params || {})) {
+    const value = Array.isArray(v) ? v.join(',') : v;
+    if (value !== undefined && value !== null && String(value) !== '') q.set(k, value);
+  }
+  return q.toString();
+}
+
+export function fetchWhatsappSummary(params) {
+  return getJson(`${API_BASE}/admin/whatsapp/summary?${adminParams(params)}`);
+}
+
+export function fetchWhatsappMessages(params) {
+  return getJson(`${API_BASE}/admin/whatsapp/messages?${adminParams(params)}`);
+}
+
+export function fetchWhatsappMessage(id) {
+  return getJson(`${API_BASE}/admin/whatsapp/messages/${encodeURIComponent(id)}`).then((d) => d.message);
+}
+
+export function fetchWhatsappActivity(limit = 20) {
+  return getJson(`${API_BASE}/admin/whatsapp/activity?limit=${limit}`).then((d) => d.events);
+}
+
+export function refreshWhatsappStatuses() {
+  return postJson(`${API_BASE}/admin/whatsapp/refresh`, {});
 }
 
 // ---- Ask AI ---------------------------------------------------------------

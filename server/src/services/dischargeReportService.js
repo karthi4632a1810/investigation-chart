@@ -291,7 +291,7 @@ const WHATSAPP_LINK_TTL_SECONDS = 60 * 60;
  * summary — skipping any that don't exist yet. One document failing doesn't
  * stop the next. Returns which kinds were sent / missing / failed.
  */
-export async function sendReportsWhatsApp({ dateFolder, ipNo, toNumber, name, note, kinds = ['lab', 'summary'] }) {
+export async function sendReportsWhatsApp({ dateFolder, ipNo, toNumber, name, note, kinds = ['lab', 'summary'], log }) {
   const result = { sent: [], missing: [], failed: [] };
   for (const doc of WHATSAPP_DOCUMENTS.filter((d) => kinds.includes(d.kind))) {
     const key = doc.objectKey(dateFolder, ipNo);
@@ -305,6 +305,7 @@ export async function sendReportsWhatsApp({ dateFolder, ipNo, toNumber, name, no
         name,
         note: documentLine(doc.label, note),
         pdfUrl: await getPdfPresignedUrl(key, WHATSAPP_LINK_TTL_SECONDS),
+        log: log && { ...log, document: doc.kind, documentLabel: doc.label, dischargeDate: dateFolder, ipNo },
       });
       result.sent.push({ kind: doc.kind, label: doc.label });
     } catch (error) {
@@ -464,6 +465,7 @@ async function processDischargeDate(dateFolder, mdy) {
               name: patientName,
               note: watiSettings.secondParam,
               kinds: generatedNow,
+              log: { trigger: 'auto', triggeredBy: 'system', patientName, department: row['DEPARTMENT'] || '', liveMode: true },
             });
             if (sendResult.sent.length) {
               console.log(`[discharge] sent WhatsApp ${sendResult.sent.map((d) => d.kind).join(' + ')} to ${mobile} for ${ipNo}`);

@@ -5,6 +5,7 @@
  * template via GET /api/v1/getMessageTemplates).
  */
 import { config } from '../config.js';
+import { logSendResult, logSendStart } from './whatsappLogService.js';
 
 // WATI's edge (Cloudflare) rejects requests with no/generic User-Agent with a
 // 403 "error code: 1010" bot-block — confirmed while testing this directly.
@@ -36,7 +37,13 @@ export function documentLine(label, extra) {
   return text ? `Attached: ${label} — ${text}` : `Attached: ${label}`;
 }
 
-export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pdfUrl }) {
+/**
+ * @param log optional context for the WhatsApp monitor (whatsappLogService.js):
+ *   { trigger, via, triggeredBy, document, documentLabel, dischargeDate, ipNo,
+ *     patientName, department, liveMode }. Every send with it is recorded as
+ *   pending → sent / failed, and later delivered / read.
+ */
+export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pdfUrl, log }) {
   if (!config.wati.endpoint || !config.wati.accessToken) {
     throw new Error('WATI is not configured — set API_ENDPOINT and WATI_ACCESS_TOKEN in server/.env');
   }
@@ -55,6 +62,21 @@ export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pd
     ],
   };
 
+  const logId = log
+    ? await logSendStart({ ...log, toNumber: digits, template: config.wati.templateId, patientName: log.patientName ?? name }).catch(() => null)
+    : null;
+
+  try {
+    const data = await postTemplate(digits, payload);
+    await logSendResult(logId, { ok: true, response: data }).catch(() => {});
+    return data;
+  } catch (error) {
+    await logSendResult(logId, { ok: false, error: error.message }).catch(() => {});
+    throw error;
+  }
+}
+
+async function postTemplate(digits, payload) {
   const res = await fetch(`${config.wati.endpoint}/api/v1/sendTemplateMessage?whatsappNumber=${digits}`, {
     method: 'POST',
     headers: {
@@ -70,6 +92,9 @@ export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pd
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.result !== true) {
     throw new Error(data?.info || data?.message || `WATI responded ${res.status}`);
+  }
+  if (data.validWhatsAppNumber === false) {
+    throw new Error(`+${digits} is not a WhatsApp number`);
   }
   return data;
 }

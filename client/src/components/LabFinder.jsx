@@ -239,7 +239,7 @@ export default function LabFinder({ navRequest }) {
             </div>
           </div>
 
-          {result.total > 0 && <ExportShareBar query={result.query} />}
+          {result.total > 0 && <ExportShareBar query={result.query} via="lab_finder" />}
 
           {result.total > 0 ? (
             <div className="table-wrap lf-table-wrap">

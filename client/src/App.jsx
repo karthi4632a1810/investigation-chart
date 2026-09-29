@@ -17,9 +17,11 @@ import DischargeReports from './components/DischargeReports';
 import WatiSettings from './components/WatiSettings';
 import LabFinder from './components/LabFinder';
 import AssistantPanel from './components/AssistantPanel';
+import AdminDashboard from './components/admin/AdminDashboard';
 import { useDevMode } from './utils/devMode';
 import {
   FilePdfIcon,
+  ChartIcon,
   FlaskIcon,
   HospitalIcon,
   LogoutIcon,
@@ -52,7 +54,10 @@ function saveRecentSearch(regNo) {
 
 export default function App() {
   const [hospital, setHospital] = useState(null);
-  const [view, setView] = useState('reports'); // 'search' | 'reports' | 'labFinder' | 'wati'
+  // /admin opens the WhatsApp monitor; every other path the normal screens.
+  const [view, setView] = useState(() =>
+    typeof window !== 'undefined' && window.location.pathname.replace(/\/+$/, '') === '/admin' ? 'admin' : 'reports',
+  ); // 'search' | 'reports' | 'labFinder' | 'wati' | 'admin'
   // Set by the AI assistant to open a screen at a given date / filter / query;
   // the screen applies it when `id` changes.
   const [navRequest, setNavRequest] = useState(null);
@@ -62,6 +67,23 @@ export default function App() {
   useEffect(() => {
     if (!devMode && view === 'labFinder') setView('reports');
   }, [devMode, view]);
+
+  // Keep the address in step with the screen (/admin ↔ /), keeping ?dev etc.
+  useEffect(() => {
+    const path = view === 'admin' ? '/admin' : '/';
+    if (window.location.pathname !== path) {
+      window.history.pushState(null, '', `${path}${window.location.search}`);
+    }
+  }, [view]);
+
+  useEffect(() => {
+    const onPop = () => {
+      if (window.location.pathname.replace(/\/+$/, '') === '/admin') setView('admin');
+      else setView((v) => (v === 'admin' ? 'reports' : v));
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
 
   function handleAssistantNavigate({ view: nextView, date, filter, query }) {
     if (!nextView) return;
@@ -249,6 +271,16 @@ export default function App() {
               <WhatsAppIcon size={16} />
               <span>WATI Settings</span>
             </button>
+            {(devMode || view === 'admin') && (
+              <button
+                type="button"
+                className={`nav-segment-btn ${view === 'admin' ? 'active' : ''}`}
+                onClick={() => setView('admin')}
+              >
+                <ChartIcon size={16} />
+                <span>Monitor</span>
+              </button>
+            )}
           </nav>
 
           <button
@@ -269,6 +301,8 @@ export default function App() {
         {devMode && view === 'labFinder' && <LabFinder navRequest={navRequest} />}
 
         {view === 'wati' && <WatiSettings />}
+
+        {view === 'admin' && <AdminDashboard />}
 
         {view === 'search' && (
           <div className="search-view-container">

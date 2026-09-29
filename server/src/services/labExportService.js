@@ -279,7 +279,7 @@ export async function buildExport(search, format) {
  * "investigation" template (one document per message). The PDF is uploaded
  * under exports/ and linked for an hour — long enough for WATI to fetch it.
  */
-export async function shareLabResultsOnWhatsApp(search, { toNumber, recipientName }) {
+export async function shareLabResultsOnWhatsApp(search, { toNumber, recipientName, log }) {
   const pdf = await toPdf(search);
   const tmp = path.join(os.tmpdir(), `lab-share-${crypto.randomUUID()}.pdf`);
   const day = new Date().toISOString().slice(0, 10);
@@ -295,5 +295,11 @@ export async function shareLabResultsOnWhatsApp(search, { toNumber, recipientNam
     name: recipientName || 'Sir/Madam',
     note: documentLine('Lab Results Report', `${search.total} results, ${search.patients} patients`),
     pdfUrl: await getPdfPresignedUrl(objectKey, 60 * 60),
+    log: log && {
+      ...log,
+      document: 'lab_results',
+      documentLabel: 'Lab Results Report',
+      patientName: `${search.total} results · ${search.patients} patients`,
+    },
   });
 }

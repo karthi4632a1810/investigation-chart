@@ -321,3 +321,14 @@ export function SendIcon({ className = "icon", size = 16 }) {
     </svg>
   );
 }
+
+export function ChartIcon({ className = "icon", size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      <path d="M3 3v18h18" />
+      <rect x="7" y="12" width="3" height="6" rx="1" />
+      <rect x="12" y="8" width="3" height="10" rx="1" />
+      <rect x="17" y="5" width="3" height="13" rx="1" />
+    </svg>
+  );
+}

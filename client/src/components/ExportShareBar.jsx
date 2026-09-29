@@ -17,7 +17,7 @@ import { CheckIcon, FilePdfIcon, WhatsAppIcon } from './Icons';
  * Give either `query` (a Lab Finder search) or `patient` (one discharge record:
  * PDFs are the patient's own reports; Excel/Word/CSV are their lab values).
  */
-export default function ExportShareBar({ query, patient, highlight, shareNumber, openShare = false, compact = false }) {
+export default function ExportShareBar({ query, patient, highlight, shareNumber, openShare = false, compact = false, via }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [done, setDone] = useState('');
@@ -51,8 +51,8 @@ export default function ExportShareBar({ query, patient, highlight, shareNumber,
     setDone('');
     try {
       const result = patient
-        ? await sharePatientReports(patient.date, patient.ipNo, number)
-        : await shareLabResults(query, number);
+        ? await sharePatientReports(patient.date, patient.ipNo, number, via)
+        : await shareLabResults(query, number, undefined, via);
       setDone(`Sent on WhatsApp to ${result.sentTo}`);
       setSharing(false);
     } catch (err) {

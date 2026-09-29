@@ -42,7 +42,7 @@ function PatientsBlock({ block, onNavigate }) {
             {p.regNo && <span>UHID {p.regNo}</span>}
             {p.department && <span>{p.department}</span>}
           </div>
-          <ExportShareBar patient={p} compact />
+          <ExportShareBar via="assistant" patient={p} compact />
         </div>
       ))}
       <div className="ai-block-links">
@@ -104,7 +104,7 @@ function LabResultsBlock({ block, onNavigate }) {
           {block.total > 6 ? `See all ${block.total} in Lab Finder` : 'Open in Lab Finder'}
         </button>
       </div>
-      <ExportShareBar query={block.query} compact />
+      <ExportShareBar via="assistant" query={block.query} compact />
     </div>
   );
 }
@@ -131,7 +131,7 @@ function DownloadBlock({ block }) {
         {isPatientPdf ? 'Open the PDFs' : `${EXPORT_LABELS[block.format]} download`}
         {note && <span className="ai-block-note"> · {note}</span>}
       </div>
-      {block.target === 'patient' ? <ExportShareBar patient={block.patient} highlight={block.format} compact /> : <ExportShareBar query={block.query} highlight={block.format} compact />}
+      {block.target === 'patient' ? <ExportShareBar via="assistant" patient={block.patient} highlight={block.format} compact /> : <ExportShareBar via="assistant" query={block.query} highlight={block.format} compact />}
     </div>
   );
 }
@@ -141,9 +141,9 @@ function ShareBlock({ block }) {
     <div className="ai-block">
       <div className="ai-block-title">Check the number, then press Send</div>
       {block.target === 'patient' ? (
-        <ExportShareBar patient={block.patient} shareNumber={block.toNumber} openShare compact />
+        <ExportShareBar via="assistant" patient={block.patient} shareNumber={block.toNumber} openShare compact />
       ) : (
-        <ExportShareBar query={block.query} shareNumber={block.toNumber} openShare compact />
+        <ExportShareBar via="assistant" query={block.query} shareNumber={block.toNumber} openShare compact />
       )}
     </div>
   );
