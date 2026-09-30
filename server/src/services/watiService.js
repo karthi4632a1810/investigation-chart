@@ -5,6 +5,7 @@
  * template via GET /api/v1/getMessageTemplates).
  */
 import { config } from '../config.js';
+import { countWatiCall, noteWatiOk, noteWatiRateLimited, watiPausedUntil } from './watiBudget.js';
 import { logRetryStart, logSendResult, logSendStart } from './whatsappLogService.js';
 
 // WATI's edge (Cloudflare) rejects requests with no/generic User-Agent with a
@@ -70,6 +71,13 @@ export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pd
       : null;
 
   try {
+    // While WATI is refusing calls (429), automatic sends don't spend more of the
+    // quota: they're recorded as failed and retried once the pause ends.
+    // A person clicking Send still tries.
+    const paused = watiPausedUntil();
+    if (paused && log?.trigger === 'auto') {
+      throw new Error(`WATI API usage limit exceeded (429) — sending paused until ${paused.toISOString()}, will retry`);
+    }
     const data = await postTemplate(digits, payload);
     await logSendResult(logId, { ok: true, response: data }).catch(() => {});
     return data;
@@ -94,8 +102,12 @@ async function postTemplate(digits, payload) {
 
   if (res.status === 429) {
     // WATI's API usage limit (shared by sending and status checks) — temporary.
+    countWatiCall('send', { rateLimited: true }).catch(() => {});
+    noteWatiRateLimited();
     throw new Error('WATI API usage limit exceeded (429) — will retry later');
   }
+  countWatiCall('send').catch(() => {});
+  noteWatiOk();
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.result !== true) {
     throw new Error(data?.info || data?.message || `WATI responded ${res.status}`);

@@ -15,7 +15,9 @@ import {
   sendReportsWhatsApp,
   startDischargeScheduler,
 } from './services/dischargeReportService.js';
-import { pdfExists, reportObjectKey, reportSummaryObjectKey } from './services/storageService.js';
+import { getPdfStream, pdfExists, reportObjectKey, reportSummaryObjectKey } from './services/storageService.js';
+import { isWebhookKey, readDocToken, webhookKey, whatsappLinkInfo } from './services/publicLinkService.js';
+import { watiUsage } from './services/watiBudget.js';
 import { getWatiSettings, updateWatiSettings } from './services/watiSettingsService.js';
 import { clearSessionCookie, getSessionUser, requireSession, setSessionCookie } from './services/sessionService.js';
 import { hasCriteria, labResultsCoverage, listLabTests, normaliseQuery, searchLabResults } from './services/labResultsService.js';
@@ -23,7 +25,9 @@ import { buildExport, EXPORT_FORMATS, exportFileName, shareLabResultsOnWhatsApp 
 import { toWatiNumber } from './services/watiService.js';
 import { runAssistant } from './services/assistantService.js';
 import {
+  getPollState,
   getWhatsappMessage,
+  handleWatiWebhook,
   listWhatsappMessages,
   numbersNotOnWhatsApp,
   pollWhatsAppStatuses,
@@ -61,6 +65,45 @@ export function createApp() {
 
   // Serve static frontend files (React dist)
   app.use(express.static(clientDistPath));
+
+  /**
+   * A report PDF for WhatsApp / WATI, which can't log in: the signed token in
+   * the link names one PDF and when the link stops working (publicLinkService.js).
+   */
+  app.get('/api/public/doc/:token/:filename', async (req, res) => {
+    const objectKey = readDocToken(req.params.token);
+    if (!objectKey) return res.status(410).type('text/plain').send('This link has expired. Please ask the hospital to send the report again.');
+    try {
+      const pdf = await getPdfStream(objectKey);
+      if (!pdf) return res.status(404).type('text/plain').send('Report not found');
+      const name = String(req.params.filename || 'Report.pdf').replace(/[^\w.-]+/g, '-');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Length', pdf.size);
+      res.setHeader('Content-Disposition', `inline; filename="${name}"`);
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.setHeader('X-Robots-Tag', 'noindex');
+      if (req.method === 'HEAD') return res.end();
+      pdf.stream.on('error', () => res.destroy());
+      pdf.stream.pipe(res);
+    } catch (error) {
+      res.status(503).type('text/plain').send('Report temporarily unavailable');
+    }
+  });
+
+  /** WATI webhook (Connectors → Webhooks): message sent / delivered / read / failed. */
+  app.post('/api/public/wati-webhook/:key', async (req, res) => {
+    if (!isWebhookKey(req.params.key)) return res.status(404).json({ ok: false });
+    // Always 200 once the key is right, so WATI doesn't keep re-sending an event.
+    try {
+      const events = Array.isArray(req.body) ? req.body : [req.body];
+      const results = [];
+      for (const event of events) results.push(await handleWatiWebhook(event || {}));
+      res.json({ ok: true, results });
+    } catch (error) {
+      console.warn(`[whatsapp] webhook event not processed: ${error.message}`);
+      res.json({ ok: true, error: error.message });
+    }
+  });
 
   // Everything under /api below needs a logged-in session, except the few
   // routes the login screen itself uses (see sessionService.js).
@@ -554,6 +597,21 @@ app.get('/api/detail/:orderid', async (req, res) => {
     }
   });
 
+  /** WATI API calls made (today / this month), status-check state, webhook and link setup. */
+  app.get('/api/admin/whatsapp/wati-usage', async (_req, res) => {
+    try {
+      res.json({
+        ok: true,
+        usage: await watiUsage(),
+        poll: getPollState(),
+        link: whatsappLinkInfo(),
+        webhookPath: `/api/public/wati-webhook/${webhookKey()}`,
+      });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   app.post('/api/admin/whatsapp/refresh', async (_req, res) => {
     try {
       res.json({ ok: true, poll: await pollWhatsAppStatuses({ force: true }) });
@@ -595,8 +653,8 @@ app.listen(config.port, () => {
 
 startDischargeScheduler();
 
-// WhatsApp monitor: import earlier test-number messages once, then check
-// delivered / read status every minute.
+// WhatsApp monitor: import earlier test-number messages once, then keep
+// delivered / read up to date (webhooks, or sparse status checks).
 startWhatsAppRetryWorker();
 getWatiSettings()
   .then((settings) => startWhatsAppStatusPoller([settings.fixedNumber]))

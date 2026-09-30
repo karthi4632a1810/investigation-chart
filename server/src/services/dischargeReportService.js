@@ -24,6 +24,7 @@ import { pdfExists, reportObjectKey, reportSummaryObjectKey, getPdfPresignedUrl 
 import { getMongoCollection } from './mongo.js';
 import { getWatiSettings } from './watiSettingsService.js';
 import { sendInvestigationReportWhatsApp, documentLine } from './watiService.js';
+import { whatsappFileName, whatsappPdfUrl } from './publicLinkService.js';
 import { saveLabResults } from './labResultsService.js';
 
 const REPORTS_COLLECTION = 'discharge_reports';
@@ -282,9 +283,6 @@ const WHATSAPP_DOCUMENTS = [
   { kind: 'lab', label: 'Lab Report', objectKey: reportObjectKey },
   { kind: 'summary', label: 'Discharge Summary', objectKey: reportSummaryObjectKey },
 ];
-// WATI/Meta fetch the PDF from this link when the message is sent; an hour
-// leaves room for WATI-side queueing without handing out a long-lived link.
-const WHATSAPP_LINK_TTL_SECONDS = 60 * 60;
 
 /**
  * Sends a patient's documents over WhatsApp — lab report first, then discharge
@@ -304,7 +302,7 @@ export async function sendReportsWhatsApp({ dateFolder, ipNo, toNumber, name, no
         toNumber,
         name,
         note: documentLine(doc.label, note),
-        pdfUrl: await getPdfPresignedUrl(key, WHATSAPP_LINK_TTL_SECONDS),
+        pdfUrl: await whatsappPdfUrl(key, whatsappFileName(doc.label, ipNo)),
         log: log && { ...log, document: doc.kind, documentLabel: doc.label, dischargeDate: dateFolder, ipNo },
       });
       result.sent.push({ kind: doc.kind, label: doc.label });

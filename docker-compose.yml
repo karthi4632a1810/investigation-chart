@@ -32,6 +32,13 @@ services:
       # "Ask AI" assistant key, from the root .env (assistantService.js). Named
       # GROQ_API, not GROQ_API_KEY, so a GROQ_API_KEY in server/.env still wins.
       GROQ_API: ${GROQ_API:-}
+      # WhatsApp PDF links (publicLinkService.js). With PUBLIC_BASE_URL set (the
+      # https address from the "https" service below) the PDF is served through
+      # this app and shows inside WATI's inbox; unset, it's the plain-http MinIO link.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      WHATSAPP_LINK_DAYS: ${WHATSAPP_LINK_DAYS:-2}
+      # WATI's monthly API quota is shared with sending — see watiBudget.js.
+      WATI_STATUS_CHECKS_PER_DAY: ${WATI_STATUS_CHECKS_PER_DAY:-100}
     # A single templated bind string (not a second "ports:" list in an override
     # file) — Compose concatenates list-valued keys across -f files instead of
     # replacing them, so a docker-compose.prod.yml override here would leave
@@ -87,6 +94,28 @@ services:
     networks:
       - app-network
 
+  # HTTPS in front of the app, with a free Let's Encrypt certificate that Caddy
+  # gets and renews by itself. Off unless enabled — in the root .env:
+  #   COMPOSE_PROFILES=https
+  #   PUBLIC_HOST=194-238-22-210.sslip.io        (or your own domain)
+  #   PUBLIC_BASE_URL=https://194-238-22-210.sslip.io
+  # Needs ports 80 and 443 free on the host and open in the firewall.
+  https:
+    image: caddy:2-alpine
+    container_name: investigation-https
+    profiles: ["https"]
+    command: ["caddy", "reverse-proxy", "--from", "${PUBLIC_HOST:-localhost}", "--to", "client:80"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+    depends_on:
+      - client
+    restart: unless-stopped
+    networks:
+      - app-network
+
 networks:
   app-network:
     driver: bridge
@@ -94,3 +123,4 @@ networks:
 volumes:
   mongo-data:
   minio-data:
+  caddy-data:

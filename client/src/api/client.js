@@ -277,6 +277,11 @@ export function refreshWhatsappStatuses() {
   return postJson(`${API_BASE}/admin/whatsapp/refresh`, {});
 }
 
+/** WATI API calls used, status-check / webhook state, and how PDF links are served. */
+export function fetchWatiUsage() {
+  return getJson(`${API_BASE}/admin/whatsapp/wati-usage`);
+}
+
 // ---- Ask AI ---------------------------------------------------------------
 
 export function askAssistant(messages, context) {

@@ -25,7 +25,8 @@ import {
 import { config } from '../config.js';
 import { renderHtmlToPdf } from './investigationPdfService.js';
 import { BRAND_CSS, esc, formatGeneratedDate, letterheadHtml } from './pdfBranding.js';
-import { getPdfPresignedUrl, uploadPdfFile } from './storageService.js';
+import { whatsappPdfUrl } from './publicLinkService.js';
+import { uploadPdfFile } from './storageService.js';
 import { documentLine, sendInvestigationReportWhatsApp } from './watiService.js';
 
 export const EXPORT_FORMATS = {
@@ -277,7 +278,7 @@ export async function buildExport(search, format) {
 /**
  * Sends a search's PDF to one WhatsApp number through the approved
  * "investigation" template (one document per message). The PDF is uploaded
- * under exports/ and linked for an hour — long enough for WATI to fetch it.
+ * under exports/ and linked like a report (publicLinkService.js).
  */
 export async function shareLabResultsOnWhatsApp(search, { toNumber, recipientName, log }) {
   const pdf = await toPdf(search);
@@ -294,7 +295,7 @@ export async function shareLabResultsOnWhatsApp(search, { toNumber, recipientNam
     toNumber,
     name: recipientName || 'Sir/Madam',
     note: documentLine('Lab Results Report', `${search.total} results, ${search.patients} patients`),
-    pdfUrl: await getPdfPresignedUrl(objectKey, 60 * 60),
+    pdfUrl: await whatsappPdfUrl(objectKey, path.basename(objectKey)),
     log: log && {
       ...log,
       document: 'lab_results',

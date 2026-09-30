@@ -1,6 +1,7 @@
 /**
  * Re-sending failed WhatsApp messages — automatically for temporary errors
- * (network, WATI busy: after 2 min, 15 min, then 1 h — see whatsappLogService),
+ * (network, WATI busy: after 2 min, 15 min, then 1 h; WATI's usage limit:
+ * hourly, once the pause ends — see whatsappLogService),
  * or on demand from the /admin monitor's Retry button. A retry reuses the
  * failed record, so one report stays one row with an attempt count.
  *
@@ -9,8 +10,10 @@
  * stored, so it has to be shared again from Lab Finder.
  */
 import { getMongoCollection } from './mongo.js';
-import { getPdfPresignedUrl, pdfExists, reportObjectKey, reportSummaryObjectKey } from './storageService.js';
+import { whatsappFileName, whatsappPdfUrl } from './publicLinkService.js';
+import { pdfExists, reportObjectKey, reportSummaryObjectKey } from './storageService.js';
 import { documentLine, sendInvestigationReportWhatsApp } from './watiService.js';
+import { watiPausedUntil } from './watiBudget.js';
 import { getWatiSettings } from './watiSettingsService.js';
 import { dueRetries, getWhatsappRecord } from './whatsappLogService.js';
 
@@ -37,7 +40,7 @@ export async function retryWhatsAppMessage(id, { auto = false, triggeredBy } = {
     toNumber: doc.toNumber,
     name: doc.patientName || doc.ipNo,
     note: documentLine(LABELS[doc.document], settings.secondParam),
-    pdfUrl: await getPdfPresignedUrl(key, 60 * 60),
+    pdfUrl: await whatsappPdfUrl(key, whatsappFileName(LABELS[doc.document], doc.ipNo)),
     log: { existingId: id, auto, triggeredBy: auto ? 'system' : triggeredBy },
   });
   return getWhatsappRecord(id);
@@ -46,10 +49,12 @@ export async function retryWhatsAppMessage(id, { auto = false, triggeredBy } = {
 let running = false;
 
 async function runDueRetries() {
-  if (running) return;
+  // While WATI answers 429 every retry would just fail again and spend quota.
+  if (running || watiPausedUntil()) return;
   running = true;
   try {
     for (const id of await dueRetries()) {
+      if (watiPausedUntil()) break; // the last one hit the limit — the rest wait
       try {
         await retryWhatsAppMessage(id, { auto: true });
         console.log(`[whatsapp] automatic retry sent for message ${id}`);

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  fetchWatiUsage,
   fetchWhatsappActivity,
   fetchWhatsappInsights,
   fetchWhatsappMessage,
@@ -10,7 +11,7 @@ import {
   refreshWhatsappStatuses,
   retryWhatsappMessage,
 } from '../../api/client';
-import { CloseIcon, RefreshIcon, SearchIcon, WhatsAppIcon } from '../Icons';
+import { AlertIcon, CheckIcon, CloseIcon, CopyIcon, RefreshIcon, SearchIcon, WhatsAppIcon } from '../Icons';
 import { ChartCard, Columns, Delta, HBars, LegendItem, RateLines, StackedColumns, StackedHBars, StatTile } from './Charts';
 
 const LIVE_REFRESH_MS = 15_000;
@@ -215,7 +216,7 @@ function Timeline({ message }) {
 function explainFailure(text) {
   const t = String(text || '');
   if (/not a whatsapp number|not a valid whatsapp|invalid/i.test(t)) return 'The number is not on WhatsApp (or is mistyped). Check the patient\'s mobile number in the EMR.';
-  if (/429|usage limit/i.test(t)) return 'WATI\'s API usage limit was reached, so WATI refused the message for now. It is retried automatically.';
+  if (/429|usage limit/i.test(t)) return 'WATI\'s API usage limit was reached, so WATI refused the message for now. It is retried automatically every hour until it goes through.';
   if (/timeout|aborted|network|fetch failed|ECONN|socket|503|502|busy/i.test(t)) return 'WATI or the network was briefly unavailable. This is retried automatically.';
   if (/undeliverable|re-?engage|24 ?hours|blocked/i.test(t)) return 'WhatsApp would not deliver it (the patient may have blocked the business number or be unreachable).';
   if (/template/i.test(t)) return 'WATI rejected the message template. Check the template in the WATI dashboard.';
@@ -621,6 +622,126 @@ function AttentionCard({ attention, onShow }) {
   );
 }
 
+
+// ---- WATI connection: quota, status updates, PDF links ---------------------------
+
+function CopyField({ value }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      const el = document.createElement('textarea');
+      el.value = value;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      el.remove();
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+  return (
+    <div className="wa-copy">
+      <code title={value}>{value}</code>
+      <button type="button" onClick={copy} aria-label="Copy webhook URL">
+        {copied ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  );
+}
+
+function WatiCard({ info, now }) {
+  const [showSetup, setShowSetup] = useState(false);
+  if (!info) return null;
+  const { usage, poll, link, webhookPath } = info;
+  const webhookUrl = `${link?.baseUrl || window.location.origin}${webhookPath}`;
+  const paused = usage?.pausedUntil || poll?.pausedUntil;
+  const hooked = poll?.webhook?.active;
+  const fmt = (n) => Number(n || 0).toLocaleString('en-IN');
+
+  return (
+    <section className="viz-card wa-wati">
+      <header className="viz-card-head">
+        <div>
+          <h3>WATI connection</h3>
+          <p>Every WATI API call, sends included, uses the account&apos;s monthly quota. The EMR&apos;s own messages share it too.</p>
+        </div>
+      </header>
+      <div className="wa-wati-grid">
+        <div className={`wa-wati-item ${paused ? 'is-bad' : 'is-ok'}`}>
+          <span className="wa-wati-icon">{paused ? <AlertIcon size={16} /> : <CheckIcon size={16} />}</span>
+          <div>
+            <b>API calls from this app</b>
+            <span>
+              Today {fmt(usage?.today?.total)} ({fmt(usage?.today?.send)} sends · {fmt(usage?.today?.status)}/{fmt(usage?.statusChecksPerDay)} status checks)
+            </span>
+            <span>This month {fmt(usage?.month?.total)}{usage?.month?.rateLimited ? ` · ${fmt(usage.month.rateLimited)} refused (429)` : ''}</span>
+            {paused && (
+              <span className="wa-wati-warn">
+                WATI is refusing calls (usage limit). Status checks and automatic retries resume at {formatTime(paused, false)}; failed sends retry by themselves.
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className={`wa-wati-item ${hooked ? 'is-ok' : 'is-warn'}`}>
+          <span className="wa-wati-icon">{hooked ? <CheckIcon size={16} /> : <AlertIcon size={16} />}</span>
+          <div>
+            <b>Delivered / read updates</b>
+            {hooked ? (
+              <span>WATI webhook connected: last event {timeAgo(poll.webhook.lastEventAt, now)}. No status checks needed.</span>
+            ) : (
+              <span>
+                Webhook not connected, so WATI is asked instead, 3 times per message and at most {fmt(poll?.dailyChecks)} calls a day.
+                {poll?.enabled === false && ' (Scheduled checks are turned off.)'}
+              </span>
+            )}
+            <button type="button" className="ai-link" onClick={() => setShowSetup((v) => !v)}>
+              {showSetup ? 'Hide webhook setup' : hooked ? 'Webhook URL' : 'Connect the webhook (free, instant ticks)'}
+            </button>
+          </div>
+        </div>
+
+        <div className={`wa-wati-item ${link?.https ? 'is-ok' : 'is-warn'}`}>
+          <span className="wa-wati-icon">{link?.https ? <CheckIcon size={16} /> : <AlertIcon size={16} />}</span>
+          <div>
+            <b>PDF links</b>
+            {link?.https ? (
+              <span>
+                Secure links through {link.baseUrl.replace(/^https:\/\//, '')}, valid {link.days} day{link.days === 1 ? '' : 's'}. PDFs open inside WATI&apos;s inbox.
+              </span>
+            ) : (
+              <span>
+                Plain http links, valid {link?.days} day{link?.days === 1 ? '' : 's'}. Patients get the PDF, but WATI&apos;s https inbox can&apos;t show it (&ldquo;This plugin is not supported&rdquo;). Setting up HTTPS fixes that.
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {showSetup && (
+        <div className="wa-wati-setup">
+          <ol>
+            <li>In WATI, open <b>Connectors → Webhooks</b> and click <b>Add Webhook</b>.</li>
+            <li>
+              Paste this URL:
+              <CopyField value={webhookUrl} />
+            </li>
+            <li>
+              Set status <b>Enabled</b> and tick <b>Template Message Sent</b>, <b>Delivered</b>, <b>Read</b>, <b>Replied</b> and <b>Failed</b>. Save.
+            </li>
+            <li>Send any report. This card turns green on the first event, and status checks stop by themselves.</li>
+          </ol>
+          {!webhookUrl.startsWith('https://') && <p className="wa-wati-note">If WATI asks for an https address, set up HTTPS first; the URL above then changes to https.</p>}
+          <p className="wa-wati-note">Keep this URL private: anyone who has it can post status updates.</p>
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ---- the dashboard ------------------------------------------------------------
 
 export default function AdminDashboard() {
@@ -648,6 +769,8 @@ export default function AdminDashboard() {
   const [now, setNow] = useState(Date.now());
   const [openId, setOpenId] = useState(null);
   const [checking, setChecking] = useState(false);
+  const [checkNote, setCheckNote] = useState('');
+  const [wati, setWati] = useState(null);
 
   const seenEvents = useRef(new Set());
   const [freshEvents, setFreshEvents] = useState(new Set());
@@ -673,14 +796,16 @@ export default function AdminDashboard() {
       if (!quiet) setLoading(true);
       try {
         const list = tableView === 'patients' ? fetchWhatsappPatients : fetchWhatsappMessages;
-        const [s, m, a, ins] = await Promise.all([
+        const [s, m, a, ins, w] = await Promise.all([
           fetchWhatsappSummary(params),
           list({ ...params, page, limit: PAGE_SIZE }),
           fetchWhatsappActivity(20),
           fetchWhatsappInsights(params),
+          fetchWatiUsage().catch(() => null),
         ]);
         setSummary(s);
         setInsights(ins);
+        if (w) setWati(w);
         if (tableView === 'patients') setPatients(m);
         else setMessages(m);
 
@@ -731,7 +856,12 @@ export default function AdminDashboard() {
   async function checkWati() {
     setChecking(true);
     try {
-      await refreshWhatsappStatuses();
+      const { poll } = await refreshWhatsappStatuses();
+      setCheckNote(
+        poll?.skipped ||
+          (poll?.error ? `WATI: ${poll.error}` : `Checked ${poll?.checked || 0} message${poll?.checked === 1 ? '' : 's'}, ${poll?.updated || 0} updated`),
+      );
+      setTimeout(() => setCheckNote(''), 8000);
       await load(true);
     } catch (err) {
       setError(err.message);
@@ -822,8 +952,12 @@ export default function AdminDashboard() {
           <span className={`wa-live-dot ${loading ? 'is-busy' : ''}`} />
           <span>
             Live · updated {timeAgo(updatedAt, now) || '…'}
-            {summary?.poll?.pausedUntil ? (
-              <span className="wa-live-sub wa-live-paused"> · WATI usage limit reached — status checks paused until {formatTime(summary.poll.pausedUntil, false)}</span>
+            {checkNote ? (
+              <span className="wa-live-sub"> · {checkNote}</span>
+            ) : summary?.poll?.pausedUntil ? (
+              <span className="wa-live-sub wa-live-paused"> · WATI usage limit reached, paused until {formatTime(summary.poll.pausedUntil, false)}</span>
+            ) : summary?.poll?.webhook?.active ? (
+              <span className="wa-live-sub"> · WATI webhook {timeAgo(summary.poll.webhook.lastEventAt, now)}</span>
             ) : (
               summary?.poll?.at && <span className="wa-live-sub"> · WATI checked {timeAgo(summary.poll.at, now)}</span>
             )}
@@ -953,6 +1087,7 @@ export default function AdminDashboard() {
         </div>
 
         <div className="wa-grid">
+          <WatiCard info={wati} now={now} />
           <CoverageCard coverage={insights?.coverage} liveEnabled={insights?.liveEnabled} range={range} />
           <AttentionCard attention={insights?.attention} onShow={showAttention} />
 

@@ -7,25 +7,34 @@
  * "delivered" (grey double tick) and "read" (blue double tick) as the status
  * poller below sees WATI report them.
  *
- * WATI's message list gives each message's *current* status but not when it
- * changed, so deliveredAt / readAt are the time the poller first saw the new
- * status — accurate to the poll interval (a minute), not to the second.
+ * Statuses arrive two ways:
+ *  - WATI webhooks (handleWatiWebhook) — instant, exact times, and free: they
+ *    don't count toward WATI's monthly API quota. Preferred.
+ *  - A status check (getMessages per number) on a sparse schedule, within a daily
+ *    allowance (watiBudget.js). WATI's list gives the *current* status, not when
+ *    it changed, so deliveredAt / readAt are when the check first saw it.
+ *    Checks stop on their own while webhooks are arriving.
  */
 import { ObjectId } from 'mongodb';
 import { config } from '../config.js';
 import { getMongoCollection } from './mongo.js';
+import { countWatiCall, noteWatiOk, noteWatiRateLimited, statusChecksLeftToday, STATUS_CHECKS_PER_DAY, watiPausedUntil } from './watiBudget.js';
 
 const COLLECTION = 'whatsapp_messages';
 const POLL_INTERVAL_MS = 60 * 1000;
-// WATI rate-limits its API ("API usage limit exceeded", HTTP 429) and the same
-// limit covers sending, so status checks must stay light: each message is
-// re-checked on a slowing schedule (below) for 3 days, at most a few numbers
-// per minute, and everything pauses after a 429.
-const POLL_WINDOW_DAYS = 3;
-const MAX_NUMBERS_PER_POLL = 6;
-// Minutes after sending at which a message is checked again.
-const CHECK_AFTER_MIN = [1, 3, 10, 30, 60, 180, 360, 720, 1440, 2160, 2880, 4320];
-const RATE_LIMIT_PAUSE_MS = [15 * 60_000, 30 * 60_000, 60 * 60_000];
+// Every status check spends WATI's monthly API quota (the same one sending
+// needs), so a message is checked only 3 times — 30 min, 6 h and 24 h after
+// sending — a few numbers a minute (getMessages allows 10 calls per 10 s), within
+// the daily allowance, and not at all while webhooks deliver statuses.
+// WATI_STATUS_POLL=off turns scheduled checks off entirely.
+const POLL_WINDOW_DAYS = 2;
+const MAX_NUMBERS_PER_POLL = 3;
+const MAX_NUMBERS_FORCED = 10;
+const FORCE_COOLDOWN_MS = 5 * 60_000;
+const CHECK_AFTER_MIN = [30, 360, 1440];
+const POLL_ENABLED = !/^(off|false|0|no)$/i.test(String(process.env.WATI_STATUS_POLL || 'on'));
+// Webhooks count as working if one arrived within this long.
+const WEBHOOK_ACTIVE_MS = 24 * 3600_000;
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
 
@@ -89,15 +98,25 @@ export const MAX_ATTEMPTS = 4;
 const RETRY_DELAYS_MS = [2 * 60_000, 15 * 60_000, 60 * 60_000];
 // Errors a resend can't fix — these wait for a person (Retry button) instead.
 const PERMANENT_ERROR = /not a whatsapp number|invalid|not valid|does not exist|blocked|template|not configured|required/i;
+// WATI's quota / rate limit: nothing is wrong with the message, so it's retried
+// hourly (or when the pause ends) for about a day instead of giving up after 4.
+export const RATE_LIMITED = /\b429\b|usage limit/i;
+const MAX_RATE_LIMITED_ATTEMPTS = 30;
+const RATE_LIMITED_RETRY_MS = 60 * 60_000;
 
 /** Only patient reports can be re-sent without a person — a results list isn't stored. */
 function canAutoRetry(doc, error) {
-  return (
-    ['lab', 'summary'].includes(doc?.document) &&
-    Boolean(doc.ipNo && doc.dischargeDate) &&
-    !PERMANENT_ERROR.test(String(error || '')) &&
-    (doc.attempts || 1) < MAX_ATTEMPTS
-  );
+  if (!['lab', 'summary'].includes(doc?.document) || !doc.ipNo || !doc.dischargeDate) return false;
+  if (RATE_LIMITED.test(String(error || ''))) return (doc.attempts || 1) < MAX_RATE_LIMITED_ATTEMPTS;
+  return !PERMANENT_ERROR.test(String(error || '')) && (doc.attempts || 1) < MAX_ATTEMPTS;
+}
+
+function retryTime(doc, error, now) {
+  if (RATE_LIMITED.test(String(error || ''))) {
+    const paused = watiPausedUntil();
+    return new Date(Math.max(now.getTime() + RATE_LIMITED_RETRY_MS, paused ? paused.getTime() + 60_000 : 0));
+  }
+  return new Date(now.getTime() + RETRY_DELAYS_MS[Math.min((doc.attempts || 1) - 1, RETRY_DELAYS_MS.length - 1)]);
 }
 
 /** WATI accepted the message (or refused it). */
@@ -107,23 +126,27 @@ export async function logSendResult(id, { ok, error, response }) {
   const c = await collection();
   const _id = new ObjectId(id);
   if (ok) {
-    await c.updateOne(
-      { _id },
+    const ids = [response?.model?.ids, response?.localMessageId, response?.id].flat().filter((v) => typeof v === 'string' && v);
+    const accepted = { validWhatsAppNumber: response?.validWhatsAppNumber ?? null, nextRetryAt: null, ...(ids.length ? { watiSendIds: ids } : {}) };
+    // A webhook can get here first and move the record past "sent" — don't undo it.
+    const moved = await c.updateOne(
+      { _id, status: 'pending' },
       {
-        $set: { status: 'sent', acceptedAt: now, validWhatsAppNumber: response?.validWhatsAppNumber ?? null, nextRetryAt: null },
+        $set: { status: 'sent', acceptedAt: now, ...accepted },
         $push: { history: { status: 'sent', at: now, source: 'app', note: 'Accepted by WATI' } },
       },
     );
+    if (!moved.matchedCount) await c.updateOne({ _id }, { $set: accepted });
     return;
   }
   const doc = await c.findOne({ _id }, { projection: { document: 1, ipNo: 1, dischargeDate: 1, attempts: 1 } });
   const message = String(error || 'Send failed').slice(0, 500);
   const retry = canAutoRetry(doc, message);
-  const nextRetryAt = retry ? new Date(now.getTime() + RETRY_DELAYS_MS[Math.min((doc.attempts || 1) - 1, RETRY_DELAYS_MS.length - 1)]) : null;
+  const nextRetryAt = retry ? retryTime(doc, message, now) : null;
   await c.updateOne(
     { _id },
     {
-      $set: { status: 'failed', failedAt: now, error: message, nextRetryAt, autoRetry: retry, notOnWhatsApp: isNotOnWhatsApp(message) },
+      $set: { status: 'failed', failedAt: now, error: message, nextRetryAt, autoRetry: retry, notOnWhatsApp: isNotOnWhatsApp(message), rateLimited: RATE_LIMITED.test(message) },
       $push: {
         history: {
           status: 'failed',
@@ -152,12 +175,17 @@ export async function logRetryStart(id, { auto = false, triggeredBy } = {}) {
         nextRetryAt: null,
         watiMessageId: null,
         watiStatus: null,
+        whatsappMessageId: null,
+        watiLocalMessageId: null,
+        watiSendIds: null,
         failedDetail: null,
         acceptedAt: null,
         deliveredAt: null,
         readAt: null,
         notOnWhatsApp: false,
+        rateLimited: false,
       },
+      $unset: { nextCheckAt: '', lastCheckedAt: '' },
       $push: {
         history: { status: 'pending', at: now, source: 'app', note: `Retry ${attempt - 1} — ${auto ? 'automatic' : `by ${triggeredBy || 'staff'}`}` },
       },
@@ -216,8 +244,14 @@ async function fetchWatiMessages(number, pageSize = 20) {
     headers: watiHeaders(),
     signal: AbortSignal.timeout(20_000),
   });
-  if (res.status === 429) throw new RateLimitedError('WATI API usage limit exceeded (429)');
+  if (res.status === 429) {
+    countWatiCall('status', { rateLimited: true }).catch(() => {});
+    noteWatiRateLimited();
+    throw new RateLimitedError('WATI API usage limit exceeded (429)');
+  }
+  countWatiCall('status').catch(() => {});
   if (!res.ok) throw new Error(`WATI getMessages ${res.status}`);
+  noteWatiOk();
   const data = await res.json();
   return (data.messages?.items || []).filter((m) => m.eventType === 'broadcastMessage' || m.eventType === 'message');
 }
@@ -232,24 +266,31 @@ function matchWatiItem(doc, items, claimed) {
     const created = new Date(item.created).getTime();
     const delta = created - sentAt;
     if (delta < -120_000 || delta > 10 * 60_000) continue;
-    const text = String(item.finalText || '');
-    if (doc.documentLabel && !text.includes(`Attached: ${doc.documentLabel}`)) continue;
-    if (firstName && !text.toUpperCase().includes(firstName.toUpperCase())) continue;
+    const text = String(item.finalText ?? item.text ?? '');
+    if (doc.documentLabel && text && !text.includes(`Attached: ${doc.documentLabel}`)) continue;
+    if (firstName && text && !text.toUpperCase().includes(firstName.toUpperCase())) continue;
     if (!best || Math.abs(delta) < Math.abs(best.delta)) best = { item, delta };
   }
   return best?.item || null;
 }
 
 let pollRunning = false;
-let lastPoll = { at: null, checked: 0, updated: 0, error: null };
-let pausedUntil = 0;
-let rateLimitStrikes = 0;
+let lastPoll = { at: null, checked: 0, updated: 0, error: null, skipped: null };
+let lastForcedAt = 0;
+let lastWebhookAt = null;
+let webhookEventsSinceStart = 0;
+
+const webhookActive = () => Boolean(lastWebhookAt && Date.now() - lastWebhookAt.getTime() < WEBHOOK_ACTIVE_MS);
 
 export function getPollState() {
   return {
     ...lastPoll,
     intervalSeconds: POLL_INTERVAL_MS / 1000,
-    pausedUntil: pausedUntil > Date.now() ? new Date(pausedUntil) : null,
+    enabled: POLL_ENABLED,
+    schedule: CHECK_AFTER_MIN,
+    dailyChecks: STATUS_CHECKS_PER_DAY,
+    pausedUntil: watiPausedUntil(),
+    webhook: { active: webhookActive(), lastEventAt: lastWebhookAt, eventsSinceStart: webhookEventsSinceStart },
   };
 }
 
@@ -265,13 +306,27 @@ function nextCheckTime(doc, now = Date.now()) {
 
 /**
  * One pass over messages whose next check is due (see CHECK_AFTER_MIN), a few
- * numbers at a time. `force` (the "Check WATI now" button) checks every open
- * message's number once, still capped, and still respects a rate-limit pause.
+ * numbers at a time, within the daily allowance. Skipped while webhooks are
+ * delivering statuses or WATI has said 429. `force` (the "Check WATI now"
+ * button) checks up to 10 open numbers once — at most every 5 minutes.
  */
 export async function pollWhatsAppStatuses({ force = false } = {}) {
   if (pollRunning || !config.wati.endpoint || !config.wati.accessToken) return getPollState();
-  if (pausedUntil > Date.now()) return getPollState();
+  const skip = (reason) => {
+    lastPoll = { ...lastPoll, skipped: reason };
+    return getPollState();
+  };
+  if (watiPausedUntil()) return skip('WATI usage limit — paused');
+  if (force && Date.now() - lastForcedAt < FORCE_COOLDOWN_MS) {
+    return skip(`Checked less than ${FORCE_COOLDOWN_MS / 60_000} minutes ago`);
+  }
+  if (!force && !POLL_ENABLED) return skip('Status checks turned off (WATI_STATUS_POLL=off)');
+  if (!force && webhookActive()) return skip('Webhooks deliver statuses');
+  let budget = await statusChecksLeftToday().catch(() => 0);
+  if (budget <= 0) return skip(`Today's ${STATUS_CHECKS_PER_DAY} status checks are used up`);
+
   pollRunning = true;
+  if (force) lastForcedAt = Date.now();
   let checked = 0;
   let updated = 0;
   let error = null;
@@ -279,35 +334,36 @@ export async function pollWhatsAppStatuses({ force = false } = {}) {
     const c = await collection();
     const now = new Date();
     const since = new Date(now.getTime() - POLL_WINDOW_DAYS * 86400_000);
-    const due = force
-      ? { createdAt: { $gte: since }, status: { $in: ['sent', 'delivered'] } }
-      : { createdAt: { $gte: since }, status: { $in: ['sent', 'delivered'] }, $or: [{ nextCheckAt: { $exists: false } }, { nextCheckAt: { $lte: now } }] };
-    const open = await c.find(due).sort({ nextCheckAt: 1, createdAt: 1 }).limit(200).toArray();
+    const open = { createdAt: { $gte: since }, status: { $in: ['sent', 'delivered'] } };
+    const due = force ? open : { ...open, $or: [{ nextCheckAt: { $exists: false } }, { nextCheckAt: { $lte: now } }] };
+    const docs = await c.find(due).sort({ nextCheckAt: 1, createdAt: 1 }).limit(200).toArray();
     const byNumber = new Map();
-    for (const doc of open) {
+    for (const doc of docs) {
+      // A new message isn't due until its first check, 30 min after sending.
+      const firstDue = new Date(new Date(doc.acceptedAt || doc.createdAt).getTime() + CHECK_AFTER_MIN[0] * 60_000);
+      if (!force && !doc.lastCheckedAt && firstDue > now) {
+        if (!doc.nextCheckAt) await c.updateOne({ _id: doc._id }, { $set: { nextCheckAt: firstDue } });
+        continue;
+      }
       if (!byNumber.has(doc.toNumber)) byNumber.set(doc.toNumber, []);
       byNumber.get(doc.toNumber).push(doc);
     }
-    for (const [number, docs] of [...byNumber].slice(0, force ? MAX_NUMBERS_PER_POLL * 3 : MAX_NUMBERS_PER_POLL)) {
+    const limit = Math.min(force ? MAX_NUMBERS_FORCED : MAX_NUMBERS_PER_POLL, budget);
+    for (const [number, list] of [...byNumber].slice(0, limit)) {
       let items;
       try {
         items = await fetchWatiMessages(number);
-        rateLimitStrikes = 0;
+        budget -= 1;
       } catch (err) {
         error = err.message;
-        if (err instanceof RateLimitedError) {
-          pausedUntil = Date.now() + RATE_LIMIT_PAUSE_MS[Math.min(rateLimitStrikes, RATE_LIMIT_PAUSE_MS.length - 1)];
-          rateLimitStrikes += 1;
-          console.warn(`[whatsapp] WATI rate limit hit — pausing status checks until ${new Date(pausedUntil).toISOString()}`);
-          break;
-        }
+        if (err instanceof RateLimitedError) break;
         continue;
       }
       const byId = new Map(items.map((m) => [m.id, m]));
       const claimed = new Set((await c.distinct('watiMessageId', { toNumber: number, watiMessageId: { $ne: null } })) || []);
       // Oldest first, so each record claims the nearest-in-time WATI message.
-      docs.sort((a, b) => a.createdAt - b.createdAt);
-      for (const doc of docs) {
+      list.sort((a, b) => a.createdAt - b.createdAt);
+      for (const doc of list) {
         checked += 1;
         const item = doc.watiMessageId ? byId.get(doc.watiMessageId) : matchWatiItem(doc, items, claimed);
         const schedule = { lastCheckedAt: new Date(), nextCheckAt: nextCheckTime(doc) };
@@ -336,10 +392,129 @@ export async function pollWhatsAppStatuses({ force = false } = {}) {
   } catch (err) {
     error = err.message;
   } finally {
-    lastPoll = { at: new Date(), checked, updated, error };
+    lastPoll = { at: new Date(), checked, updated, error, skipped: null };
     pollRunning = false;
   }
   return getPollState();
+}
+
+// ---- WATI webhooks ----------------------------------------------------------
+
+const WEBHOOK_FLAG = { _id: 'wati_webhook_last_event' };
+
+/** eventType → our status. "Replied" means they opened it, so it counts as read. */
+function webhookStatus(eventType) {
+  const t = String(eventType || '');
+  if (/^templateMessageSent/i.test(t)) return 'sent';
+  if (/^sentMessageDELIVERED/i.test(t)) return 'delivered';
+  if (/^sentMessage(READ|REPLIED)/i.test(t)) return 'read';
+  if (/^templateMessageFailed/i.test(t) || /failed/i.test(t)) return 'failed';
+  return null;
+}
+
+function webhookTime(event) {
+  if (event.created) {
+    const d = new Date(event.created);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  const ts = Number(event.timestamp);
+  return Number.isFinite(ts) && ts > 0 ? new Date(ts * (ts < 1e12 ? 1000 : 1)) : new Date();
+}
+
+/**
+ * One WATI webhook event (Connectors → Webhooks in WATI). "Template Message
+ * Sent" carries the number and text, so it's matched to our record like a
+ * status check would; it brings WhatsApp's message id, which Delivered / Read /
+ * Failed then carry. Events for messages we didn't send (the EMR's own
+ * templates on the same account) are ignored.
+ */
+export async function handleWatiWebhook(event) {
+  const status = webhookStatus(event?.eventType);
+  if (!status) return { matched: false, reason: 'not a message status event' };
+  // Only status events count as "webhook connected" — that's what lets the
+  // status checks stop (a webhook for incoming messages alone wouldn't do).
+  lastWebhookAt = new Date();
+  webhookEventsSinceStart += 1;
+  getMongoCollection('app_flags')
+    .then((f) => f.updateOne(WEBHOOK_FLAG, { $set: { at: lastWebhookAt, eventType: String(event?.eventType || '') } }, { upsert: true }))
+    .catch(() => {});
+
+  const c = await collection();
+  const ids = [event.whatsappMessageId, event.localMessageId, event.id].filter((v) => typeof v === 'string' && v);
+  let doc = ids.length
+    ? await c.findOne({
+        $or: [{ whatsappMessageId: { $in: ids } }, { watiLocalMessageId: { $in: ids } }, { watiMessageId: { $in: ids } }, { watiSendIds: { $in: ids } }],
+      })
+    : null;
+
+  const at = webhookTime(event);
+  if (!doc && event.waId) {
+    const number = digitsOnly(event.waId);
+    const candidates = await c
+      .find({
+        toNumber: number.length === 10 ? `91${number}` : number,
+        whatsappMessageId: null,
+        status: { $in: ['pending', 'sent'] },
+        createdAt: { $gte: new Date(at.getTime() - 15 * 60_000), $lte: new Date(at.getTime() + 2 * 60_000) },
+      })
+      .sort({ createdAt: 1 })
+      .toArray();
+    const item = { id: ids[0] || 'webhook', created: at, finalText: event.text ?? '' };
+    doc = candidates.find((d) => matchWatiItem(d, [item], new Set())) || null;
+  }
+  if (!doc) return { matched: false, reason: 'no matching message' };
+
+  const extra = {
+    watiStatus: event.statusString || null,
+    lastWebhookAt: new Date(),
+    ...(event.whatsappMessageId ? { whatsappMessageId: event.whatsappMessageId } : {}),
+    ...(event.localMessageId ? { watiLocalMessageId: event.localMessageId } : {}),
+    ...(status === 'sent' && event.id && !doc.watiMessageId ? { watiMessageId: event.id } : {}),
+  };
+  if (status === 'read' || status === 'failed') extra.nextCheckAt = null;
+  if (status === 'failed') {
+    const detail = [event.failedDetail, event.failedCode && `(code ${event.failedCode})`].filter(Boolean).join(' ') || 'WATI reported the message as failed';
+    extra.failedDetail = detail.slice(0, 500);
+    extra.error = detail.slice(0, 500);
+    extra.notOnWhatsApp = isNotOnWhatsApp(detail) || String(event.failedCode) === '131026';
+    extra.nextRetryAt = null;
+    extra.autoRetry = false;
+  }
+  const changed = await applyStatus(c, doc, status, {
+    at,
+    source: 'webhook',
+    note: status === 'failed' ? extra.failedDetail : `WATI webhook: ${event.statusString || status}`,
+    extra,
+  });
+  return { matched: true, id: String(doc._id), status, changed };
+}
+
+/**
+ * Reports WATI refused only because of its usage limit in the last 2 days go
+ * back in the retry queue (at startup — e.g. sends that failed before automatic
+ * retries existed). Anything that failed for another reason is left alone.
+ */
+export async function requeueRateLimitedSends() {
+  const c = await collection();
+  const { modifiedCount } = await c.updateMany(
+    {
+      status: 'failed',
+      createdAt: { $gte: new Date(Date.now() - 2 * 86400_000) },
+      document: { $in: ['lab', 'summary'] },
+      ipNo: { $ne: null },
+      dischargeDate: { $ne: null },
+      nextRetryAt: null,
+      error: RATE_LIMITED,
+    },
+    { $set: { nextRetryAt: new Date(Date.now() + 2 * 60_000), autoRetry: true, rateLimited: true } },
+  );
+  return modifiedCount;
+}
+
+/** Remembers when the last webhook came in, across restarts. */
+async function loadWebhookState() {
+  const flag = await (await getMongoCollection('app_flags')).findOne(WEBHOOK_FLAG).catch(() => null);
+  if (flag?.at) lastWebhookAt = new Date(flag.at);
 }
 
 // ---- One-time import of messages sent before logging existed ---------------
@@ -406,6 +581,10 @@ export async function importWatiHistory(numbers) {
 }
 
 export function startWhatsAppStatusPoller(numbersToImport = []) {
+  loadWebhookState().catch(() => {});
+  requeueRateLimitedSends()
+    .then((n) => n && console.log(`[whatsapp] ${n} report(s) refused by WATI's usage limit put back in the retry queue`))
+    .catch(() => {});
   backfillNotOnWhatsAppFlag()
     .then((n) => n && console.log(`[whatsapp] marked ${n} earlier failure(s) as "not on WhatsApp"`))
     .catch(() => {});

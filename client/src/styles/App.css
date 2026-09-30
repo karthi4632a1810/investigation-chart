@@ -3490,6 +3490,141 @@ html, body {
   background: #b91c1c;
 }
 
+/* WATI connection card */
+.wa-wati {
+  grid-column: 1 / -1;
+}
+
+.wa-wati-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.wa-wati-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--bg-subtle);
+}
+
+.wa-wati-item > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.wa-wati-item b {
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.wa-wati-item .ai-link {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.wa-wati-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+
+.wa-wati-item.is-ok .wa-wati-icon {
+  color: var(--green);
+  background: var(--green-bg);
+}
+
+.wa-wati-item.is-warn {
+  border-color: var(--amber-border);
+}
+
+.wa-wati-item.is-warn .wa-wati-icon {
+  color: #92400e;
+  background: var(--amber-bg);
+}
+
+.wa-wati-item.is-bad {
+  border-color: var(--st-failed);
+}
+
+.wa-wati-item.is-bad .wa-wati-icon {
+  color: #fff;
+  background: var(--st-failed);
+}
+
+.wa-wati-warn {
+  color: #991b1b;
+  font-weight: 600;
+}
+
+.wa-wati-setup {
+  padding: 12px 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  font-size: 13px;
+  color: var(--text-main);
+}
+
+.wa-wati-setup ol {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wa-wati-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.wa-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  min-width: 0;
+}
+
+.wa-copy code {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+.wa-copy button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--tick-blue);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
 @media (max-width: 1200px) {
   .wa-kpis {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3515,6 +3650,10 @@ html, body {
 
   .wa-span-2 {
     grid-column: auto;
+  }
+
+  .wa-wati-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .viz-tile-value {

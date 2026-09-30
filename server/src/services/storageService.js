@@ -93,3 +93,15 @@ export async function getPdfPresignedUrl(objectKey, expirySeconds = 300) {
   await ensureBucket();
   return presignClient.presignedGetObject(BUCKET, objectKey, expirySeconds);
 }
+
+/** The PDF bytes as a stream (for /api/public/doc links), or null if it's gone. */
+export async function getPdfStream(objectKey) {
+  await ensureBucket();
+  try {
+    const stat = await minioClient.statObject(BUCKET, objectKey);
+    return { stream: await minioClient.getObject(BUCKET, objectKey), size: stat.size };
+  } catch (error) {
+    if (error.code === 'NotFound' || error.code === 'NoSuchKey') return null;
+    throw error;
+  }
+}

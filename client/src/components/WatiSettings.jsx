@@ -282,6 +282,11 @@ export default function WatiSettings() {
               </button>
             </div>
             <p className="wati-hint">Leave blank to send just "Attached: Lab Report" / "Attached: Discharge Summary".</p>
+            {live && secondParamInput.trim() && (
+              <p className="wati-hint is-invalid" role="note">
+                Live mode is on, so every patient reads this line. Clear it if it's a test note.
+              </p>
+            )}
           </form>
         </div>
 
