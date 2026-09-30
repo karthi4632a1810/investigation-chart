@@ -524,6 +524,7 @@ app.get('/api/detail/:orderid', async (req, res) => {
   const adminQuery = (req) => ({
     from: req.query.from,
     to: req.query.to,
+    basis: req.query.basis === 'report' ? 'report' : 'sent', // "Dates by" (whatsappLogService.js rangeFilter)
     status: req.query.status,
     document: req.query.document,
     trigger: req.query.trigger,

@@ -3656,6 +3656,49 @@ html, body {
   background: #b91c1c;
 }
 
+/* "Dates by" switch in the Monitor's filter row */
+.wa-date-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.wa-basis {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+}
+
+.wa-basis span {
+  margin-right: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.wa-basis button {
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wa-basis button.is-on {
+  color: #ffffff;
+  background: var(--primary);
+}
+
 /* WATI connection card */
 .wa-wati {
   grid-column: 1 / -1;

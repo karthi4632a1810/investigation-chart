@@ -50,6 +50,7 @@ async function collection() {
     c.createIndex({ createdAt: -1 }),
     c.createIndex({ status: 1, createdAt: -1 }),
     c.createIndex({ watiMessageId: 1 }, { sparse: true }),
+    c.createIndex({ dischargeDate: 1, ipNo: 1 }),
   ]).catch(() => {});
   await indexesReady;
   return c;
@@ -611,14 +612,33 @@ function istMidnight(day) {
   return new Date(`${day}T00:00:00+05:30`);
 }
 
-function rangeFilter(from, to) {
+/**
+ * The date range, by one of two dates (the monitor's "Dates by" switch):
+ *  - 'sent' (default): when the message was sent.
+ *  - 'report': the patient's discharge date — the date their reports are filed
+ *    under. "Today" then means today's patients only, even if some of
+ *    yesterday's reports were (re)sent today. Messages that aren't a patient's
+ *    report (Lab Finder lists, tests) have no discharge date and drop out.
+ */
+const isReportBasis = (basis) => basis === 'report';
+
+function rangeFilter(from, to, basis) {
   const f = DATE_RE.test(from || '') ? from : null;
   const t = DATE_RE.test(to || '') ? to : null;
+  if (isReportBasis(basis)) {
+    const dischargeDate = { $ne: null };
+    if (f) dischargeDate.$gte = f;
+    if (t) dischargeDate.$lte = t;
+    return { dischargeDate };
+  }
   const createdAt = {};
   if (f) createdAt.$gte = istMidnight(f);
   if (t) createdAt.$lt = new Date(istMidnight(t).getTime() + 86400_000);
   return Object.keys(createdAt).length ? { createdAt } : {};
 }
+
+/** A message's day (YYYY-MM-DD) for charts — by the same date the range uses. */
+const dayOf = (basis) => (isReportBasis(basis) ? '$dischargeDate' : { $dateToString: { date: '$createdAt', format: '%Y-%m-%d', timezone: TZ } });
 
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -633,7 +653,7 @@ const SPECIAL_STATUS = {
 };
 
 function buildFilter(q = {}) {
-  const filter = { ...rangeFilter(q.from, q.to) };
+  const filter = { ...rangeFilter(q.from, q.to, q.basis) };
   const and = [];
   const statuses = String(q.status || '')
     .split(',')
@@ -682,7 +702,8 @@ export async function whatsappSummary(q = {}) {
             {
               $group: {
                 _id: {
-                  bucket: { $dateToString: { date: '$createdAt', format: hourly ? '%H' : '%Y-%m-%d', timezone: TZ } },
+                  // One day: by hour sent. Longer: by day (sent, or the report date).
+                  bucket: hourly ? { $dateToString: { date: '$createdAt', format: '%H', timezone: TZ } } : dayOf(q.basis),
                   status: '$status',
                 },
                 n: { $sum: 1 },
@@ -1032,7 +1053,7 @@ export async function whatsappInsights(q = {}) {
           trend: [
             {
               $group: {
-                _id: { $dateToString: { date: '$createdAt', format: '%Y-%m-%d', timezone: TZ } },
+                _id: dayOf(q.basis),
                 total: { $sum: 1 },
                 accepted: statusSum(['sent', 'delivered', 'read']),
                 delivered: statusSum(['delivered', 'read']),
@@ -1131,7 +1152,7 @@ export async function whatsappInsights(q = {}) {
         { $match: buildFilter({ ...q, from: fromDay, to: q.to }) },
         {
           $group: {
-            _id: { $dateToString: { date: '$createdAt', format: '%Y-%m-%d', timezone: TZ } },
+            _id: dayOf(q.basis),
             total: { $sum: 1 },
             accepted: statusSum(['sent', 'delivered', 'read']),
             delivered: statusSum(['delivered', 'read']),

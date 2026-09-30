@@ -748,8 +748,19 @@ function WatiCard({ info, now, readOnly = false }) {
 
 // ---- the dashboard ------------------------------------------------------------
 
+const BASIS_KEY = 'wa-monitor-basis';
+function savedBasis() {
+  try {
+    return localStorage.getItem(BASIS_KEY) === 'sent' ? 'sent' : 'report';
+  } catch {
+    return 'report';
+  }
+}
+
 export default function AdminDashboard({ readOnly = false }) {
   const [preset, setPreset] = useState('yesterday');
+  // "Dates by": the patient's report (discharge) date, or when the message was sent.
+  const [basis, setBasis] = useState(savedBasis);
   const [custom, setCustom] = useState(() => presetRange('yesterday'));
   const [statuses, setStatuses] = useState([]);
   const [docFilter, setDocFilter] = useState('');
@@ -783,9 +794,18 @@ export default function AdminDashboard({ readOnly = false }) {
 
   const range = preset === 'custom' ? custom : presetRange(preset);
   const params = useMemo(
-    () => ({ from: range.from, to: range.to, status: statuses, document: docFilter, trigger, q }),
-    [range.from, range.to, statuses, docFilter, trigger, q],
+    () => ({ from: range.from, to: range.to, basis, status: statuses, document: docFilter, trigger, q }),
+    [range.from, range.to, basis, statuses, docFilter, trigger, q],
   );
+
+  function chooseBasis(next) {
+    setBasis(next);
+    try {
+      localStorage.setItem(BASIS_KEY, next);
+    } catch {
+      // private window — the choice just isn't remembered
+    }
+  }
 
   // Debounced search box
   useEffect(() => {
@@ -977,12 +997,37 @@ export default function AdminDashboard({ readOnly = false }) {
 
       {/* One filter row: scopes every tile, chart and the table below. */}
       <div className="wa-filters">
+        <div className="wa-date-row">
         <div className="wa-presets" role="group" aria-label="Date range">
           {PRESETS.map((p) => (
             <button key={p.id} type="button" className={preset === p.id ? 'is-on' : ''} onClick={() => setPreset(p.id)}>
               {p.label}
             </button>
           ))}
+        </div>
+        <div className="wa-basis" role="radiogroup" aria-label="Dates by">
+          <span>Dates by</span>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={basis === 'report'}
+            className={basis === 'report' ? 'is-on' : ''}
+            onClick={() => chooseBasis('report')}
+            title="The patient's discharge date — the date the reports are filed under. Today = today's patients only."
+          >
+            Report date
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={basis === 'sent'}
+            className={basis === 'sent' ? 'is-on' : ''}
+            onClick={() => chooseBasis('sent')}
+            title="When the WhatsApp message went out — includes earlier patients' reports sent or re-sent in this period."
+          >
+            Sent date
+          </button>
+        </div>
         </div>
         {preset === 'custom' && (
           <div className="wa-custom">
@@ -1044,8 +1089,12 @@ export default function AdminDashboard({ readOnly = false }) {
           )}
         </div>
         <div className="wa-range-note">
-          {range.from === range.to ? dmy(range.from) : `${dmy(range.from)} to ${dmy(range.to)}`}
-          {summary && ` · ${summary.total} message${summary.total === 1 ? '' : 's'}${summary.patients ? ` · ${summary.patients} patients` : ''}`}
+          {basis === 'report' ? 'Patients discharged ' : 'Messages sent '}
+          <b>{range.from === range.to ? dmy(range.from) : `${dmy(range.from)} to ${dmy(range.to)}`}</b>
+          {summary &&
+            (basis === 'report'
+              ? ` · ${summary.patients} patient${summary.patients === 1 ? '' : 's'} · ${summary.total} message${summary.total === 1 ? '' : 's'}`
+              : ` · ${summary.total} message${summary.total === 1 ? '' : 's'}${summary.patients ? ` · ${summary.patients} patient${summary.patients === 1 ? '' : 's'}` : ''}`)}
         </div>
       </div>
 

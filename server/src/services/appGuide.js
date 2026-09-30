@@ -160,10 +160,11 @@ To send sooner: ask WATI support to reset or raise the limit (more quota needs t
   {
     id: 'monitor',
     title: 'WhatsApp Monitor screen (/admin)',
-    keywords: 'monitor admin whatsapp monitor dashboard analytics live check wati now presets yesterday filters tiles charts kpi',
+    keywords: 'monitor admin whatsapp monitor dashboard analytics live check wati now presets today yesterday filters tiles charts kpi dates by report date sent date discharged count wrong more patients',
     text: `The WhatsApp Monitor (the Monitor tab, or /admin) tracks every message:
 - Header: "Live · updated …" (refreshes every 15 s), when WATI was last checked or that it's paused, and "Check WATI now" (asks WATI for the latest ticks; max once per 5 min).
-- Filters in one row: date presets (Today, Yesterday — the default, Last 7 days, Last 30 days, This month, Custom), status chips, document, trigger (automatic / manual click / share / retry) and search by name, IP or number.
+- Filters in one row: date presets (Today, Yesterday — the default, Last 7 days, Last 30 days, This month, Custom), "Dates by", status chips, document, trigger (automatic / manual click / share / retry) and search by name, IP or number.
+- "Dates by": Report date (default) counts patients by discharge date — the date their reports are filed under — so Today = today's patients only. Sent date counts by when the message went out, so Today also includes earlier patients' reports sent or re-sent today (e.g. after a WATI limit). Tiles, charts, lists and exports all follow it; the line under the filters says which is used.
 - Tiles: Triggered, Sent, Delivered, Read, Pending, Failed — each with a trend and the change vs the previous period.
 - WATI connection card, Coverage (discharged patients: sent / not sent / no mobile / no report yet), Needs attention (failed — can be fixed, not on WhatsApp, unread 24 h+, one tick 6 h+).
 - Charts: Messages over time, Delivery & read rate, When patients open reports, How long until read, Status by trigger, Why messages fail, By department, Who clicked.
