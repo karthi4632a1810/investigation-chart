@@ -30,7 +30,9 @@ export async function countWatiCall(kind, { rateLimited = false } = {}) {
   const inc = { [kind]: 1 };
   if (rateLimited) inc.rateLimited = 1;
   const c = await getMongoCollection(COLLECTION);
-  await c.updateOne({ _id: istDay() }, { $inc: inc, $set: { updatedAt: new Date() } }, { upsert: true });
+  const now = new Date();
+  // Whichever came last tells whether WATI is accepting calls right now.
+  await c.updateOne({ _id: istDay() }, { $inc: inc, $set: { updatedAt: now, [rateLimited ? 'lastRefusedAt' : 'lastOkAt']: now } }, { upsert: true });
 }
 
 export function watiPausedUntil() {
@@ -76,7 +78,10 @@ export async function watiUsage() {
       { send: 0, status: 0, other: 0, rateLimited: 0 },
     );
   const withTotal = (s) => ({ ...s, total: s.send + s.status + s.other });
+  const latest = (key) => rows.map((r) => r[key]).filter(Boolean).sort((a, b) => b - a)[0] || null;
   return {
+    lastOkAt: latest('lastOkAt'),
+    lastRefusedAt: latest('lastRefusedAt'),
     today: withTotal(sum(rows.filter((r) => r._id === day))),
     month: withTotal(sum(rows)),
     statusChecksPerDay: STATUS_CHECKS_PER_DAY,

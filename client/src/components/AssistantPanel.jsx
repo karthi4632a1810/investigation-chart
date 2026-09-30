@@ -1,16 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
-import { EXPORT_LABELS, askAssistant, downloadLabResults } from '../api/client';
+import { EXPORT_LABELS, askAssistant, downloadLabResults, sendTestWhatsApp } from '../api/client';
 import ExportShareBar from './ExportShareBar';
-import { CloseIcon, RotateCcwIcon, SendIcon, SparklesIcon } from './Icons';
+import { CheckIcon, CloseIcon, RotateCcwIcon, SendIcon, SparklesIcon, WhatsAppIcon } from './Icons';
 
 const SUGGESTIONS = [
   "Show today's discharges",
   'Patients with urine glucose negative last week',
-  'Who had low haemoglobin yesterday?',
-  'How do I send reports on WhatsApp?',
+  'Is WhatsApp working right now?',
+  "Yesterday's WhatsApp messages",
+  'What does the red No Summary button mean?',
+  'Send a test WhatsApp message',
 ];
 
-const SCREEN_NAMES = { reports: 'Discharge Reports', labFinder: 'Lab Finder', search: 'Lab Search', wati: 'WATI Settings' };
+const SCREEN_NAMES = { reports: 'Discharge Reports', labFinder: 'Lab Finder', search: 'Lab Search', wati: 'WATI Settings', admin: 'WhatsApp Monitor' };
+const WA_STATUS = { pending: 'Pending', sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Failed' };
+
+function formatIst(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
+}
 const FLAG = { high: 'High', low: 'Low', normal: 'Normal' };
 
 /** The model sometimes uses **bold** — show it as bold, everything else as plain text. */
@@ -149,8 +159,160 @@ function ShareBlock({ block }) {
   );
 }
 
-function Blocks({ blocks, onNavigate }) {
+/** Live portal status: rows with a coloured dot for good / needs a look / problem. */
+function StatusBlock({ block, onNavigate }) {
+  return (
+    <div className="ai-block ai-status">
+      {block.sections.map((section) => (
+        <div key={section.title} className="ai-status-section">
+          <div className="ai-block-title">{section.title}</div>
+          <dl className="ai-status-rows">
+            {section.rows.map((row) => (
+              <div key={row.label} className={`ai-status-row ${row.tone ? `is-${row.tone}` : ''}`}>
+                <dt>
+                  {row.tone && <span className="ai-status-dot" aria-hidden="true" />}
+                  {row.label}
+                </dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+          {section.link && (
+            <div className="ai-block-links">
+              <button type="button" className="ai-link" onClick={() => onNavigate({ view: section.link.view })}>
+                {section.link.label}
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** WhatsApp messages for dates or one patient. */
+function WhatsAppBlock({ block, onNavigate }) {
+  const [all, setAll] = useState(false);
+  const rows = all ? block.rows : block.rows.slice(0, 8);
+  const t = block.totals;
+  return (
+    <div className="ai-block">
+      <div className="ai-block-title">{block.title}</div>
+      {t && (
+        <div className="ai-wa-totals">
+          <span><b>{t.total}</b> messages</span>
+          <span><b>{t.sent}</b> sent</span>
+          <span><b>{t.delivered}</b> delivered</span>
+          <span className="is-read"><b>{t.read}</b> read</span>
+          {t.pending > 0 && <span className="is-pending"><b>{t.pending}</b> pending</span>}
+          <span className={t.failed ? 'is-failed' : ''}><b>{t.failed}</b> failed</span>
+        </div>
+      )}
+      {block.rows.length === 0 ? (
+        <div className="ai-block-empty">No WhatsApp messages found.</div>
+      ) : (
+        <ul className="ai-wa-list">
+          {rows.map((r) => (
+            <li key={r.id}>
+              <span className={`ai-wa-status is-${r.notOnWhatsApp ? 'failed' : r.status}`}>{r.notOnWhatsApp ? 'Not on WhatsApp' : WA_STATUS[r.status] || r.status}</span>
+              <span className="ai-wa-main">
+                <b>{r.patientName || r.ipNo || 'Patient'}</b>
+                <span>
+                  {r.document}
+                  {r.ipNo ? ` · ${r.ipNo}` : ''} · {formatIst(r.at)}
+                </span>
+                {r.reason && (
+                  <span className="ai-wa-reason">
+                    {r.reason}
+                    {r.nextRetryAt ? ` · retry ${formatIst(r.nextRetryAt)}` : ''}
+                  </span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="ai-block-links">
+        {block.rows.length > 8 && (
+          <button type="button" className="ai-link" onClick={() => setAll((v) => !v)}>
+            {all ? 'Show fewer' : `Show all ${block.rows.length}`}
+          </button>
+        )}
+        <button type="button" className="ai-link" onClick={() => onNavigate({ view: 'admin' })}>
+          Open WhatsApp Monitor
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** A test WhatsApp message waiting for Send — or its result when "yes" sent it. */
+function TestMessageBlock({ block, onDone }) {
+  const [state, setState] = useState(block.status); // ready | sending | sent | failed | cancelled
+  const [error, setError] = useState(block.error || '');
+
+  async function send() {
+    setState('sending');
+    setError('');
+    try {
+      await sendTestWhatsApp(block.message, block.toNumber);
+      setState('sent');
+      onDone?.();
+    } catch (err) {
+      setError(err.message);
+      setState('failed');
+    }
+  }
+
+  return (
+    <div className={`ai-block ai-test is-${state}`}>
+      <div className="ai-block-title">
+        <WhatsAppIcon size={14} /> Test message to {block.display}
+      </div>
+      <div className="ai-test-bubble">{block.message}</div>
+      <div className="ai-test-note">Sent with the report template and a small test PDF.</div>
+      {state === 'ready' && (
+        <div className="ai-test-actions">
+          <button type="button" className="xs-send" onClick={send}>
+            Send
+          </button>
+          <button
+            type="button"
+            className="ai-link"
+            onClick={() => {
+              setState('cancelled');
+              onDone?.();
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+      {state === 'sending' && <div className="ai-test-status">Sending…</div>}
+      {state === 'sent' && (
+        <div className="ai-test-status is-ok" role="status">
+          <CheckIcon size={13} /> Sent — WATI accepted it. Check that phone.
+        </div>
+      )}
+      {state === 'failed' && (
+        <div className="ai-test-status is-error" role="alert">
+          Not sent: {error}
+          <button type="button" className="ai-link" onClick={send}>
+            Try again
+          </button>
+        </div>
+      )}
+      {state === 'cancelled' && <div className="ai-test-status">Cancelled — nothing was sent.</div>}
+    </div>
+  );
+}
+
+function Blocks({ blocks, onNavigate, onTestDone }) {
   return blocks.map((b, i) => {
+    if (b.type === 'testMessage') return <TestMessageBlock key={i} block={b} onDone={onTestDone} />;
+    if (b.type === 'testDraft') return null;
+    if (b.type === 'status') return <StatusBlock key={i} block={b} onNavigate={onNavigate} />;
+    if (b.type === 'whatsapp') return <WhatsAppBlock key={i} block={b} onNavigate={onNavigate} />;
     if (b.type === 'patients') return <PatientsBlock key={i} block={b} onNavigate={onNavigate} />;
     if (b.type === 'labResults') return <LabResultsBlock key={i} block={b} onNavigate={onNavigate} />;
     if (b.type === 'download') return <DownloadBlock key={i} block={b} />;
@@ -167,7 +329,7 @@ function Blocks({ blocks, onNavigate }) {
   });
 }
 
-export default function AssistantPanel({ onNavigate }) {
+export default function AssistantPanel({ onNavigate, view }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -194,10 +356,23 @@ export default function AssistantPanel({ onNavigate }) {
     try {
       const res = await askAssistant(
         history.map(({ role, content }) => ({ role, content })),
-        context,
+        { ...context, view },
       );
       const next = { ...context };
       for (const b of res.blocks || []) {
+        // Test message flow: remember the typed text until the number comes, then the card until it's sent.
+        if (b.type === 'testDraft') {
+          if (b.message) next.testDraft = { message: b.message };
+          else {
+            delete next.testDraft;
+            delete next.pendingTest;
+          }
+        }
+        if (b.type === 'testMessage') {
+          delete next.testDraft;
+          if (b.status === 'ready') next.pendingTest = { message: b.message, toNumber: b.toNumber };
+          else delete next.pendingTest;
+        }
         if (b.type === 'labResults') next.lastLabQuery = b.query;
         if (b.type === 'patients' && b.patients.length === 1) next.lastPatient = { ipNo: b.patients[0].ipNo, date: b.patients[0].date };
         if (b.type === 'navigate') onNavigate(b);
@@ -229,7 +404,7 @@ export default function AssistantPanel({ onNavigate }) {
             </div>
             <div className="ai-head-text">
               <div className="ai-head-title">Ask AI</div>
-              <div className="ai-head-sub">Find reports, lab results and how-tos</div>
+              <div className="ai-head-sub">Reports, lab results, WhatsApp status and how-tos</div>
             </div>
             {messages.length > 0 && (
               <button
@@ -254,7 +429,7 @@ export default function AssistantPanel({ onNavigate }) {
             {messages.length === 0 && (
               <div className="ai-welcome">
                 <div className="ai-welcome-title">How can I help?</div>
-                <p>Ask for a patient's reports, find patients by lab result, or ask how to do something in the portal.</p>
+                <p>Ask for a patient's reports, find patients by lab result, check whether WhatsApp is working, or ask what anything on screen means.</p>
                 <div className="ai-suggestions">
                   {SUGGESTIONS.map((s) => (
                     <button key={s} type="button" className="ai-suggestion" onClick={() => send(s)}>
@@ -268,7 +443,20 @@ export default function AssistantPanel({ onNavigate }) {
             {messages.map((m, i) => (
               <div key={i} className={`ai-msg is-${m.role} ${m.error ? 'is-error' : ''}`}>
                 {m.content && <div className="ai-bubble">{m.role === 'assistant' ? formatReply(m.content) : m.content}</div>}
-                {m.blocks?.length > 0 && <Blocks blocks={m.blocks} onNavigate={onNavigate} />}
+                {m.blocks?.length > 0 && (
+                  <Blocks
+                    blocks={m.blocks}
+                    onNavigate={onNavigate}
+                    onTestDone={() =>
+                      setContext((c) => {
+                        const next = { ...c };
+                        delete next.pendingTest;
+                        delete next.testDraft;
+                        return next;
+                      })
+                    }
+                  />
+                )}
               </div>
             ))}
 

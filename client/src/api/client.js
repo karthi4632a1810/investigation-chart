@@ -284,6 +284,11 @@ export function fetchWatiUsage() {
 
 // ---- Ask AI ---------------------------------------------------------------
 
+/** The Send button on an Ask AI test-message card. */
+export function sendTestWhatsApp(message, toNumber) {
+  return postJson(`${API_BASE}/assistant/test-whatsapp`, { message, toNumber });
+}
+
 export function askAssistant(messages, context) {
   return postJson(`${API_BASE}/assistant`, { messages, context });
 }

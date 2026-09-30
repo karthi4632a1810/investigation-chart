@@ -448,7 +448,7 @@ export default function App() {
         )}
       </main>
 
-      {devMode && <AssistantPanel onNavigate={handleAssistantNavigate} />}
+      {devMode && <AssistantPanel onNavigate={handleAssistantNavigate} view={view} />}
     </div>
   );
 }

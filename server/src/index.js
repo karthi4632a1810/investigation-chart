@@ -24,6 +24,7 @@ import { hasCriteria, labResultsCoverage, listLabTests, normaliseQuery, searchLa
 import { buildExport, EXPORT_FORMATS, exportFileName, shareLabResultsOnWhatsApp } from './services/labExportService.js';
 import { toWatiNumber } from './services/watiService.js';
 import { runAssistant } from './services/assistantService.js';
+import { sendTestWhatsApp } from './services/whatsappTestService.js';
 import {
   getPollState,
   getWhatsappMessage,
@@ -628,9 +629,19 @@ app.get('/api/detail/:orderid', async (req, res) => {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
     if (!messages.length) return res.status(400).json({ ok: false, error: 'Ask a question' });
     try {
-      res.json({ ok: true, ...(await runAssistant({ messages, context: req.body?.context || {} })) });
+      res.json({ ok: true, ...(await runAssistant({ messages, context: req.body?.context || {}, user: getSessionUser(req) })) });
     } catch (error) {
       res.status(502).json({ ok: false, error: error.message });
+    }
+  });
+
+  /** The Send button on an Ask AI test-message card. */
+  app.post('/api/assistant/test-whatsapp', async (req, res) => {
+    try {
+      const sent = await sendTestWhatsApp({ message: req.body?.message, toNumber: req.body?.toNumber, triggeredBy: getSessionUser(req) });
+      res.json({ ok: true, ...sent });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
     }
   });
 

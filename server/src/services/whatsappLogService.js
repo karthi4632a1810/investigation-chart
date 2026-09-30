@@ -78,6 +78,8 @@ export async function logSendStart(entry) {
     dischargeDate: entry.dischargeDate || null,
     ipNo: entry.ipNo || null,
     patientName: entry.patientName || '',
+    // The template's "Dear …" name when it isn't the patient's (test messages).
+    recipientName: entry.recipientName || null,
     department: entry.department || '',
     toNumber: digitsOnly(entry.toNumber),
     liveMode: Boolean(entry.liveMode),
@@ -259,7 +261,9 @@ async function fetchWatiMessages(number, pageSize = 20) {
 /** Picks the WATI message for our record: same document line, patient name, sent within a few minutes. */
 function matchWatiItem(doc, items, claimed) {
   const sentAt = new Date(doc.acceptedAt || doc.createdAt).getTime();
-  const firstName = String(doc.patientName || '').split(/[\s.]+/).filter((w) => w.length > 2)[0] || '';
+  const firstName = String(doc.recipientName || doc.patientName || '').split(/[\s.]+/).filter((w) => w.length > 2)[0] || '';
+  // Reports carry "Attached: <document>"; a test message carries only the typed text.
+  const label = ['lab', 'summary', 'lab_results'].includes(doc.document) ? doc.documentLabel : '';
   let best = null;
   for (const item of items) {
     if (claimed.has(item.id)) continue;
@@ -267,7 +271,7 @@ function matchWatiItem(doc, items, claimed) {
     const delta = created - sentAt;
     if (delta < -120_000 || delta > 10 * 60_000) continue;
     const text = String(item.finalText ?? item.text ?? '');
-    if (doc.documentLabel && text && !text.includes(`Attached: ${doc.documentLabel}`)) continue;
+    if (label && text && !text.includes(`Attached: ${label}`)) continue;
     if (firstName && text && !text.toUpperCase().includes(firstName.toUpperCase())) continue;
     if (!best || Math.abs(delta) < Math.abs(best.delta)) best = { item, delta };
   }
@@ -1171,4 +1175,69 @@ export async function whatsappInsights(q = {}) {
     attention: f.attention[0] ? { ...f.attention[0], _id: undefined } : { fixable: 0, nowa: 0, unread24: 0, stuck6: 0, autoRetrying: 0 },
     coverage: await coverage(q.from, q.to),
   };
+}
+
+// ---- For "Ask AI" (assistantService.js) ------------------------------------
+
+/**
+ * Messages for a date range or one patient, trimmed for the assistant: the
+ * rows (with names) go to the page; `facts` (no names or phone numbers) go to
+ * the AI model.
+ */
+export async function whatsappForAssistant({ from, to, ipNo, status, limit = 50 } = {}) {
+  const c = await collection();
+  const filter = ipNo ? { ipNo: { $regex: `^${escapeRegex(ipNo)}$`, $options: 'i' } } : buildFilter({ from, to, status });
+  if (ipNo && status) filter.status = status;
+  const docs = await c.find(filter).sort({ createdAt: -1 }).limit(Math.min(limit, 200)).toArray();
+  const rows = docs.map((d) => ({
+    id: String(d._id),
+    patientName: d.patientName || '',
+    ipNo: d.ipNo || '',
+    dischargeDate: d.dischargeDate || null,
+    document: d.documentLabel || d.document,
+    status: d.status,
+    notOnWhatsApp: Boolean(d.notOnWhatsApp),
+    at: d.readAt || d.deliveredAt || d.acceptedAt || d.failedAt || d.createdAt,
+    sentAt: d.acceptedAt || d.createdAt,
+    trigger: d.trigger,
+    attempts: d.attempts || 1,
+    reason: d.status === 'failed' ? failureCategory(d) : null,
+    nextRetryAt: d.status === 'failed' ? d.nextRetryAt || null : null,
+  }));
+  const failures = {};
+  for (const r of rows) if (r.reason) failures[r.reason] = (failures[r.reason] || 0) + 1;
+  return {
+    rows,
+    facts: {
+      messages: rows.length,
+      byStatus: rows.reduce((acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }), {}),
+      failureReasons: failures,
+      waitingForAutomaticRetry: rows.filter((r) => r.nextRetryAt).length,
+      ...(ipNo
+        ? {
+            perMessage: rows.map((r) => ({
+              document: r.document,
+              status: r.status,
+              sentAt: r.sentAt,
+              lastChangeAt: r.at,
+              trigger: r.trigger,
+              attempts: r.attempts,
+              reason: r.reason,
+              nextRetryAt: r.nextRetryAt,
+            })),
+          }
+        : {}),
+    },
+  };
+}
+
+/** Reports waiting for an automatic re-send, and how many WATI refused (usage limit) in the last day. */
+export async function retryQueueFacts() {
+  const c = await collection();
+  const [waiting, limited] = await Promise.all([
+    c.countDocuments({ status: 'failed', nextRetryAt: { $ne: null } }),
+    c.countDocuments({ status: 'failed', rateLimited: true, failedAt: { $gte: new Date(Date.now() - 86400_000) } }),
+  ]);
+  const next = await c.find({ status: 'failed', nextRetryAt: { $ne: null } }).sort({ nextRetryAt: 1 }).limit(1).next();
+  return { waiting, refusedByUsageLimitLast24h: limited, nextRetryAt: next?.nextRetryAt || null };
 }

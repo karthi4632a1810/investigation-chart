@@ -4,16 +4,29 @@
  * The model (Groq, falling back to Gemini; both via their OpenAI-compatible
  * chat APIs) only decides which read-only tool to call and with what
  * arguments. Tools run here against Mongo; what they find is returned to the
- * page as `blocks` (patient cards, result tables, download/share options) and
- * the model is told only counts and non-identifying facts — patient names and
- * lab values never go to the AI provider from tool results. Nothing is sent on
- * WhatsApp from here: the share tool only prepares a confirmation the user
- * must press Send on.
+ * page as `blocks` (patient cards, result tables, download/share options,
+ * status cards) and the model is told only counts and non-identifying facts —
+ * patient names, phone numbers and lab values never go to the AI provider from
+ * tool results. Nothing is sent on WhatsApp without the user confirming: the
+ * share tool only prepares a card the user must press Send on, and a test
+ * message goes only after its card was shown and the user pressed Send or said
+ * yes to exactly that message and number (ctx.pendingTest).
+ *
+ * Questions about the portal itself — what a button or colour means, why
+ * WhatsApp isn't sending, WATI's quota, the 15-minute check — are answered from
+ * the built-in manual (appGuide.js) and live status (app_status,
+ * whatsapp_report), never guessed.
  */
 import { config } from '../config.js';
 import { getMongoCollection } from './mongo.js';
-import { loadReportIndex } from './dischargeReportService.js';
+import { getSchedulerStatus, loadReportIndex } from './dischargeReportService.js';
 import { labResultsCoverage, listLabTests, normaliseQuery, searchLabResults, hasCriteria } from './labResultsService.js';
+import { GUIDE, searchGuide } from './appGuide.js';
+import { whatsappLinkInfo } from './publicLinkService.js';
+import { watiUsage } from './watiBudget.js';
+import { getWatiSettings } from './watiSettingsService.js';
+import { getPollState, retryQueueFacts, whatsappForAssistant, whatsappSummary } from './whatsappLogService.js';
+import { cleanTestMessage, cleanTestNumber, formatNumber, sendTestWhatsApp } from './whatsappTestService.js';
 
 const GROQ_KEY = process.env.GROQ_API_KEY || process.env.GROQ_API;
 const GROQ_URL = 'https://api.groq.com/openai/v1';
@@ -71,12 +84,23 @@ function todayIst() {
   return { iso: `${parts.year}-${parts.month}-${parts.day}`, weekday: parts.weekday };
 }
 
+const SCREEN_LABELS = { reports: 'Discharge Reports', labFinder: 'Lab Finder', search: 'Lab Search', wati: 'WATI Settings', admin: 'WhatsApp Monitor' };
+
 function describeContext(context) {
   const lines = [];
+  if (context.view && SCREEN_LABELS[context.view]) {
+    lines.push(`- The user is on the ${SCREEN_LABELS[context.view]} screen. "This screen", "here" etc. mean it.`);
+  }
   const q = context.lastLabQuery;
   if (q) {
     const parts = [q.test && `test "${q.test}"`, q.value && `result "${q.value}"`, q.status && `flag ${q.status}`, q.from && `from ${q.from}`, q.to && `to ${q.to}`].filter(Boolean);
     lines.push(`- The latest lab results list on screen: ${parts.join(', ') || 'a lab search'}. "That list", "these results" etc. mean this — use target "lab_results".`);
+  }
+  if (context.testDraft?.message) {
+    lines.push(`- A test WhatsApp message is being prepared: "${context.testDraft.message}" — the number is still needed.`);
+  }
+  if (context.pendingTest) {
+    lines.push(`- A test WhatsApp card is waiting for confirmation: "${context.pendingTest.message}" to +${context.pendingTest.toNumber}. If the user says yes / send / ok, call send_test_whatsapp with that message and number and confirm: true.`);
   }
   if (context.lastPatient?.ipNo) {
     lines.push(`- The latest single patient shown: ${context.lastPatient.ipNo} (discharged ${context.lastPatient.date}). "This patient", "their report" etc. mean this — use target "patient".`);
@@ -90,11 +114,7 @@ function systemPrompt(context = {}) {
   return `You are the help assistant inside the ${hospital} Diagnostics Summary Portal, used by hospital staff.
 Today is ${today.weekday}, ${today.iso} (India time). Resolve "today", "yesterday", "last week", "this month" etc. from this date. Tool dates are YYYY-MM-DD; in replies write dates as DD-MM-YYYY.
 
-The portal has four screens:
-- Lab Search: look up one patient's lab results straight from the EMR by UHID or IP number and a date range; shows a chart.
-- Discharge Reports: every discharged patient by discharge date, with their Lab Report and Discharge Summary PDFs (made automatically every 15 minutes). Cards or Table view, filters, Advanced Search. The green WhatsApp button sends both PDFs. A red "No Summary" means the EMR had no patient data for that summary.
-- Lab Finder: search stored lab values across all patients (test, result, High/Low, number range, dates), then download PDF / Excel / Word / CSV or share on WhatsApp.
-- WATI Settings: Test mode (manual sends go to a test number) or Live (reports go to patients automatically).
+Screens: Lab Search (one patient's results from the EMR), Discharge Reports (each discharged patient's Lab Report + Discharge Summary PDFs, made every 15 minutes; WhatsApp button), Lab Finder (lab values across patients, exports), WATI Settings (Test mode / Live), WhatsApp Monitor (/admin: every WhatsApp message, delivered/read/failed, WATI quota).
 
 ${describeContext(context)}
 Rules:
@@ -104,8 +124,12 @@ Rules:
 - For lab questions use search_lab_results. Qualitative results (negative, positive, nil, trace, reactive) go in "value"; "high"/"low"/"abnormal" go in "status"; numbers in "min"/"max". If you're unsure of the test name, or the search finds nothing, call list_lab_tests and ask which test they mean.
 - After showing results, offer the options: download as PDF, Excel, Word or CSV, or share on WhatsApp. When they pick a format, call offer_download. When they want WhatsApp, ask for the number if they haven't given it, then call offer_whatsapp_share. Never say a message was sent — the user confirms with the Send button.
 - To take the user to a screen, call open_screen.
-- For "how do I…" questions, explain in short numbered steps using the screen names above, and open the screen if it helps.
-- Keep replies short (1-3 sentences). Reply in English, unless the user writes in Tamil or another language — then use that language.`;
+- Questions about the portal itself — how to do something, what a screen, button, badge, colour, tick or message means, why something happened, what a setting does — call app_help and answer only from what it returns. Never guess how the portal works.
+- Live questions — is WhatsApp working, why reports aren't sending, WATI usage limit / 429, Test or Live mode, webhook, PDF links, when the next discharge check runs — call app_status. For WhatsApp counts, failures or one patient's messages, call whatsapp_report. Combine with app_help to explain what to do. Give times as shown (India time). Report watiApi as given — if it says UNKNOWN, say it isn't known yet whether WATI is accepting messages.
+- Only mention buttons, icons, menus and settings that app_help describes — never invent UI. Never mention tool names; offer to do it instead (e.g. "Shall I open the WhatsApp Monitor?").
+- To send a test WhatsApp message, call send_test_whatsapp with whatever the user gave. If it says the message or the number is missing, ask for that one thing (message first, then number) and nothing else. When it shows the confirmation card, tell the user to press Send or say yes. Only say it was sent when the tool returns sent: true.
+- For "how do I…" answers use short numbered steps with the screen names, and open the screen if it helps.
+- Keep replies short (1-4 sentences, or a few steps). Reply in English, unless the user writes in Tamil or another language — then use that language.`;
 }
 
 const TOOLS = [
@@ -163,12 +187,58 @@ const TOOLS = [
     },
   },
   {
+    name: 'app_help',
+    description:
+      "The portal's manual: what every screen, button, badge, colour, status and tick means, how reports and WhatsApp sending work, retries, WATI usage limit, webhook, PDF links, and IT/deploy notes. Use for any question about the portal itself.",
+    parameters: {
+      type: 'object',
+      properties: { question: { type: 'string', description: "The user's question or its key words, e.g. 'red No Summary button', 'blue top line on card', '429'" } },
+      required: ['question'],
+    },
+  },
+  {
+    name: 'app_status',
+    description:
+      'Live status of the portal: WhatsApp/WATI (Test or Live mode, test number, extra line, template, whether WATI is refusing calls and until when, API calls used today/this month, webhook, PDF links, messages today, reports waiting to retry) and the 15-minute discharge check (last run, result, next run). Shows a status card.',
+    parameters: {
+      type: 'object',
+      properties: { area: { type: 'string', enum: ['whatsapp', 'scheduler', 'all'], description: 'Default all' } },
+    },
+  },
+  {
+    name: 'whatsapp_report',
+    description:
+      "WhatsApp messages for dates or one patient: counts by status (sent, delivered, read, failed, pending), failure reasons, what's waiting to retry. With ip_no, that patient's messages and why any failed. Shows a message list on screen.",
+    parameters: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'Start date YYYY-MM-DD (default today)' },
+        to: { type: 'string', description: 'End date YYYY-MM-DD (default = from)' },
+        ip_no: { type: 'string', description: "One patient's IP number" },
+        status: { type: 'string', enum: ['pending', 'sent', 'delivered', 'read', 'failed'] },
+      },
+    },
+  },
+  {
+    name: 'send_test_whatsapp',
+    description:
+      "Send a test WhatsApp message (the user's text) to a number, through the hospital's approved template with a small test PDF. Call it with whatever the user gave; it asks for anything missing and shows a confirmation card. Use confirm: true only after the card was shown and the user said yes/send.",
+    parameters: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'The text to send, exactly as the user wrote it (without surrounding quotes)' },
+        to_number: { type: 'string', description: 'WhatsApp number, e.g. +919962460782' },
+        confirm: { type: 'boolean', description: 'true only when the user confirmed the card that was shown' },
+      },
+    },
+  },
+  {
     name: 'open_screen',
     description: 'Take the user to a screen of the portal.',
     parameters: {
       type: 'object',
       properties: {
-        screen: { type: 'string', enum: ['discharge_reports', 'lab_finder', 'lab_search', 'wati_settings'] },
+        screen: { type: 'string', enum: ['discharge_reports', 'lab_finder', 'lab_search', 'wati_settings', 'whatsapp_monitor'] },
         date: { type: 'string', description: 'For discharge_reports: the date to show, YYYY-MM-DD' },
         filter: { type: 'string', description: 'For discharge_reports: text to filter the list by (name, IP, doctor, ward)' },
       },
@@ -225,6 +295,130 @@ async function findPatientRecord(ipNo, date) {
   return c.find(filter, { projection: { _id: 0 } }).sort({ date: -1 }).limit(1).next();
 }
 
+// ---- Live status (app_status) -------------------------------------------------
+
+const dmy = (iso) => String(iso || '').split('-').reverse().join('-');
+
+/** A time as India time, e.g. "30-09-2026 10:32". */
+function istTime(date) {
+  if (!date) return null;
+  const d = new Date(date);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+    .format(d)
+    .replace(/\//g, '-')
+    .replace(',', '');
+}
+
+async function whatsappStatusFacts() {
+  const today = todayIst().iso;
+  const [settings, usage, queue, todaySummary] = await Promise.all([
+    getWatiSettings(),
+    watiUsage(),
+    retryQueueFacts(),
+    whatsappSummary({ from: today, to: today }),
+  ]);
+  const poll = getPollState();
+  const link = whatsappLinkInfo();
+  const configured = Boolean(config.wati.endpoint && config.wati.accessToken);
+  const extraLine = String(settings.secondParam || '').trim();
+  // Only what this app has seen: its latest WATI call was refused (or it's pausing after one).
+  const lastOk = usage.lastOkAt ? new Date(usage.lastOkAt) : null;
+  const lastRefused = usage.lastRefusedAt ? new Date(usage.lastRefusedAt) : null;
+  const refusing = Boolean(usage.pausedUntil) || Boolean(lastRefused && (!lastOk || lastRefused > lastOk));
+  const c = todaySummary.counts;
+  const updates = poll.webhook.active ? 'WATI webhook (instant)' : poll.enabled ? `Status checks (max ${poll.dailyChecks}/day)` : 'Off';
+
+  const facts = {
+    watiConfigured: configured,
+    mode: settings.liveEnabled ? 'Live — sent automatically to patients' : 'Test mode — nothing automatic; manual sends go to the test number',
+    extraLine: extraLine || null,
+    template: config.wati.templateId,
+    liveMode: Boolean(settings.liveEnabled),
+    // The app can't ask WATI for free whether it's accepting calls — it only knows what its own calls got back.
+    watiApi: refusing
+      ? `REFUSING calls — WATI API usage limit (429) since ${istTime(lastRefused || usage.pausedUntil)}. Refused reports are re-sent automatically.`
+      : lastOk && Date.now() - lastOk.getTime() < 6 * 3600_000
+        ? `Accepting calls — the latest call went through at ${istTime(lastOk)}`
+        : 'UNKNOWN — this app has made no WATI calls in the last few hours, so it cannot tell whether WATI is accepting. Do not say WhatsApp is working.',
+    callsRefusedToday: usage.today.rateLimited,
+    pausedUntil: istTime(usage.pausedUntil),
+    lastUsageLimitAt: istTime(usage.lastRateLimitAt),
+    refusedByUsageLimitLast24h: queue.refusedByUsageLimitLast24h,
+    apiCallsToday: usage.today,
+    apiCallsThisMonth: usage.month,
+    statusUpdates: updates,
+    lastWebhookEvent: istTime(poll.webhook.lastEventAt),
+    lastStatusCheck: istTime(poll.at),
+    pdfLinks: link.https ? `https via ${link.baseUrl}, valid ${link.days} days` : `plain http (MinIO), valid ${link.days} days — WATI inbox can't preview them`,
+    messagesToday: { ...c, total: todaySummary.total },
+    waitingForAutomaticRetry: queue.waiting,
+    nextRetryAt: istTime(queue.nextRetryAt),
+  };
+
+  const rows = [
+    { label: 'WATI', value: configured ? 'Configured' : 'Not configured', tone: configured ? 'ok' : 'bad' },
+    { label: 'Mode', value: settings.liveEnabled ? 'Live (to patients)' : 'Test mode', tone: settings.liveEnabled ? 'ok' : 'warn' },
+    ...(settings.liveEnabled ? [] : [{ label: 'Test number', value: settings.fixedNumber }]),
+    ...(extraLine ? [{ label: 'Extra line', value: extraLine, tone: settings.liveEnabled ? 'warn' : undefined }] : []),
+    {
+      label: 'WATI API',
+      value: usage.pausedUntil
+        ? `Refusing calls (usage limit) · paused until ${istTime(usage.pausedUntil)}`
+        : refusing
+          ? `Refusing calls (usage limit) since ${istTime(lastRefused)}`
+          : lastOk && Date.now() - lastOk.getTime() < 6 * 3600_000
+            ? `Accepting calls · last OK ${istTime(lastOk)}`
+            : 'No recent calls, so not known yet',
+      tone: refusing ? 'bad' : lastOk && Date.now() - lastOk.getTime() < 6 * 3600_000 ? 'ok' : undefined,
+    },
+    { label: 'API calls', value: `Today ${usage.today.total} · this month ${usage.month.total}` },
+    { label: 'Delivery updates', value: updates, tone: poll.webhook.active ? 'ok' : 'warn' },
+    { label: 'PDF links', value: link.https ? `https · ${link.days} days` : `http · ${link.days} days`, tone: link.https ? 'ok' : 'warn' },
+    { label: 'Today', value: `${todaySummary.total} messages · ${c.sent + c.delivered + c.read} sent · ${c.delivered + c.read} delivered · ${c.read} read · ${c.failed} failed` },
+    ...(queue.waiting ? [{ label: 'Retry queue', value: `${queue.waiting} waiting · next ${istTime(queue.nextRetryAt)}`, tone: 'warn' }] : []),
+  ];
+  return { facts, section: { title: 'WhatsApp / WATI', rows, link: { view: 'admin', label: 'Open WhatsApp Monitor' } } };
+}
+
+function schedulerStatusFacts() {
+  const s = getSchedulerStatus();
+  const last = s.lastSummary || {};
+  const facts = {
+    runsEvery: '15 minutes (:00, :15, :30, :45)',
+    checking: Boolean(s.checkInProgress),
+    lastCheckFinished: istTime(s.lastCheckFinishedAt),
+    nextCheck: istTime(s.nextCheckAt),
+    lastResult: s.lastSummary
+      ? {
+          date: last.date,
+          found: last.found,
+          alreadyReady: last.alreadyReported,
+          labReportsMade: last.generated,
+          noLabData: last.noLabData,
+          failed: last.failed,
+          summariesMade: last.summaryGenerated,
+          summaryIssues: last.summaryFailed,
+        }
+      : null,
+  };
+  const rows = [
+    { label: 'Discharge check', value: s.checkInProgress ? 'Running now' : 'Every 15 minutes', tone: 'ok' },
+    { label: 'Last finished', value: istTime(s.lastCheckFinishedAt) || 'Not yet' },
+    { label: 'Next check', value: istTime(s.nextCheckAt) || '—' },
+    ...(s.lastSummary
+      ? [
+          {
+            label: 'Last result',
+            value: `${last.found ?? 0} found · ${last.alreadyReported ?? 0} ready · ${last.generated ?? 0} new lab · ${last.summaryGenerated ?? 0} new summaries${last.failed ? ` · ${last.failed} failed` : ''}`,
+            tone: last.failed || last.summaryFailed ? 'warn' : 'ok',
+          },
+        ]
+      : []),
+  ];
+  return { facts, section: { title: 'Discharge check', rows, link: { view: 'reports', label: 'Open Discharge Reports' } } };
+}
+
 /** Each tool returns { forModel, block? }. */
 const handlers = {
   async find_patient({ query, date }) {
@@ -249,8 +443,20 @@ const handlers = {
     if (department) docs = docs.filter((d) => String(d.department || '').toUpperCase().includes(String(department).toUpperCase()));
     const byDepartment = {};
     for (const d of docs) byDepartment[d.department || 'Unknown'] = (byDepartment[d.department || 'Unknown'] || 0) + 1;
+    const labReports = docs.filter((d) => d.dateCount !== undefined && d.dateCount !== null).length;
+    const summaries = docs.filter((d) => d.hasSummary && !d.summaryDataMissing).length;
+    const noSummary = docs.filter((d) => d.summaryDataMissing).length;
     return {
-      forModel: { date, count: docs.length, byDepartment },
+      forModel: {
+        date,
+        count: docs.length,
+        byDepartment,
+        labReports,
+        noLabData: docs.length - labReports,
+        dischargeSummaries: summaries,
+        noSummaryRedButton: noSummary,
+        summaryNotYetAvailable: docs.length - summaries - noSummary,
+      },
       block: docs.length ? { type: 'patients', title: `${docs.length} discharged on ${date}${department ? ` · ${department}` : ''}`, patients: docs.map(patientCard) } : undefined,
     };
   },
@@ -295,8 +501,94 @@ const handlers = {
     return { forModel: { tests: tests.map((t) => ({ name: t.section ? `${t.section} › ${t.test}` : t.test, results: t.count })) } };
   },
 
+  async app_help({ question }) {
+    const sections = searchGuide(question, 2);
+    return {
+      forModel: sections.length
+        ? { sections: sections.map((s) => ({ title: s.title, text: s.text })) }
+        : { note: 'Nothing in the manual matches. Topics available:', topics: GUIDE.map((s) => s.title) },
+    };
+  },
+
+  async app_status({ area = 'all' }) {
+    const facts = {};
+    const sections = [];
+    if (area === 'whatsapp' || area === 'all') {
+      const w = await whatsappStatusFacts();
+      facts.whatsapp = w.facts;
+      sections.push(w.section);
+    }
+    if (area === 'scheduler' || area === 'all') {
+      const s = schedulerStatusFacts();
+      facts.dischargeCheck = s.facts;
+      sections.push(s.section);
+    }
+    return { forModel: facts, block: { type: 'status', title: 'Portal status', sections } };
+  },
+
+  async whatsapp_report({ from, to, ip_no, status }) {
+    const today = todayIst().iso;
+    const ipNo = /^ip\s*\d+$/i.test(String(ip_no || '').trim()) ? String(ip_no).replace(/\s+/g, '').toUpperCase() : null;
+    const start = DATE_RE.test(from || '') ? from : today;
+    const end = DATE_RE.test(to || '') ? to : start;
+    const [lo, hi] = start <= end ? [start, end] : [end, start];
+    const st = ['pending', 'sent', 'delivered', 'read', 'failed'].includes(status) ? status : undefined;
+    const { rows, facts } = await whatsappForAssistant({ from: lo, to: hi, ipNo, status: st, limit: 100 });
+    let totals = null;
+    if (!ipNo) {
+      // Cumulative like the Monitor: a read message was also delivered and sent.
+      const summary = await whatsappSummary({ from: lo, to: hi, status: st });
+      totals = {
+        total: summary.total,
+        sent: summary.funnel.sent,
+        delivered: summary.funnel.delivered,
+        read: summary.counts.read,
+        pending: summary.counts.pending,
+        failed: summary.counts.failed,
+        patients: summary.patients,
+        notOnWhatsAppNumbers: summary.notOnWhatsApp.numbers,
+        note: 'sent includes delivered and read; delivered includes read',
+      };
+    }
+    const title = ipNo
+      ? `WhatsApp messages · ${ipNo}`
+      : `WhatsApp messages · ${lo === hi ? dmy(lo) : `${dmy(lo)} to ${dmy(hi)}`}${st ? ` · ${st}` : ''}`;
+    return {
+      forModel: { range: ipNo ? 'all dates' : { from: lo, to: hi }, ...(totals ? { totals } : {}), ...facts },
+      block: { type: 'whatsapp', title, rows, totals, from: lo, to: hi, ipNo },
+    };
+  },
+
+  async send_test_whatsapp({ message, to_number, confirm }, context) {
+    const text = cleanTestMessage(message) || context.testDraft?.message || '';
+    const number = cleanTestNumber(to_number) || (text && context.pendingTest?.message === text ? context.pendingTest.toNumber : '');
+    if (!text) return { forModel: { missing: 'message', askUser: 'What message should I send?' } };
+    if (!number) {
+      return {
+        forModel: { missing: 'number', message: text, askUser: 'Which WhatsApp number should I send it to?' },
+        block: { type: 'testDraft', message: text },
+      };
+    }
+    const pending = context.pendingTest;
+    if (confirm && pending && pending.message === text && pending.toNumber === number) {
+      try {
+        const sent = await sendTestWhatsApp({ message: text, toNumber: number, triggeredBy: context.user });
+        return { forModel: { sent: true, to: sent.sentTo }, block: { type: 'testMessage', status: 'sent', message: text, toNumber: number, display: sent.sentTo } };
+      } catch (error) {
+        return {
+          forModel: { sent: false, error: error.message },
+          block: { type: 'testMessage', status: 'failed', message: text, toNumber: number, display: formatNumber(number), error: error.message },
+        };
+      }
+    }
+    return {
+      forModel: { readyForConfirmation: true, message: text, to: formatNumber(number) },
+      block: { type: 'testMessage', status: 'ready', message: text, toNumber: number, display: formatNumber(number) },
+    };
+  },
+
   async open_screen({ screen, date, filter }) {
-    const views = { discharge_reports: 'reports', lab_finder: 'labFinder', lab_search: 'search', wati_settings: 'wati' };
+    const views = { discharge_reports: 'reports', lab_finder: 'labFinder', lab_search: 'search', wati_settings: 'wati', whatsapp_monitor: 'admin' };
     if (!views[screen]) return { forModel: { error: 'Unknown screen' } };
     return {
       forModel: { opened: screen },
@@ -458,9 +750,51 @@ async function ruleBasedAnswer(messages, ctx) {
   };
   const busyNote = 'The AI helper is busy right now, so I ran a direct search.';
 
+  // Test WhatsApp message: "send a test message" → message? → number? → card → Send / yes.
+  const lastAssistant = String(
+    [...messages]
+      .slice(0, -1)
+      .reverse()
+      .find((m) => m.role === 'assistant')?.content || '',
+  );
+  const testReply = (r) => {
+    if (r.missing === 'message') return 'Sure — what message should I send?';
+    if (r.missing === 'number') return `Got it — “${r.message}”. Which WhatsApp number should I send it to?`;
+    if (r.readyForConfirmation) return `Ready to send “${r.message}” to ${r.to}. Press Send below, or type yes.`;
+    if (r.sent) return `Sent — WATI accepted the test message to ${r.to}. Check that phone.`;
+    return `WATI didn't accept it: ${r.error}`;
+  };
+  const numberInText = /(?:\+|=)?\s*(?:91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}\b/.exec(text)?.[0];
+  const quoted = /["“‘']([^"”’']{1,300})["”’']/.exec(text)?.[1];
+  if (/^\s*(cancel|stop|never ?mind|no)\b/i.test(text) && (ctx.pendingTest || ctx.testDraft)) {
+    return { reply: 'Okay, cancelled — nothing was sent.', blocks: [{ type: 'testDraft', message: null }] };
+  }
+  if (ctx.pendingTest && /^\s*(yes|y|ok|okay|send|send it|confirm|go|go ahead|proceed|sure|do it)\b/i.test(text)) {
+    const r = await run('send_test_whatsapp', { ...ctx.pendingTest, to_number: ctx.pendingTest.toNumber, confirm: true });
+    return { reply: testReply(r), blocks };
+  }
+  if (/what message should i send/i.test(lastAssistant)) {
+    const r = await run('send_test_whatsapp', { message: quoted || text.replace(numberInText || '', ''), to_number: numberInText });
+    return { reply: testReply(r), blocks };
+  }
+  if (ctx.testDraft && numberInText) {
+    const r = await run('send_test_whatsapp', { to_number: numberInText });
+    return { reply: testReply(r), blocks };
+  }
+  if (
+    /\b(send|sent|test)\b[^\n]*\b(message|msg)\b|\btest\s+(whats\s*app|wa)\b/i.test(text) &&
+    !/\bip\s*\d/i.test(text) &&
+    !/\b(why|not|isn'?t|status|fail|failed|failing|how many)\b/i.test(text)
+  ) {
+    const r = await run('send_test_whatsapp', { message: quoted, to_number: numberInText });
+    return { reply: testReply(r), blocks };
+  }
+  // "Why isn't WhatsApp sending?" is a status question, not a request to send.
+  const statusQuestion = /\b(why|not|isn'?t|failed|fail|failing|status|quota|limit|429|tick|ticks|delivered|read|working|stuck|pending|refus)/i.test(text);
+
   // WhatsApp share with a number
   const phone = /(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}\b/.exec(text)?.[0];
-  if (/whats\s*app|share|send/i.test(text) && (ctx.lastLabQuery || ctx.lastPatient || /\bip\s*\d/i.test(text))) {
+  if (!statusQuestion && /whats\s*app|share|send/i.test(text) && (ctx.lastLabQuery || ctx.lastPatient || /\bip\s*\d/i.test(text))) {
     const ipNo = /\bip\s*0?\d{6,}\b/i.exec(text)?.[0]?.replace(/\s+/g, '').toUpperCase();
     const target = ipNo || (!ctx.lastLabQuery && ctx.lastPatient) ? 'patient' : 'lab_results';
     const r = await run('offer_whatsapp_share', { target, to_number: phone, ip_no: ipNo });
@@ -478,6 +812,52 @@ async function ruleBasedAnswer(messages, ctx) {
 
   // A specific patient by IP number or UHID
   const ip = /\bip\s*0?\d{6,}\b/i.exec(text)?.[0]?.replace(/\s+/g, '').toUpperCase();
+  const aboutWhatsApp = /whats\s*app|wati|message|tick|deliver|\bread\b|\bsent\b|sending|429|quota|usage limit|webhook/i.test(text);
+
+  // One patient's WhatsApp messages
+  if (ip && aboutWhatsApp) {
+    const r = await run('whatsapp_report', { ip_no: ip });
+    if (!r.messages) return { reply: `No WhatsApp messages recorded for ${ip}.`, blocks };
+    const failed = Object.entries(r.failureReasons || {}).map(([k, n]) => `${n} × ${k}`).join(', ');
+    return {
+      reply: `${ip}: ${r.messages} WhatsApp message${r.messages === 1 ? '' : 's'} — ${Object.entries(r.byStatus)
+        .map(([k, n]) => `${n} ${k}`)
+        .join(', ')}.${failed ? ` Failed because: ${failed}.` : ''}${r.waitingForAutomaticRetry ? ` ${r.waitingForAutomaticRetry} will be re-sent automatically.` : ''} Details below.`,
+      blocks,
+    };
+  }
+
+  // Live WhatsApp / WATI status
+  if (!ip && aboutWhatsApp && (statusQuestion || /status|how many|today|mode|live|test/i.test(text))) {
+    const r = await run('app_status', { area: 'whatsapp' });
+    const w = r.whatsapp;
+    const m = w.messagesToday;
+    const parts = [
+      w.liveMode
+        ? 'WhatsApp is in Live mode: reports go to patients automatically as they are made.'
+        : 'WhatsApp is in Test mode: nothing is sent automatically — reports only go out when someone presses the WhatsApp button, and then to the test number. Turn on Live in WATI Settings to send to patients.',
+    ];
+    if (!w.watiConfigured) parts.push('WATI is not configured on the server.');
+    if (w.watiApi.startsWith('REFUSING')) {
+      parts.push(
+        `WATI is refusing calls (its API usage limit)${w.pausedUntil ? `; the app tries again after ${w.pausedUntil}` : ''}. Refused reports are re-sent automatically — no need to click again.`,
+      );
+    }
+    parts.push(`Today: ${m.total} message${m.total === 1 ? '' : 's'} — ${m.sent + m.delivered + m.read} sent, ${m.read} read, ${m.failed} failed.`);
+    if (w.waitingForAutomaticRetry) parts.push(`${w.waitingForAutomaticRetry} waiting to retry${w.nextRetryAt ? ` (next ${w.nextRetryAt})` : ''}.`);
+    return { reply: parts.join(' '), blocks };
+  }
+
+  // The 15-minute discharge check
+  if (/schedul|cron|next check|last check|discharge check|sync|automation|every 15/i.test(text)) {
+    const r = await run('app_status', { area: 'scheduler' });
+    const d = r.dischargeCheck;
+    const last = d.lastResult;
+    return {
+      reply: `The discharge check runs every 15 minutes${d.checking ? ' and is running now' : ''}. ${d.lastCheckFinished ? `Last finished ${d.lastCheckFinished}` : 'It has not finished a check since the server started'}${last ? `: ${last.found ?? 0} found, ${last.labReportsMade ?? 0} new lab reports, ${last.summariesMade ?? 0} new summaries${last.failed ? `, ${last.failed} failed` : ''}` : ''}. ${d.nextCheck ? `Next check ${d.nextCheck}.` : ''}`.trim(),
+      blocks,
+    };
+  }
   const uhid = /\b(?:uhid|reg(?:istration)?\s*(?:no|number)?)\D{0,4}(\d{5,})/i.exec(text)?.[1];
   if (ip || uhid) {
     const r = await run('find_patient', { query: ip || uhid });
@@ -491,9 +871,14 @@ async function ruleBasedAnswer(messages, ctx) {
     return { reply: r.count ? `${busyNote} ${r.count} patient${r.count === 1 ? '' : 's'} discharged on ${range.to.split('-').reverse().join('-')} — shown below.` : `${busyNote} No discharges recorded for that date.`, blocks };
   }
 
-  // How-to questions
-  if (/^\s*(how|where|what is|what's|help)\b/i.test(text)) {
-    return { reply: HOW_TO, blocks };
+  // How-to and "what does this mean" questions: the portal's manual. Lab
+  // questions ("who had low haemoglobin?") go on to the lab search instead.
+  const labLike =
+    VALUE_WORDS.some((v) => lower.includes(v)) || Object.keys(STATUS_WORDS).some((w) => new RegExp(`\\b${w}\\b`).test(lower));
+  if (!labLike && /^\s*(how|where|what|what's|why|which|when|help|explain|tell me)\b|\bmean(s|ing)?\b|\?\s*$/i.test(text)) {
+    const [best] = searchGuide(text, 1, 3);
+    if (best) return { reply: `**${best.title}**\n${best.text}`, blocks };
+    if (/^\s*(how|help)\b/i.test(text)) return { reply: HOW_TO, blocks };
   }
 
   // Lab search: test words + value / flag + dates
@@ -529,6 +914,12 @@ async function ruleBasedAnswer(messages, ctx) {
 
 function sanitiseContext(context = {}) {
   const ctx = {};
+  if (SCREEN_LABELS[context.view]) ctx.view = context.view;
+  const draft = cleanTestMessage(context.testDraft?.message);
+  if (draft) ctx.testDraft = { message: draft };
+  const pendingMessage = cleanTestMessage(context.pendingTest?.message);
+  const pendingNumber = cleanTestNumber(context.pendingTest?.toNumber);
+  if (pendingMessage && pendingNumber) ctx.pendingTest = { message: pendingMessage, toNumber: pendingNumber };
   if (context.lastLabQuery && typeof context.lastLabQuery === 'object') {
     const q = normaliseQuery(context.lastLabQuery);
     if (hasCriteria(q)) ctx.lastLabQuery = q;
@@ -540,8 +931,15 @@ function sanitiseContext(context = {}) {
   return ctx;
 }
 
-export async function runAssistant({ messages, context = {} }) {
+export async function runAssistant({ messages, context = {}, user = null }) {
   const ctx = sanitiseContext(context);
+  ctx.user = user;
+
+  // "Cancel" while a test message is being prepared ends it for sure, without the model.
+  const latest = String([...messages].reverse().find((m) => m.role === 'user')?.content || '');
+  if ((ctx.testDraft || ctx.pendingTest) && /^\s*(cancel|stop|never ?mind|no|don'?t send)\b/i.test(latest)) {
+    return { reply: 'Okay, cancelled — nothing was sent.', blocks: [{ type: 'testDraft', message: null }] };
+  }
   const convo = [{ role: 'system', content: systemPrompt(ctx) }, ...sanitiseHistory(messages)];
   const blocks = [];
 
@@ -576,6 +974,10 @@ export async function runAssistant({ messages, context = {} }) {
         blocks.push(outcome.block);
         // Later tool calls in this same turn ("…and download it as Excel") see the new results.
         if (outcome.block.type === 'labResults') ctx.lastLabQuery = outcome.block.query;
+        if (outcome.block.type === 'testDraft') ctx.testDraft = { message: outcome.block.message };
+        if (outcome.block.type === 'testMessage' && outcome.block.status === 'ready') {
+          ctx.pendingTest = { message: outcome.block.message, toNumber: outcome.block.toNumber };
+        }
         if (outcome.block.type === 'patients' && outcome.block.patients.length === 1) {
           ctx.lastPatient = { ipNo: outcome.block.patients[0].ipNo, date: outcome.block.patients[0].date };
         }
