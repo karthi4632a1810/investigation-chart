@@ -236,6 +236,43 @@ export function fetchWhatsappActivity(limit = 20) {
   return getJson(`${API_BASE}/admin/whatsapp/activity?limit=${limit}`).then((d) => d.events);
 }
 
+/** Numbers whose latest WhatsApp message failed as "not on WhatsApp", as a Set of 91XXXXXXXXXX digits. */
+export async function fetchNotOnWhatsappNumbers() {
+  const data = await getJson(`${API_BASE}/whatsapp/not-on-whatsapp`);
+  return new Set((data.numbers || []).map((n) => n.number));
+}
+
+export function fetchWhatsappInsights(params) {
+  return getJson(`${API_BASE}/admin/whatsapp/insights?${adminParams(params)}`);
+}
+
+export function fetchWhatsappPatients(params) {
+  return getJson(`${API_BASE}/admin/whatsapp/patients?${adminParams(params)}`);
+}
+
+export function retryWhatsappMessage(id) {
+  return postJson(`${API_BASE}/admin/whatsapp/messages/${encodeURIComponent(id)}/retry`, {});
+}
+
+/** Downloads the monitor's current view: view 'messages' | 'patients', format xlsx | pdf | csv | json. */
+export async function downloadWhatsappExport(params, view, format) {
+  const res = await apiFetch(`${API_BASE}/admin/whatsapp/export?${adminParams({ ...params, view, format })}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Export failed');
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || `whatsapp-report.${format}`;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return name;
+}
+
 export function refreshWhatsappStatuses() {
   return postJson(`${API_BASE}/admin/whatsapp/refresh`, {});
 }

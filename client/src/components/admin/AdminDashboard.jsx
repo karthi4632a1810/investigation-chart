@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchWhatsappActivity,
+  fetchWhatsappInsights,
   fetchWhatsappMessage,
   fetchWhatsappMessages,
   fetchWhatsappSummary,
+  downloadWhatsappExport,
+  fetchWhatsappPatients,
   refreshWhatsappStatuses,
+  retryWhatsappMessage,
 } from '../../api/client';
 import { CloseIcon, RefreshIcon, SearchIcon, WhatsAppIcon } from '../Icons';
-import { ChartCard, HBars, LegendItem, StackedColumns, StatTile } from './Charts';
+import { ChartCard, Columns, Delta, HBars, LegendItem, RateLines, StackedColumns, StackedHBars, StatTile } from './Charts';
 
 const LIVE_REFRESH_MS = 15_000;
 const PAGE_SIZE = 20;
@@ -24,10 +28,10 @@ const STATUS = {
 const STATUS_ORDER = ['read', 'delivered', 'sent', 'pending', 'failed'];
 const SERIES = STATUS_ORDER.map((key) => ({ key, ...STATUS[key] }));
 // Filter chips follow a message's life: pending → sent → delivered → read, or failed.
-const CHIP_ORDER = ['pending', 'sent', 'delivered', 'read', 'failed'];
+const CHIP_ORDER = ['pending', 'sent', 'delivered', 'read', 'failed', 'nowa'];
 
 const DOCUMENT_LABEL = { lab: 'Lab report', summary: 'Discharge summary', lab_results: 'Lab results list', other: 'Other' };
-const TRIGGER_LABEL = { auto: 'Automatic (live)', manual: 'Send button', share: 'Shared to a number', imported: 'Imported history' };
+const TRIGGER_LABEL = { auto: 'Automatic (live)', manual: 'Manual click', share: 'Shared to a number', imported: 'Imported history' };
 const VIA_LABEL = { assistant: 'Ask AI', lab_finder: 'Lab Finder', reports: 'Discharge Reports' };
 
 const PRESETS = [
@@ -133,6 +137,14 @@ export function StatusIcon({ status, size = 16 }) {
       </svg>
     );
   }
+  if (status === 'nowa') {
+    return (
+      <svg {...common} className="wa-ticks is-failed">
+        <path d="M20 11.5a8.4 8.4 0 0 1-12.2 7.5L3 20.5l1.5-4.6A8.4 8.4 0 1 1 20 11.5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+        <path d="M4 4l16 16" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+      </svg>
+    );
+  }
   if (status === 'failed') {
     return (
       <svg {...common} className="wa-ticks is-failed">
@@ -149,11 +161,21 @@ export function StatusIcon({ status, size = 16 }) {
   );
 }
 
-function StatusPill({ status }) {
+/** A failure because the number isn't on WhatsApp gets its own label — a resend won't fix it. */
+function StatusPill({ status, notOnWhatsApp }) {
+  const nowa = status === 'failed' && notOnWhatsApp;
   return (
-    <span className={`wa-pill is-${status}`}>
-      <StatusIcon status={status} size={15} />
-      {STATUS[status]?.label || status}
+    <span className={`wa-pill is-${status} ${nowa ? 'is-nowa' : ''}`}>
+      <StatusIcon status={nowa ? 'nowa' : status} size={15} />
+      {nowa ? 'Not on WhatsApp' : STATUS[status]?.label || status}
+    </span>
+  );
+}
+
+function NoWhatsAppTag() {
+  return (
+    <span className="wa-nowa-tag" title="The last message to this number failed because it is not on WhatsApp — check the mobile number in the EMR">
+      <StatusIcon status="nowa" size={12} /> Not on WhatsApp
     </span>
   );
 }
@@ -189,10 +211,37 @@ function Timeline({ message }) {
   );
 }
 
+/** Plain-language meaning of a failure, shown above WATI's own wording. */
+function explainFailure(text) {
+  const t = String(text || '');
+  if (/not a whatsapp number|not a valid whatsapp|invalid/i.test(t)) return 'The number is not on WhatsApp (or is mistyped). Check the patient\'s mobile number in the EMR.';
+  if (/429|usage limit/i.test(t)) return 'WATI\'s API usage limit was reached, so WATI refused the message for now. It is retried automatically.';
+  if (/timeout|aborted|network|fetch failed|ECONN|socket|503|502|busy/i.test(t)) return 'WATI or the network was briefly unavailable. This is retried automatically.';
+  if (/undeliverable|re-?engage|24 ?hours|blocked/i.test(t)) return 'WhatsApp would not deliver it (the patient may have blocked the business number or be unreachable).';
+  if (/template/i.test(t)) return 'WATI rejected the message template. Check the template in the WATI dashboard.';
+  if (/no longer available|no patient data/i.test(t)) return 'The report itself is missing, so there is nothing to send.';
+  return 'WATI did not accept or deliver this message.';
+}
+
 function MessageDrawer({ id, onClose, onChanged }) {
   const [message, setMessage] = useState(null);
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+
+  async function retryNow() {
+    setRetrying(true);
+    setError('');
+    try {
+      const res = await retryWhatsappMessage(id);
+      setMessage((m) => ({ ...m, ...res.message }));
+      onChanged?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   const load = useCallback(() => {
     fetchWhatsappMessage(id)
@@ -241,11 +290,31 @@ function MessageDrawer({ id, onClose, onChanged }) {
         {message && (
           <div className="wa-drawer-body">
             <div className="wa-drawer-status">
-              <StatusPill status={message.status} />
+              <StatusPill status={message.status} notOnWhatsApp={message.notOnWhatsApp} />
               <span className="wa-drawer-doc">{message.documentLabel || DOCUMENT_LABEL[message.document]}</span>
             </div>
+            {message.status === 'failed' && (
+              <div className="wa-failure" role="alert">
+                <div className="wa-failure-title">Why it failed</div>
+                <p>{explainFailure(message.failedDetail || message.error)}</p>
+                {(message.failedDetail || message.error) && <p className="wa-failure-raw">WATI: {message.failedDetail || message.error}</p>}
+                <p className="wa-failure-retry">
+                  {message.nextRetryAt
+                    ? `Automatic retry ${message.attempts || 1} of 3 at ${formatTime(message.nextRetryAt, false)}.`
+                    : (message.attempts || 1) > 1
+                      ? `Tried ${message.attempts} times — no more automatic retries.`
+                      : 'Not retried automatically — fix the cause, then press Retry.'}
+                </p>
+                {['lab', 'summary'].includes(message.document) && message.ipNo && (
+                  <button type="button" className="btn wa-retry" onClick={retryNow} disabled={retrying}>
+                    <RefreshIcon size={15} spinning={retrying} /> {retrying ? 'Sending again…' : 'Retry now'}
+                  </button>
+                )}
+              </div>
+            )}
             <Timeline message={message} />
             <dl className="wa-facts">
+              {(message.attempts || 1) > 1 && <div><dt>Attempts</dt><dd>{message.attempts}</dd></div>}
               <div><dt>To</dt><dd>{formatNumber(message.toNumber)}</dd></div>
               {message.ipNo && <div><dt>IP number</dt><dd>{message.ipNo}</dd></div>}
               {message.dischargeDate && <div><dt>Discharged</dt><dd>{dmy(message.dischargeDate)}</dd></div>}
@@ -266,19 +335,311 @@ function MessageDrawer({ id, onClose, onChanged }) {
   );
 }
 
+// ---- patient-wise table ------------------------------------------------------
+
+function ReportBadge({ report, onOpen }) {
+  const when = report.readAt || report.deliveredAt || report.acceptedAt || report.createdAt;
+  const nowa = report.status === 'failed' && report.notOnWhatsApp;
+  return (
+    <button type="button" className={`wa-report is-${report.status}`} onClick={() => onOpen(report.id)} title="Open this report's timeline">
+      <span className="wa-report-name">
+        {report.documentLabel || DOCUMENT_LABEL[report.document]}
+        {report.sends > 1 && <span className="wa-report-sends">×{report.sends}</span>}
+      </span>
+      <span className="wa-report-state">
+        <StatusIcon status={nowa ? 'nowa' : report.status} size={14} />
+        {nowa ? 'Not on WhatsApp' : STATUS[report.status]?.label}
+        <span className="wa-report-time">{formatTime(when, false)}</span>
+      </span>
+    </button>
+  );
+}
+
+function PatientsTable({ patients, onOpen, changed }) {
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggle = (key) =>
+    setExpanded((cur) => {
+      const next = new Set(cur);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  return (
+    <table className="wa-table wa-patients">
+      <thead>
+        <tr>
+          <th aria-label="Expand" />
+          <th>Patient</th>
+          <th>Reports</th>
+          <th>Overall</th>
+          <th>To</th>
+          <th>Last update</th>
+        </tr>
+      </thead>
+      <tbody>
+        {patients.length === 0 && (
+          <tr>
+            <td colSpan={6} className="viz-empty">
+              No patients match these filters
+            </td>
+          </tr>
+        )}
+        {patients.map((p) => {
+          const open = expanded.has(p.key);
+          return (
+            <FragmentRows key={p.key}>
+              <tr className={`wa-patient-row ${changed.has(p.key) ? 'is-changed' : ''} ${open ? 'is-open' : ''}`} onClick={() => toggle(p.key)}>
+                <td className="wa-expand">
+                  <button type="button" aria-expanded={open} aria-label={open ? 'Hide messages' : 'Show messages'} onClick={(e) => { e.stopPropagation(); toggle(p.key); }}>
+                    <span className={`wa-chevron ${open ? 'is-open' : ''}`} />
+                  </button>
+                </td>
+                <td>
+                  <div className="wa-cell-main">{p.patientName || '—'}</div>
+                  <div className="wa-cell-sub">
+                    {[p.ipNo, p.dischargeDate && `discharged ${dmy(p.dischargeDate)}`, p.department].filter(Boolean).join(' · ') || 'Imported from WATI'}
+                  </div>
+                </td>
+                <td onClick={(e) => e.stopPropagation()}>
+                  <div className="wa-reports">
+                    {p.reports.map((r) => (
+                      <ReportBadge key={r.id} report={r} onOpen={onOpen} />
+                    ))}
+                  </div>
+                </td>
+                <td>
+                  <StatusPill status={p.status} notOnWhatsApp={p.notOnWhatsApp} />
+                </td>
+                <td className="wa-mono">
+                  {formatNumber(p.toNumber)}
+                  {p.notOnWhatsApp && <NoWhatsAppTag />}
+                </td>
+                <td className="wa-time">{formatTime(p.lastAt)}</td>
+              </tr>
+              {open && (
+                <tr className="wa-sub-row">
+                  <td />
+                  <td colSpan={5}>
+                    <div className="wa-sub-title">
+                      {p.messages.length} message{p.messages.length === 1 ? '' : 's'} sent to this patient
+                    </div>
+                    <table className="wa-sub-table">
+                      <thead>
+                        <tr>
+                          <th>Report</th>
+                          <th>Status</th>
+                          <th>Sent</th>
+                          <th>Delivered</th>
+                          <th>Read</th>
+                          <th>Trigger</th>
+                          <th>Attempts</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {p.messages.map((m) => (
+                          <tr key={m.id} onClick={() => onOpen(m.id)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen(m.id)}>
+                            <td>{m.documentLabel || DOCUMENT_LABEL[m.document]}</td>
+                            <td>
+                              <StatusPill status={m.status} notOnWhatsApp={m.notOnWhatsApp} />
+                              {m.status === 'failed' && (m.failedDetail || m.error) && <div className="wa-cell-sub wa-fail-text">{m.failedDetail || m.error}</div>}
+                            </td>
+                            <td className="wa-time">{formatTime(m.acceptedAt || m.createdAt)}</td>
+                            <td className="wa-time">{m.deliveredAt ? formatTime(m.deliveredAt) : '—'}</td>
+                            <td className="wa-time">{m.readAt ? formatTime(m.readAt) : '—'}</td>
+                            <td>
+                              <div className="wa-cell-main">{TRIGGER_LABEL[m.trigger] || m.trigger}</div>
+                              <div className="wa-cell-sub">{m.triggeredBy}</div>
+                            </td>
+                            <td>{m.attempts || 1}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </td>
+                </tr>
+              )}
+            </FragmentRows>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function FragmentRows({ children }) {
+  return <>{children}</>;
+}
+
+const EXPORTS = [
+  { format: 'xlsx', label: 'Excel', ext: 'XLS' },
+  { format: 'pdf', label: 'PDF', ext: 'PDF' },
+  { format: 'csv', label: 'CSV', ext: 'CSV' },
+  { format: 'json', label: 'JSON', ext: 'JSON' },
+];
+
+// ---- coverage & attention ----------------------------------------------------
+
+// Every discharged patient ends in exactly one of these (best outcome first).
+const COVERAGE_STATES = [
+  { key: 'read', label: 'Read', color: 'var(--st-read)' },
+  { key: 'delivered', label: 'Delivered', color: 'var(--st-delivered)' },
+  { key: 'sent', label: 'Sent, not delivered', color: 'var(--st-sent)' },
+  { key: 'pending', label: 'Sending', color: 'var(--st-pending)' },
+  { key: 'failed', label: 'Failed', color: 'var(--st-failed)' },
+  { key: 'nowa', label: 'Not on WhatsApp', color: '#8f1f1f' },
+  { key: 'notSent', label: 'Not sent', color: '#a8a79f' },
+  { key: 'noReport', label: 'No report yet', color: '#c3c2b7' },
+  { key: 'noMobile', label: 'No mobile number', color: '#dcdbd4' },
+];
+const STATE_LABEL = Object.fromEntries(COVERAGE_STATES.map((s) => [s.key, s.label]));
+
+function CoverageCard({ coverage, liveEnabled, range }) {
+  const [showAll, setShowAll] = useState(false);
+  if (!coverage) return null;
+  const { discharged, reached, counts, notReached, notReachedTotal } = coverage;
+  const pctReached = discharged ? Math.round((reached / discharged) * 100) : 0;
+  const list = showAll ? notReached : notReached.slice(0, 6);
+  return (
+    <section className="viz-card wa-span-2 wa-coverage">
+      <header className="viz-card-head">
+        <div>
+          <h3>Did every discharged patient get their reports?</h3>
+          <p>Patients discharged {range.from === range.to ? dmy(range.from) : `${dmy(range.from)} to ${dmy(range.to)}`} · by discharge date</p>
+        </div>
+      </header>
+      {discharged === 0 ? (
+        <div className="viz-empty">No discharges recorded for these dates</div>
+      ) : (
+        <>
+          <div className="wa-coverage-hero">
+            <div>
+              <span className="wa-coverage-big">{reached}</span>
+              <span className="wa-coverage-of"> of {discharged} patients reached on WhatsApp</span>
+            </div>
+            <div className="wa-coverage-pct">
+              <b>{pctReached}%</b> reached · <b>{counts.read}</b> read their reports
+            </div>
+          </div>
+          <div className="wa-coverage-bar" role="img" aria-label={`${reached} of ${discharged} patients reached`}>
+            {COVERAGE_STATES.filter((st) => counts[st.key] > 0).map((st) => (
+              <span key={st.key} style={{ flexGrow: counts[st.key], background: st.color }} title={`${st.label}: ${counts[st.key]}`} />
+            ))}
+          </div>
+          <div className="viz-legend">
+            {COVERAGE_STATES.filter((st) => counts[st.key] > 0).map((st) => (
+              <span key={st.key} className="viz-legend-item">
+                <span className="viz-key is-rect" style={{ background: st.color }} />
+                {st.label} <b className="wa-legend-count">{counts[st.key]}</b>
+              </span>
+            ))}
+          </div>
+          {!liveEnabled && counts.notSent > 0 && (
+            <div className="wa-coverage-note">Live mode is off, so reports are only sent when someone clicks Send — that's why {counts.notSent} patient{counts.notSent === 1 ? ' is' : 's are'} "Not sent".</div>
+          )}
+          {notReachedTotal > 0 && (
+            <div className="wa-notreached">
+              <div className="wa-notreached-title">Not reached ({notReachedTotal})</div>
+              <ul>
+                {list.map((p) => (
+                  <li key={`${p.date}-${p.ipNo}`}>
+                    <span className="wa-cell-main">{p.name}</span>
+                    <span className="wa-cell-sub">
+                      {p.ipNo} · {p.department}
+                    </span>
+                    <span className={`wa-reason is-${p.state}`}>{STATE_LABEL[p.state]}</span>
+                  </li>
+                ))}
+              </ul>
+              {notReached.length > 6 && (
+                <button type="button" className="ai-link" onClick={() => setShowAll((v) => !v)}>
+                  {showAll ? 'Show fewer' : `Show all ${notReached.length}`}
+                </button>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+const ATTENTION = [
+  { key: 'fixable', filter: 'fixable', icon: 'failed', label: 'Failed — can be fixed', hint: 'Open each one to see why and press Retry' },
+  { key: 'nowa', filter: 'nowa', icon: 'nowa', label: 'Not on WhatsApp', hint: 'Check the mobile number in the EMR' },
+  { key: 'unread24', filter: 'unread24', icon: 'delivered', label: 'Delivered, unread for 24 h+', hint: 'Patient may need a call' },
+  { key: 'stuck6', filter: 'stuck6', icon: 'sent', label: 'One tick for 6 h+', hint: 'Phone off or no internet' },
+];
+const SPECIAL_FILTER_LABEL = {
+  fixable: 'Failed — can be fixed',
+  unread24: 'Unread 24 h+',
+  stuck6: 'One tick 6 h+',
+};
+
+function AttentionCard({ attention, onShow }) {
+  if (!attention) return null;
+  const total = ATTENTION.reduce((sum, a) => sum + (attention[a.key] || 0), 0);
+  return (
+    <section className="viz-card wa-attention">
+      <header className="viz-card-head">
+        <div>
+          <h3>Needs attention</h3>
+          <p>In this date range</p>
+        </div>
+      </header>
+      {total === 0 ? (
+        <div className="wa-allclear">
+          <StatusIcon status="read" size={22} />
+          <div>
+            <b>All clear</b>
+            <span>Nothing failed or stuck in this range.</span>
+          </div>
+        </div>
+      ) : (
+        <ul className="wa-attention-list">
+          {ATTENTION.map((a) => (
+            <li key={a.key} className={attention[a.key] ? 'has-items' : ''}>
+              <span className={`wa-feed-icon is-${a.icon === 'nowa' ? 'failed' : a.icon}`}>
+                <StatusIcon status={a.icon} size={16} />
+              </span>
+              <span className="wa-attention-text">
+                <b>{a.label}</b>
+                <span>
+                  {a.key === 'fixable' && attention.autoRetrying ? `${attention.autoRetrying} retrying automatically · ` : ''}
+                  {a.hint}
+                </span>
+              </span>
+              <span className="wa-attention-count">{attention[a.key] || 0}</span>
+              <button type="button" className="ai-link" disabled={!attention[a.key]} onClick={() => onShow(a.filter)}>
+                Show
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 // ---- the dashboard ------------------------------------------------------------
 
 export default function AdminDashboard() {
-  const [preset, setPreset] = useState('7d');
-  const [custom, setCustom] = useState(() => presetRange('7d'));
+  const [preset, setPreset] = useState('yesterday');
+  const [custom, setCustom] = useState(() => presetRange('yesterday'));
   const [statuses, setStatuses] = useState([]);
   const [docFilter, setDocFilter] = useState('');
   const [trigger, setTrigger] = useState('');
   const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
+  const [tableView, setTableView] = useState('patients'); // 'patients' | 'messages'
+  const [patients, setPatients] = useState(null);
+  const [exporting, setExporting] = useState('');
+  const [exportNote, setExportNote] = useState('');
 
   const [summary, setSummary] = useState(null);
+  const [insights, setInsights] = useState(null);
+  const tableRef = useRef(null);
   const [messages, setMessages] = useState(null);
   const [activity, setActivity] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -305,19 +666,23 @@ export default function AdminDashboard() {
     return () => clearTimeout(t);
   }, [search]);
 
-  useEffect(() => setPage(1), [params]);
+  useEffect(() => setPage(1), [params, tableView]);
 
   const load = useCallback(
     async (quiet = false) => {
       if (!quiet) setLoading(true);
       try {
-        const [s, m, a] = await Promise.all([
+        const list = tableView === 'patients' ? fetchWhatsappPatients : fetchWhatsappMessages;
+        const [s, m, a, ins] = await Promise.all([
           fetchWhatsappSummary(params),
-          fetchWhatsappMessages({ ...params, page, limit: PAGE_SIZE }),
+          list({ ...params, page, limit: PAGE_SIZE }),
           fetchWhatsappActivity(20),
+          fetchWhatsappInsights(params),
         ]);
         setSummary(s);
-        setMessages(m);
+        setInsights(ins);
+        if (tableView === 'patients') setPatients(m);
+        else setMessages(m);
 
         // Highlight feed events and table rows that are new since the last refresh.
         const fresh = new Set();
@@ -330,9 +695,10 @@ export default function AdminDashboard() {
         setActivity(a);
         const changed = new Set();
         for (const item of m.items) {
-          const prev = lastStatus.current.get(item.id);
-          if (prev && prev !== item.status) changed.add(item.id);
-          lastStatus.current.set(item.id, item.status);
+          const key = item.key || item.id;
+          const prev = lastStatus.current.get(key);
+          if (prev && prev !== item.status) changed.add(key);
+          lastStatus.current.set(key, item.status);
         }
         setChangedRows(changed);
         setUpdatedAt(Date.now());
@@ -343,7 +709,7 @@ export default function AdminDashboard() {
         setLoading(false);
       }
     },
-    [params, page],
+    [params, page, tableView],
   );
 
   useEffect(() => {
@@ -378,13 +744,33 @@ export default function AdminDashboard() {
     setStatuses((cur) => (cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]));
   }
 
+  // "Needs attention → Show": filter the message list to those and scroll to it.
+  function showAttention(filter) {
+    setStatuses([filter]);
+    setTableView('messages');
+    setTimeout(() => tableRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+  }
+
   const granularity = summary?.range?.granularity || 'day';
   const formatBucket = formatBucketFactory(granularity);
   const series = summary?.series || [];
   const trendOf = (keys) => series.map((b) => keys.reduce((sum, k) => sum + (b[k] || 0), 0));
   const counts = summary?.counts || {};
   const funnel = summary?.funnel || {};
-  const totalPages = messages ? Math.max(1, Math.ceil(messages.total / PAGE_SIZE)) : 1;
+  const listData = tableView === 'patients' ? patients : messages;
+  const totalPages = listData ? Math.max(1, Math.ceil(listData.total / PAGE_SIZE)) : 1;
+
+  async function exportAs(format) {
+    setExporting(format);
+    setExportNote('');
+    try {
+      setExportNote(`Downloaded ${await downloadWhatsappExport(params, tableView, format)}`);
+    } catch (err) {
+      setExportNote(err.message);
+    } finally {
+      setExporting('');
+    }
+  }
 
   const funnelSteps = [
     { label: 'Triggered', value: funnel.triggered || 0, color: 'var(--st-funnel-0)' },
@@ -396,9 +782,31 @@ export default function AdminDashboard() {
   const byDocument = Object.entries(summary?.byDocument || {})
     .map(([k, v]) => ({ label: DOCUMENT_LABEL[k] || k, value: v }))
     .sort((a, b) => b.value - a.value);
-  const byTrigger = Object.entries(summary?.byTrigger || {})
-    .map(([k, v]) => ({ label: TRIGGER_LABEL[k] || k, value: v }))
-    .sort((a, b) => b.value - a.value);
+  const prev = insights?.previous;
+  const prevLabel = prev ? `vs ${prev.from === prev.to ? dmy(prev.from) : `${dmy(prev.from)} – ${dmy(prev.to)}`}` : '';
+  const triggerRows = (insights?.byTrigger || [])
+    .map((t) => ({ label: TRIGGER_LABEL[t.trigger] || t.trigger, ...t }))
+    .sort((a, b) => STATUS_ORDER.reduce((n, k) => n + b[k], 0) - STATUS_ORDER.reduce((n, k) => n + a[k], 0));
+  const departmentRows = (insights?.departments || []).map((d) => ({
+    label: d.department,
+    read: d.read,
+    delivered: d.delivered - d.read,
+    sent: Math.max(0, d.total - d.delivered - d.failed),
+    failed: d.failed,
+    readRate: d.delivered ? d.read / d.delivered : null,
+  }));
+  const readHours = (insights?.readHours || []).map((value, h) => ({ label: String(h), value }));
+  const busiest = readHours.reduce((best, h) => (h.value > (best?.value || 0) ? h : best), null);
+  const hourLabel = (h, short) => {
+    const n = Number(h);
+    const fmt = (x) => `${((x + 11) % 12) + 1}${x < 12 ? 'am' : 'pm'}`;
+    return short ? fmt(n).replace(/(am|pm)/, '') : `${fmt(n)} – ${fmt((n + 1) % 24)}`;
+  };
+  const RATE_SERIES = [
+    { key: 'deliveredRate', label: 'Delivered (of sent)', color: 'var(--st-delivered)' },
+    { key: 'readRate', label: 'Read (of delivered)', color: 'var(--st-read)' },
+  ];
+  const HBAR_SERIES = SERIES.filter((x) => x.key !== 'pending');
 
   return (
     <div className="wa-page">
@@ -414,7 +822,11 @@ export default function AdminDashboard() {
           <span className={`wa-live-dot ${loading ? 'is-busy' : ''}`} />
           <span>
             Live · updated {timeAgo(updatedAt, now) || '…'}
-            {summary?.poll?.at && <span className="wa-live-sub"> · WATI checked {timeAgo(summary.poll.at, now)}</span>}
+            {summary?.poll?.pausedUntil ? (
+              <span className="wa-live-sub wa-live-paused"> · WATI usage limit reached — status checks paused until {formatTime(summary.poll.pausedUntil, false)}</span>
+            ) : (
+              summary?.poll?.at && <span className="wa-live-sub"> · WATI checked {timeAgo(summary.poll.at, now)}</span>
+            )}
           </span>
           <button type="button" className="wa-live-btn" onClick={checkWati} disabled={checking} title="Ask WATI for the latest delivery and read status now">
             <RefreshIcon size={15} spinning={checking} />
@@ -444,8 +856,15 @@ export default function AdminDashboard() {
             {CHIP_ORDER.map((s) => (
                 <button key={s} type="button" className={`wa-chip ${statuses.includes(s) ? 'is-on' : ''}`} onClick={() => toggleStatus(s)} aria-pressed={statuses.includes(s)}>
                   <StatusIcon status={s} size={14} />
-                  {STATUS[s].label}
-                  <span className="wa-chip-count">{counts[s] ?? 0}</span>
+                  {s === 'nowa' ? 'Not on WhatsApp' : STATUS[s].label}
+                  <span className="wa-chip-count">{s === 'nowa' ? summary?.notOnWhatsApp?.messages ?? 0 : counts[s] ?? 0}</span>
+                </button>
+              ))}
+            {statuses
+              .filter((st) => SPECIAL_FILTER_LABEL[st])
+              .map((st) => (
+                <button key={st} type="button" className="wa-chip is-on" onClick={() => toggleStatus(st)} title="Remove this filter">
+                  {SPECIAL_FILTER_LABEL[st]} ×
                 </button>
               ))}
           </div>
@@ -503,6 +922,7 @@ export default function AdminDashboard() {
             value={summary?.total}
             trend={trendOf(STATUS_ORDER)}
             sub={summary?.patients ? `${summary.patients} patient${summary.patients === 1 ? '' : 's'}` : 'In this range'}
+            delta={prev && <Delta current={summary?.total} previous={prev.total} label={prevLabel} />}
           />
           <StatTile
             label="Delivered"
@@ -510,6 +930,7 @@ export default function AdminDashboard() {
             value={funnel.delivered}
             sub={`${pct(summary?.rates?.delivered)} of sent · avg ${formatDuration(summary?.avgSeconds?.toDeliver)}`}
             trend={trendOf(['delivered', 'read'])}
+            delta={prev && <Delta current={funnel.delivered} previous={prev.delivered} label={prevLabel} />}
           />
           <StatTile
             label="Read"
@@ -517,19 +938,24 @@ export default function AdminDashboard() {
             value={counts.read}
             sub={`${pct(summary?.rates?.read)} of delivered · avg ${formatDuration(summary?.avgSeconds?.toRead)}`}
             trend={trendOf(['read'])}
+            delta={prev && <Delta current={counts.read} previous={prev.read} label={prevLabel} />}
           />
           <StatTile label="Pending" icon={<StatusIcon status="pending" size={15} />} value={counts.pending} sub="Waiting for WATI" tone={counts.pending ? 'warning' : undefined} />
           <StatTile
             label="Failed"
             icon={<StatusIcon status="failed" size={15} />}
             value={counts.failed}
-            sub={`${pct(summary?.rates?.failed)} of all`}
+            sub={`${pct(summary?.rates?.failed)} of all${summary?.notOnWhatsApp?.numbers ? ` · ${summary.notOnWhatsApp.numbers} number${summary.notOnWhatsApp.numbers === 1 ? '' : 's'} not on WhatsApp` : ''}`}
             tone={counts.failed ? 'critical' : undefined}
             trend={trendOf(['failed'])}
+            delta={prev && <Delta current={counts.failed} previous={prev.failed} upIsGood={false} label={prevLabel} />}
           />
         </div>
 
         <div className="wa-grid">
+          <CoverageCard coverage={insights?.coverage} liveEnabled={insights?.liveEnabled} range={range} />
+          <AttentionCard attention={insights?.attention} onShow={showAttention} />
+
           <ChartCard
             className="wa-span-2"
             title="Messages over time"
@@ -579,10 +1005,10 @@ export default function AdminDashboard() {
                   <li key={key} className={freshEvents.has(key) ? 'is-new' : ''}>
                     <button type="button" onClick={() => setOpenId(e.id)}>
                       <span className={`wa-feed-icon is-${e.status}`}>
-                        <StatusIcon status={e.status} size={16} />
+                        <StatusIcon status={e.status === 'failed' && e.notOnWhatsApp ? 'nowa' : e.status} size={16} />
                       </span>
                       <span className="wa-feed-text">
-                        <b>{STATUS[e.status]?.label || e.status}</b> · {e.documentLabel || 'Message'}
+                        <b>{e.status === 'failed' && e.notOnWhatsApp ? 'Not on WhatsApp' : STATUS[e.status]?.label || e.status}</b> · {e.documentLabel || 'Message'}
                         <span className="wa-feed-sub">{e.patientName || formatNumber(e.toNumber)}</span>
                       </span>
                       <span className="wa-feed-time">{timeAgo(e.at, now)}</span>
@@ -592,6 +1018,49 @@ export default function AdminDashboard() {
               })}
             </ul>
           </section>
+
+          <ChartCard
+            className="wa-span-2"
+            title="Delivery & read rate"
+            subtitle={
+              insights?.trendRange && insights.trendRange.from !== range.from
+                ? `Last 14 days (${dmy(insights.trendRange.from)} – ${dmy(insights.trendRange.to)}) — reached the phone, and opened`
+                : 'Share of sent messages that reached the phone, and of those, how many were opened'
+            }
+            legend={RATE_SERIES.map((s) => (
+              <LegendItem key={s.key} color={s.color} label={s.label} shape="line" />
+            ))}
+            table={
+              <table className="viz-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Messages</th>
+                    {RATE_SERIES.map((s) => (
+                      <th key={s.key}>{s.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(insights?.trend || []).map((d) => (
+                    <tr key={d.bucket}>
+                      <td>{dmy(d.bucket)}</td>
+                      <td>{d.total}</td>
+                      {RATE_SERIES.map((s) => (
+                        <td key={s.key}>{pct(d[s.key])}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            }
+          >
+            {insights?.trend?.length ? (
+              <RateLines data={insights.trend} series={RATE_SERIES} formatBucket={formatBucketFactory('day')} />
+            ) : (
+              <div className="viz-empty">No messages in this range</div>
+            )}
+          </ChartCard>
 
           <ChartCard
             title="Delivery funnel"
@@ -614,6 +1083,114 @@ export default function AdminDashboard() {
           </ChartCard>
 
           <ChartCard
+            title="When patients open reports"
+            subtitle={busiest?.value ? `Busiest: ${hourLabel(busiest.label)} (hospital time)` : 'Hour of day the message was read'}
+            table={
+              <table className="viz-table">
+                <tbody>
+                  {readHours.map((h) => (
+                    <tr key={h.label}>
+                      <td>{hourLabel(h.label)}</td>
+                      <td>{h.value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            }
+          >
+            {readHours.some((h) => h.value) ? (
+              <Columns data={readHours} color="var(--st-read)" valueLabel="read" formatLabel={hourLabel} labelEvery={3} highlightMax />
+            ) : (
+              <div className="viz-empty">No read times recorded yet</div>
+            )}
+          </ChartCard>
+
+          <ChartCard
+            title="How long until read"
+            subtitle="From sending to the blue ticks"
+            table={
+              <table className="viz-table">
+                <tbody>
+                  {(insights?.timeToRead || []).map((b) => (
+                    <tr key={b.label}>
+                      <td>{b.label}</td>
+                      <td>{b.value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            }
+          >
+            {insights?.timeToRead?.some((b) => b.value) ? (
+              <Columns data={insights.timeToRead} color="var(--st-read)" valueLabel="messages" />
+            ) : (
+              <div className="viz-empty">No read times recorded yet</div>
+            )}
+          </ChartCard>
+
+          <ChartCard
+            title="Why messages fail"
+            subtitle={counts.failed ? `${counts.failed} failed in this range` : 'No failures in this range'}
+            table={
+              <table className="viz-table">
+                <tbody>
+                  {(insights?.failureReasons || []).map((r) => (
+                    <tr key={r.label}>
+                      <td>{r.label}</td>
+                      <td>{r.value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            }
+          >
+            {insights?.failureReasons?.length ? (
+              <HBars items={insights.failureReasons} color="var(--st-failed)" />
+            ) : (
+              <div className="wa-allclear is-compact">
+                <StatusIcon status="read" size={20} />
+                <div>
+                  <b>No failures</b>
+                  <span>Every message reached WATI.</span>
+                </div>
+              </div>
+            )}
+          </ChartCard>
+
+          <ChartCard
+            className="wa-span-2"
+            title="Status by trigger"
+            subtitle="Automatic sends vs manual clicks vs shares — and how each turned out"
+            legend={HBAR_SERIES.map((s) => (
+              <LegendItem key={s.key} color={s.color} label={s.label} />
+            ))}
+            table={
+              <table className="viz-table">
+                <thead>
+                  <tr>
+                    <th>Trigger</th>
+                    {SERIES.map((s) => (
+                      <th key={s.key}>{s.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {triggerRows.map((t) => (
+                    <tr key={t.label}>
+                      <td>{t.label}</td>
+                      {SERIES.map((s) => (
+                        <td key={s.key}>{t[s.key]}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            }
+          >
+            {triggerRows.length ? <StackedHBars rows={triggerRows} series={SERIES} /> : <div className="viz-empty">—</div>}
+          </ChartCard>
+
+          <ChartCard
             title="By document"
             table={
               <table className="viz-table">
@@ -632,81 +1209,164 @@ export default function AdminDashboard() {
           </ChartCard>
 
           <ChartCard
-            title="By trigger"
+            className="wa-span-2"
+            title="By department"
+            subtitle="Which departments' patients read their reports"
+            legend={HBAR_SERIES.map((s) => (
+              <LegendItem key={s.key} color={s.color} label={s.label} />
+            ))}
             table={
               <table className="viz-table">
+                <thead>
+                  <tr>
+                    <th>Department</th>
+                    <th>Read</th>
+                    <th>Delivered</th>
+                    <th>Sent</th>
+                    <th>Failed</th>
+                    <th>Read rate</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {byTrigger.map((d) => (
+                  {departmentRows.map((d) => (
                     <tr key={d.label}>
                       <td>{d.label}</td>
-                      <td>{d.value}</td>
+                      <td>{d.read}</td>
+                      <td>{d.delivered}</td>
+                      <td>{d.sent}</td>
+                      <td>{d.failed}</td>
+                      <td>{pct(d.readRate)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             }
           >
-            {byTrigger.length ? <HBars items={byTrigger} /> : <div className="viz-empty">—</div>}
+            {departmentRows.length ? <StackedHBars rows={departmentRows} series={HBAR_SERIES} /> : <div className="viz-empty">No department recorded (imported history only)</div>}
+          </ChartCard>
+
+          <ChartCard
+            title="Who clicked"
+            subtitle="Manual clicks and shares by staff"
+            table={
+              <table className="viz-table">
+                <tbody>
+                  {(insights?.staff || []).map((u) => (
+                    <tr key={u.user}>
+                      <td>{u.user}</td>
+                      <td>{u.total}</td>
+                      <td>{u.failed} failed</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            }
+          >
+            {insights?.staff?.length ? (
+              <HBars items={insights.staff.map((u) => ({ label: u.user, value: u.total, note: u.failed ? `${u.failed} failed` : '' }))} />
+            ) : (
+              <div className="viz-empty">No manual clicks in this range</div>
+            )}
           </ChartCard>
 
         </div>
 
-        <section className="viz-card wa-table-card">
-          <header className="viz-card-head">
+        <section className="viz-card wa-table-card" ref={tableRef}>
+          <header className="viz-card-head wa-table-head">
             <div>
-              <h3>Messages</h3>
-              <p>{messages ? `${messages.total} in this view — click a row for its full timeline` : 'Loading…'}</p>
+              <h3>{tableView === 'patients' ? 'Patients' : 'Messages'}</h3>
+              <p>
+                {listData
+                  ? tableView === 'patients'
+                    ? `${listData.total} patient${listData.total === 1 ? '' : 's'} — each report shown separately; open a row for every message`
+                    : `${listData.total} message${listData.total === 1 ? '' : 's'} — click a row for its full timeline`
+                  : 'Loading…'}
+              </p>
+            </div>
+            <div className="wa-table-tools">
+              <div className="viz-toggle" role="group" aria-label="Group by">
+                <button type="button" className={tableView === 'patients' ? 'is-on' : ''} onClick={() => setTableView('patients')}>
+                  Patients
+                </button>
+                <button type="button" className={tableView === 'messages' ? 'is-on' : ''} onClick={() => setTableView('messages')}>
+                  Messages
+                </button>
+              </div>
+              <div className="wa-exports" role="group" aria-label="Export">
+                <span>Export</span>
+                {EXPORTS.map((x) => (
+                  <button
+                    key={x.format}
+                    type="button"
+                    className={`xs-chip is-${x.format}`}
+                    onClick={() => exportAs(x.format)}
+                    disabled={Boolean(exporting)}
+                    title={`Download this ${tableView === 'patients' ? 'patient-wise' : 'message'} view as ${x.label}`}
+                  >
+                    {exporting === x.format ? <span className="xs-spin" /> : <span className="xs-ext">{x.ext}</span>}
+                    {x.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </header>
+          {exportNote && <div className="xs-note is-ok wa-export-note">{exportNote}</div>}
           <div className="wa-table-wrap">
-            <table className="wa-table">
-              <thead>
-                <tr>
-                  <th>Status</th>
-                  <th>Patient</th>
-                  <th>Document</th>
-                  <th>To</th>
-                  <th>Triggered</th>
-                  <th>Sent</th>
-                  <th>Delivered</th>
-                  <th>Read</th>
-                </tr>
-              </thead>
-              <tbody>
-                {messages?.items.length === 0 && (
+            {tableView === 'patients' ? (
+              <PatientsTable patients={patients?.items || []} onOpen={setOpenId} changed={changedRows} />
+            ) : (
+              <table className="wa-table">
+                <thead>
                   <tr>
-                    <td colSpan={8} className="viz-empty">
-                      No messages match these filters
-                    </td>
+                    <th>Status</th>
+                    <th>Patient</th>
+                    <th>Document</th>
+                    <th>To</th>
+                    <th>Triggered</th>
+                    <th>Sent</th>
+                    <th>Delivered</th>
+                    <th>Read</th>
                   </tr>
-                )}
-                {messages?.items.map((m) => (
-                  <tr key={m.id} className={changedRows.has(m.id) ? 'is-changed' : ''} onClick={() => setOpenId(m.id)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setOpenId(m.id)}>
-                    <td>
-                      <StatusPill status={m.status} />
-                    </td>
-                    <td>
-                      <div className="wa-cell-main">{m.patientName || '—'}</div>
-                      <div className="wa-cell-sub">{m.ipNo || (m.imported ? 'Imported from WATI' : '')}</div>
-                    </td>
-                    <td>{m.documentLabel || DOCUMENT_LABEL[m.document]}</td>
-                    <td className="wa-mono">{formatNumber(m.toNumber)}</td>
-                    <td>
-                      <div className="wa-cell-main">{TRIGGER_LABEL[m.trigger] || m.trigger}</div>
-                      <div className="wa-cell-sub">
-                        {m.via ? `via ${VIA_LABEL[m.via] || m.via} · ` : ''}
-                        {m.triggeredBy}
-                      </div>
-                    </td>
-                    <td className="wa-time">{formatTime(m.acceptedAt || m.createdAt)}</td>
-                    <td className="wa-time">{m.deliveredAt ? formatTime(m.deliveredAt) : m.imported && ['delivered', 'read'].includes(m.status) ? '✓' : '—'}</td>
-                    <td className="wa-time">{m.readAt ? formatTime(m.readAt) : m.imported && m.status === 'read' ? '✓' : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {messages?.items.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="viz-empty">
+                        No messages match these filters
+                      </td>
+                    </tr>
+                  )}
+                  {messages?.items.map((m) => (
+                    <tr key={m.id} className={changedRows.has(m.id) ? 'is-changed' : ''} onClick={() => setOpenId(m.id)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setOpenId(m.id)}>
+                      <td>
+                        <StatusPill status={m.status} notOnWhatsApp={m.notOnWhatsApp} />
+                      </td>
+                      <td>
+                        <div className="wa-cell-main">{m.patientName || '—'}</div>
+                        <div className="wa-cell-sub">{m.ipNo || (m.imported ? 'Imported from WATI' : '')}</div>
+                      </td>
+                      <td>{m.documentLabel || DOCUMENT_LABEL[m.document]}</td>
+                      <td className="wa-mono">
+                        {formatNumber(m.toNumber)}
+                        {m.status === 'failed' && m.notOnWhatsApp && <NoWhatsAppTag />}
+                      </td>
+                      <td>
+                        <div className="wa-cell-main">{TRIGGER_LABEL[m.trigger] || m.trigger}</div>
+                        <div className="wa-cell-sub">
+                          {m.via ? `via ${VIA_LABEL[m.via] || m.via} · ` : ''}
+                          {m.triggeredBy}
+                        </div>
+                      </td>
+                      <td className="wa-time">{formatTime(m.acceptedAt || m.createdAt)}</td>
+                      <td className="wa-time">{m.deliveredAt ? formatTime(m.deliveredAt) : m.imported && ['delivered', 'read'].includes(m.status) ? '✓' : '—'}</td>
+                      <td className="wa-time">{m.readAt ? formatTime(m.readAt) : m.imported && m.status === 'read' ? '✓' : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
-          {messages && messages.total > PAGE_SIZE && (
+          {listData && listData.total > PAGE_SIZE && (
             <div className="wa-pager">
               <button type="button" className="btn btn-secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
                 Previous

@@ -5,7 +5,7 @@
  * template via GET /api/v1/getMessageTemplates).
  */
 import { config } from '../config.js';
-import { logSendResult, logSendStart } from './whatsappLogService.js';
+import { logRetryStart, logSendResult, logSendStart } from './whatsappLogService.js';
 
 // WATI's edge (Cloudflare) rejects requests with no/generic User-Agent with a
 // 403 "error code: 1010" bot-block — confirmed while testing this directly.
@@ -62,9 +62,12 @@ export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pd
     ],
   };
 
-  const logId = log
-    ? await logSendStart({ ...log, toNumber: digits, template: config.wati.templateId, patientName: log.patientName ?? name }).catch(() => null)
-    : null;
+  // A retry (log.existingId) reuses the failed record; anything else starts a new one.
+  const logId = log?.existingId
+    ? await logRetryStart(log.existingId, log).catch(() => null)
+    : log
+      ? await logSendStart({ ...log, toNumber: digits, template: config.wati.templateId, patientName: log.patientName ?? name }).catch(() => null)
+      : null;
 
   try {
     const data = await postTemplate(digits, payload);
@@ -89,6 +92,10 @@ async function postTemplate(digits, payload) {
     signal: AbortSignal.timeout(20_000),
   });
 
+  if (res.status === 429) {
+    // WATI's API usage limit (shared by sending and status checks) — temporary.
+    throw new Error('WATI API usage limit exceeded (429) — will retry later');
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.result !== true) {
     throw new Error(data?.info || data?.message || `WATI responded ${res.status}`);

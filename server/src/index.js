@@ -25,11 +25,16 @@ import { runAssistant } from './services/assistantService.js';
 import {
   getWhatsappMessage,
   listWhatsappMessages,
+  numbersNotOnWhatsApp,
   pollWhatsAppStatuses,
   startWhatsAppStatusPoller,
   whatsappActivity,
+  whatsappInsights,
+  whatsappPatients,
   whatsappSummary,
 } from './services/whatsappLogService.js';
+import { buildWhatsappExport, WA_EXPORT_FORMATS } from './services/whatsappExportService.js';
+import { retryWhatsAppMessage, startWhatsAppRetryWorker } from './services/whatsappRetryService.js';
 
 import fs from 'fs';
 import path from 'path';
@@ -501,9 +506,57 @@ app.get('/api/detail/:orderid', async (req, res) => {
     }
   });
 
+  app.get('/api/admin/whatsapp/insights', async (req, res) => {
+    try {
+      const [insights, settings] = await Promise.all([whatsappInsights(adminQuery(req)), getWatiSettings()]);
+      res.json({ ok: true, liveEnabled: settings.liveEnabled, ...insights });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.get('/api/admin/whatsapp/patients', async (req, res) => {
+    try {
+      res.json({ ok: true, ...(await whatsappPatients(adminQuery(req))) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.get('/api/admin/whatsapp/export', async (req, res) => {
+    const format = String(req.query.format || '');
+    const view = req.query.view === 'patients' ? 'patients' : 'messages';
+    if (!WA_EXPORT_FORMATS[format]) return res.status(400).json({ ok: false, error: 'Format must be xlsx, pdf, csv or json' });
+    try {
+      const { buffer, filename, mime } = await buildWhatsappExport(adminQuery(req), view, format);
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(buffer);
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.post('/api/admin/whatsapp/messages/:id/retry', async (req, res) => {
+    try {
+      const message = await retryWhatsAppMessage(req.params.id, { triggeredBy: getSessionUser(req) });
+      res.json({ ok: true, message: { ...message, _id: undefined } });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.get('/api/whatsapp/not-on-whatsapp', async (_req, res) => {
+    try {
+      res.json({ ok: true, numbers: await numbersNotOnWhatsApp() });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   app.post('/api/admin/whatsapp/refresh', async (_req, res) => {
     try {
-      res.json({ ok: true, poll: await pollWhatsAppStatuses() });
+      res.json({ ok: true, poll: await pollWhatsAppStatuses({ force: true }) });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
     }
@@ -544,6 +597,7 @@ startDischargeScheduler();
 
 // WhatsApp monitor: import earlier test-number messages once, then check
 // delivered / read status every minute.
+startWhatsAppRetryWorker();
 getWatiSettings()
   .then((settings) => startWhatsAppStatusPoller([settings.fixedNumber]))
   .catch((error) => console.warn(`[whatsapp] status poller not started: ${error.message}`));

@@ -86,7 +86,26 @@ export function Sparkline({ values, color = 'var(--viz-accent)', width = 96, hei
  * Stat tile: label · value (count-up) · sub line · optional sparkline.
  * `status` adds the reserved status icon so colour never carries meaning alone.
  */
-export function StatTile({ label, value, format = formatCompact, sub, trend, icon, tone }) {
+/**
+ * Change vs the previous period. `upIsGood` sets the colour: more read is
+ * good, more failed is bad. Arrow + sign carry the direction, not colour alone.
+ */
+export function Delta({ current, previous, upIsGood = true, label = 'vs previous period' }) {
+  if (previous === null || previous === undefined || current === null || current === undefined) return null;
+  if (previous === 0 && current === 0) return <span className="viz-delta is-flat" title={label}>— same</span>;
+  if (previous === 0) return <span className={`viz-delta ${upIsGood ? 'is-good' : 'is-bad'}`} title={label}>▲ new</span>;
+  const change = (current - previous) / previous;
+  if (Math.abs(change) < 0.005) return <span className="viz-delta is-flat" title={label}>— same</span>;
+  const up = change > 0;
+  const good = up === upIsGood;
+  return (
+    <span className={`viz-delta ${good ? 'is-good' : 'is-bad'}`} title={`${label}: ${previous}`}>
+      {up ? '▲' : '▼'} {Math.abs(Math.round(change * 100))}%
+    </span>
+  );
+}
+
+export function StatTile({ label, value, format = formatCompact, sub, trend, icon, tone, delta }) {
   const animated = useCountUp(value ?? 0);
   return (
     <div className={`viz-tile ${tone ? `is-${tone}` : ''}`}>
@@ -97,7 +116,10 @@ export function StatTile({ label, value, format = formatCompact, sub, trend, ico
         </span>
         {trend && <Sparkline values={trend} />}
       </div>
-      <div className="viz-tile-value">{value === null || value === undefined ? '—' : format(animated)}</div>
+      <div className="viz-tile-value-row">
+        <div className="viz-tile-value">{value === null || value === undefined ? '—' : format(animated)}</div>
+        {delta}
+      </div>
       {sub && <div className="viz-tile-sub">{sub}</div>}
     </div>
   );
@@ -274,6 +296,207 @@ export function HBars({ items, color = 'var(--viz-accent)', max: maxOverride }) 
           <div className="viz-hbar-value">
             <b>{formatCompact(item.value)}</b>
             {item.note && <span>{item.note}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Percent lines over time (0–100%). `series`: [{ key, label, color }].
+ * Crosshair snaps to the nearest bucket; one tooltip lists every series.
+ */
+export function RateLines({ data, series, formatBucket = (b) => b, height = 200 }) {
+  const wrapRef = useRef(null);
+  const width = useWidth(wrapRef);
+  const [hover, setHover] = useState(null);
+  const pad = { top: 12, right: 14, bottom: 26, left: 40 };
+  const plotW = Math.max(0, width - pad.left - pad.right);
+  const plotH = height - pad.top - pad.bottom;
+  const x = (i) => pad.left + (data.length > 1 ? (i / (data.length - 1)) * plotW : plotW / 2);
+  const y = (v) => pad.top + plotH - v * plotH;
+  const labelEvery = Math.max(1, Math.ceil(data.length / Math.max(1, Math.floor(plotW / 48))));
+
+  function onMove(e) {
+    const rect = wrapRef.current.getBoundingClientRect();
+    const px = e.clientX - rect.left - pad.left;
+    const i = data.length > 1 ? Math.round((px / plotW) * (data.length - 1)) : 0;
+    setHover(Math.max(0, Math.min(data.length - 1, i)));
+  }
+
+  return (
+    <div className="viz-plot" ref={wrapRef} onMouseMove={onMove} onMouseLeave={() => setHover(null)} style={{ minHeight: height }}>
+      {width > 0 && (
+        <svg width={width} height={height} role="img" aria-label="Delivery and read rate over time">
+          {[0, 0.25, 0.5, 0.75, 1].map((t) => (
+            <g key={t}>
+              <line x1={pad.left} x2={width - pad.right} y1={y(t)} y2={y(t)} className={t === 0 ? 'viz-axis' : 'viz-grid'} />
+              <text x={pad.left - 8} y={y(t)} dy="0.32em" textAnchor="end" className="viz-tick">
+                {Math.round(t * 100)}%
+              </text>
+            </g>
+          ))}
+          {data.map((d, i) =>
+            i % labelEvery === 0 ? (
+              <text key={d.bucket} x={x(i)} y={height - 8} textAnchor="middle" className="viz-tick">
+                {formatBucket(d.bucket, true)}
+              </text>
+            ) : null,
+          )}
+          {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={pad.top} y2={pad.top + plotH} className="viz-crosshair" />}
+          {series.map((s) => {
+            const pts = data.map((d, i) => (d[s.key] === null || d[s.key] === undefined ? null : [x(i), y(d[s.key])]));
+            // Break the line where a day has no data rather than drawing through it.
+            let dPath = '';
+            let pen = false;
+            for (const p of pts) {
+              if (!p) {
+                pen = false;
+                continue;
+              }
+              dPath += `${pen ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)} `;
+              pen = true;
+            }
+            const last = [...pts].reverse().find(Boolean);
+            return (
+              <g key={s.key}>
+                <path d={dPath} fill="none" stroke={s.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" pathLength="1" className="viz-line" />
+                {/* A marker per day while days are few enough to tell apart (and so isolated days still show). */}
+                {pts.length <= 45
+                  ? pts.map((p, i) => p && <circle key={i} cx={p[0]} cy={p[1]} r="4" fill={s.color} stroke="var(--viz-surface)" strokeWidth="2" />)
+                  : last && <circle cx={last[0]} cy={last[1]} r="4" fill={s.color} stroke="var(--viz-surface)" strokeWidth="2" />}
+                {hover !== null && pts[hover] && <circle cx={pts[hover][0]} cy={pts[hover][1]} r="5" fill={s.color} stroke="var(--viz-surface)" strokeWidth="2" />}
+              </g>
+            );
+          })}
+        </svg>
+      )}
+      {hover !== null && data[hover] && (
+        <div className="viz-tooltip" style={{ left: Math.min(Math.max(x(hover), 90), width - 90), top: 4 }}>
+          <div className="viz-tooltip-title">{formatBucket(data[hover].bucket)}</div>
+          <div className="viz-tooltip-total">
+            <b>{data[hover].total}</b> messages
+          </div>
+          {series.map((s) => (
+            <div key={s.key} className="viz-tooltip-row">
+              <span className="viz-line-key" style={{ background: s.color }} />
+              <b>{data[hover][s.key] === null || data[hover][s.key] === undefined ? '—' : `${Math.round(data[hover][s.key] * 100)}%`}</b>
+              <span>{s.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One series of columns (hours of the day, time buckets). Each column is its own hover target. */
+export function Columns({ data, color = 'var(--viz-accent)', height = 180, valueLabel = 'messages', formatLabel = (l) => l, labelEvery = 1, highlightMax = false }) {
+  const wrapRef = useRef(null);
+  const width = useWidth(wrapRef);
+  const mounted = useMounted();
+  const [hover, setHover] = useState(null);
+  const pad = { top: 16, right: 6, bottom: 24, left: 30 };
+  const plotW = Math.max(0, width - pad.left - pad.right);
+  const plotH = height - pad.top - pad.bottom;
+  const max = Math.max(...data.map((d) => d.value), 1);
+  const band = data.length ? plotW / data.length : 0;
+  const barW = Math.max(2, Math.min(24, band * 0.7));
+  const y = (v) => pad.top + plotH - (v / max) * plotH;
+  const maxIndex = data.reduce((best, d, i) => (d.value > data[best].value ? i : best), 0);
+
+  return (
+    <div className="viz-plot" ref={wrapRef} onMouseLeave={() => setHover(null)} style={{ minHeight: height }}>
+      {width > 0 && (
+        <svg width={width} height={height} role="img">
+          <line x1={pad.left} x2={width - pad.right} y1={y(0)} y2={y(0)} className="viz-axis" />
+          <text x={pad.left - 6} y={y(max)} dy="0.32em" textAnchor="end" className="viz-tick">
+            {max}
+          </text>
+          {data.map((d, i) => {
+            const cx = pad.left + band * i + band / 2;
+            const h = Math.max(0, y(0) - y(d.value));
+            const r = Math.min(4, h / 2, barW / 2);
+            const x0 = cx - barW / 2;
+            const top = y(d.value);
+            const path = h > 0 ? `M${x0},${y(0)} V${top + r} Q${x0},${top} ${x0 + r},${top} H${x0 + barW - r} Q${x0 + barW},${top} ${x0 + barW},${top + r} V${y(0)} Z` : '';
+            return (
+              <g key={d.label}>
+                {hover === i && <rect x={cx - band / 2} y={pad.top} width={band} height={plotH} className="viz-hover-band" />}
+                {path && (
+                  <path
+                    d={path}
+                    fill={color}
+                    opacity={highlightMax && i !== maxIndex ? 0.55 : 1}
+                    className="viz-bar"
+                    style={{ transform: mounted ? 'scaleY(1)' : 'scaleY(0)', transformOrigin: `${cx}px ${y(0)}px`, transitionDelay: `${Math.min(i * 20, 400)}ms` }}
+                  />
+                )}
+                {highlightMax && i === maxIndex && d.value > 0 && (
+                  <text x={cx} y={top - 5} textAnchor="middle" className="viz-peak">
+                    {d.value}
+                  </text>
+                )}
+                {i % labelEvery === 0 && (
+                  <text x={cx} y={height - 8} textAnchor="middle" className="viz-tick">
+                    {formatLabel(d.label, true)}
+                  </text>
+                )}
+                <rect
+                  x={cx - band / 2}
+                  y={pad.top}
+                  width={band}
+                  height={plotH}
+                  fill="transparent"
+                  tabIndex={0}
+                  onMouseEnter={() => setHover(i)}
+                  onFocus={() => setHover(i)}
+                  onBlur={() => setHover(null)}
+                  aria-label={`${formatLabel(d.label)}: ${d.value} ${valueLabel}`}
+                />
+              </g>
+            );
+          })}
+        </svg>
+      )}
+      {hover !== null && data[hover] && (
+        <div className="viz-tooltip" style={{ left: Math.min(Math.max(pad.left + band * hover + band / 2, 80), width - 80), top: 0 }}>
+          <div className="viz-tooltip-title">{formatLabel(data[hover].label)}</div>
+          <div className="viz-tooltip-total">
+            <b>{data[hover].value}</b> {valueLabel}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Horizontal stacked bars, one per category. `rows`: [{ label, [series.key]: n }].
+ * 2px surface gap between segments; each segment's value is in its hover title
+ * and in the card's table view.
+ */
+export function StackedHBars({ rows, series }) {
+  const mounted = useMounted();
+  const totals = rows.map((r) => series.reduce((sum, s) => sum + (r[s.key] || 0), 0));
+  const max = Math.max(...totals, 1);
+  return (
+    <div className="viz-hbars">
+      {rows.map((r, i) => (
+        <div className="viz-hbar" key={r.label}>
+          <div className="viz-hbar-label">{r.label}</div>
+          <div className="viz-hbar-track">
+            <div className="viz-stack" style={{ width: mounted ? `${(totals[i] / max) * 100}%` : '0%', transitionDelay: `${i * 70}ms` }}>
+              {series
+                .filter((s) => r[s.key] > 0)
+                .map((s) => (
+                  <span key={s.key} className="viz-stack-seg" style={{ flexGrow: r[s.key], background: s.color }} title={`${r.label} · ${s.label}: ${r[s.key]}`} />
+                ))}
+            </div>
+          </div>
+          <div className="viz-hbar-value">
+            <b>{totals[i]}</b>
           </div>
         </div>
       ))}

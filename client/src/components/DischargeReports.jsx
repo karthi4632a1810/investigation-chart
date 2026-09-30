@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   defaultDateOnly,
+  fetchNotOnWhatsappNumbers,
   fetchReportsForDate,
   fetchReportStatus,
   reportPdfUrl,
@@ -325,7 +326,27 @@ function SendWhatsAppButton({ date, ipNo, name, onToast }) {
 }
 
 
-function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast }) {
+/** 10-digit EMR mobiles are sent as 91XXXXXXXXXX (same as the server's toWatiNumber). */
+function whatsappDigits(mobile) {
+  const d = String(mobile || '').replace(/\D/g, '');
+  if (d.length === 10) return `91${d}`;
+  if (d.length === 11 && d.startsWith('0')) return `91${d.slice(1)}`;
+  return d;
+}
+
+function NoWhatsAppBadge() {
+  return (
+    <span className="wa-nowa-tag" title="The last WhatsApp message to this number failed because it is not on WhatsApp — check the mobile number in the EMR">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M20 11.5a8.4 8.4 0 0 1-12.2 7.5L3 20.5l1.5-4.6A8.4 8.4 0 1 1 20 11.5z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+        <path d="M4 4l16 16" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+      </svg>
+      Not on WhatsApp
+    </span>
+  );
+}
+
+function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp }) {
   if (!patients.length) return null;
 
   return (
@@ -406,6 +427,7 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                         onToast={onToast}
                         iconOnly
                       />
+                      {noWhatsApp?.has(whatsappDigits(p.mobile)) && <NoWhatsAppBadge />}
                     </div>
                   ) : (
                     <span className="text-muted">—</span>
@@ -502,7 +524,7 @@ function summaryApprover(p) {
   return p.summaryApprovedBy || p.doctor || 'Treating Consultant';
 }
 
-function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast }) {
+function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp }) {
   if (!patients.length) return null;
 
   return (
@@ -572,6 +594,7 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                         onToast={onToast}
                         iconOnly
                       />
+                      {noWhatsApp?.has(whatsappDigits(p.mobile)) && <NoWhatsAppBadge />}
                     </span>
                   ) : (
                     <span className="text-muted">—</span>
@@ -971,6 +994,8 @@ export default function DischargeReports({ navRequest }) {
     }
   });
   const [filterText, setFilterText] = useState('');
+  // Numbers that failed as "not on WhatsApp" — tagged next to the patient's mobile.
+  const [noWhatsApp, setNoWhatsApp] = useState(() => new Set());
 
   // The AI assistant can open this screen at a date, with the list filtered.
   useEffect(() => {
@@ -1007,6 +1032,12 @@ export default function DischargeReports({ navRequest }) {
       // ignore
     }
   }
+
+  useEffect(() => {
+    fetchNotOnWhatsappNumbers()
+      .then(setNoWhatsApp)
+      .catch(() => {});
+  }, [lastRefreshedAt]);
 
   const loadByDate = useCallback((forDate) => {
     setLoading(true);
@@ -1527,6 +1558,7 @@ export default function DischargeReports({ navRequest }) {
                   getPdfUrl={(p) => reportPdfUrl(p.date, p.ipNo)}
                   getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
                   onToast={showToast}
+                  noWhatsApp={noWhatsApp}
                 />
               ) : (
                 <>
@@ -1537,6 +1569,7 @@ export default function DischargeReports({ navRequest }) {
                       getPdfUrl={(p) => reportPdfUrl(p.date, p.ipNo)}
                       getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
                       onToast={showToast}
+                      noWhatsApp={noWhatsApp}
                     />
                   </div>
                   <div className="responsive-cards-view">
@@ -1546,6 +1579,7 @@ export default function DischargeReports({ navRequest }) {
                       getPdfUrl={(p) => reportPdfUrl(p.date, p.ipNo)}
                       getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
                       onToast={showToast}
+                      noWhatsApp={noWhatsApp}
                     />
                   </div>
                 </>
