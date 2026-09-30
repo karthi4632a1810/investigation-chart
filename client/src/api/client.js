@@ -279,6 +279,25 @@ export async function downloadWhatsappExport(params, view, format) {
   return name;
 }
 
+/** Ask AI's discharge report as Excel / PDF / CSV (server: dischargeReportQuery.js). */
+export async function downloadDischargeExport(query, format) {
+  const res = await apiFetch(`${API_BASE}/discharges/export?${adminParams({ ...query, format })}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Export failed');
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || `discharges.${format}`;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return name;
+}
+
 export function refreshWhatsappStatuses() {
   return postJson(`${API_BASE}/admin/whatsapp/refresh`, {});
 }

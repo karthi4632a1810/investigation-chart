@@ -164,6 +164,7 @@ To send sooner: ask WATI support to reset or raise the limit (more quota needs t
     text: `The WhatsApp Monitor (the Monitor tab, or /admin) tracks every message:
 - Header: "Live · updated …" (refreshes every 15 s), when WATI was last checked or that it's paused, and "Check WATI now" (asks WATI for the latest ticks; max once per 5 min).
 - Filters in one row: date presets (Today, Yesterday — the default, Last 7 days, Last 30 days, This month, Custom), "Dates by", status chips, document, trigger (automatic / manual click / share / retry) and search by name, IP or number.
+- Time: optional from–to time of day (India time). With Report date it's the patient's discharge time from the EMR ("today 10:00–14:00" = patients discharged then); with Sent date it's when the message went out. × clears it.
 - "Dates by": Report date (default) counts patients by discharge date — the date their reports are filed under — so Today = today's patients only. Sent date counts by when the message went out, so Today also includes earlier patients' reports sent or re-sent today (e.g. after a WATI limit). Tiles, charts, lists and exports all follow it; the line under the filters says which is used.
 - Tiles: Triggered, Sent, Delivered, Read, Pending, Failed — each with a trend and the change vs the previous period.
 - WATI connection card, Coverage (discharged patients: sent / not sent / no mobile / no report yet), Needs attention (failed — can be fixed, not on WhatsApp, unread 24 h+, one tick 6 h+).
@@ -225,6 +226,15 @@ Changes apply from the person's next click. Every rule is checked by the server 
     title: 'Sending a test WhatsApp message',
     keywords: 'test message send test whatsapp check working try number text',
     text: `To check WhatsApp is working, ask Ask AI: "send a test message" (it asks for the text, then the number) or all at once: send "TEST MESSAGE" to +91 99624 60782. It shows a card with the message and number — press Send (or type yes). It goes through the approved report template: your text appears in the message with a small "WhatsApp Test Message" PDF, because WhatsApp only allows free text within 24 hours of the person messaging the hospital. Each test uses one WATI API call and is listed in the WhatsApp Monitor as "Test message".`,
+  },
+  {
+    id: 'ai-reports',
+    title: 'Reports from Ask AI',
+    keywords: 'report reports generate make create table download excel pdf csv json patient wise message wise time between hours am pm discharge list count department doctor',
+    text: `Ask AI builds reports on request, with any dates and times, shown as a table with downloads:
+- WhatsApp report (needs WhatsApp Monitor access): e.g. "today 10 am to 2 pm WhatsApp report patient and message wise", "failed messages yesterday", "WhatsApp sent between 6 pm and 9 pm". Patient-wise and Message-wise tabs; download Excel, PDF, CSV or JSON; "Open in WhatsApp Monitor" opens the Monitor with the same filters. By default it counts patients by discharge date / time; say "sent" to count by send time.
+- Discharge report (needs Discharge Reports access): e.g. "patients discharged today 10 am to 2 pm", "ENT discharges this week with No Summary", "Dr. Samson's patients yesterday not sent on WhatsApp". Totals, departments, each patient's lab report / summary / WhatsApp status; download Excel, PDF or CSV.
+Times are India time; "8 pm to 8 am" means overnight from the evening before.`,
   },
   {
     id: 'exports',

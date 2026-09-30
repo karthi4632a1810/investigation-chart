@@ -622,7 +622,37 @@ function istMidnight(day) {
  */
 const isReportBasis = (basis) => basis === 'report';
 
-function rangeFilter(from, to, basis) {
+// Optional time of day (HH:MM, India time): the range then runs from
+// `from` at fromTime to `to` at toTime — "today 10:00–14:00", or overnight
+// "yesterday 20:00 → today 08:00".
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+export function timeWindow(q = {}) {
+  const fromTime = TIME_RE.test(q.fromTime || '') ? q.fromTime : null;
+  const toTime = TIME_RE.test(q.toTime || '') ? q.toTime : null;
+  return fromTime || toTime ? { fromTime: fromTime || '00:00', toTime: toTime || '23:59' } : null;
+}
+const istAt = (day, hhmm) => new Date(`${day}T${hhmm}:00+05:30`);
+
+/** The EMR discharge time ("29-09-2026 12:24", India time) as a Date, or null. */
+export function dischargeMoment(record) {
+  const m = /^(\d{2})-(\d{2})-(\d{4})\s+(\d{1,2}):(\d{2})/.exec(String(record?.dischargeDate || ''));
+  return m ? new Date(`${m[3]}-${m[2]}-${m[1]}T${m[4].padStart(2, '0')}:${m[5]}:00+05:30`) : null;
+}
+
+/** IP numbers of patients discharged between `from` fromTime and `to` toTime. */
+export async function dischargedInWindow(from, to, win) {
+  const start = istAt(from, win.fromTime).getTime();
+  const end = istAt(to, win.toTime).getTime() + 60_000;
+  const rows = await (await getMongoCollection('discharge_reports'))
+    .find({ date: { $gte: from, $lte: to } }, { projection: { _id: 0, ipNo: 1, dischargeDate: 1 } })
+    .toArray();
+  return rows.filter((r) => {
+    const t = dischargeMoment(r)?.getTime();
+    return t >= start && t < end;
+  });
+}
+
+function rangeFilter(from, to, basis, win) {
   const f = DATE_RE.test(from || '') ? from : null;
   const t = DATE_RE.test(to || '') ? to : null;
   if (isReportBasis(basis)) {
@@ -632,8 +662,8 @@ function rangeFilter(from, to, basis) {
     return { dischargeDate };
   }
   const createdAt = {};
-  if (f) createdAt.$gte = istMidnight(f);
-  if (t) createdAt.$lt = new Date(istMidnight(t).getTime() + 86400_000);
+  if (f) createdAt.$gte = win ? istAt(f, win.fromTime) : istMidnight(f);
+  if (t) createdAt.$lt = win ? new Date(istAt(t, win.toTime).getTime() + 60_000) : new Date(istMidnight(t).getTime() + 86400_000);
   return Object.keys(createdAt).length ? { createdAt } : {};
 }
 
@@ -653,7 +683,7 @@ const SPECIAL_STATUS = {
 };
 
 function buildFilter(q = {}) {
-  const filter = { ...rangeFilter(q.from, q.to, q.basis) };
+  const filter = { ...rangeFilter(q.from, q.to, q.basis, timeWindow(q)) };
   const and = [];
   const statuses = String(q.status || '')
     .split(',')
@@ -676,11 +706,24 @@ function buildFilter(q = {}) {
   return filter;
 }
 
+/**
+ * buildFilter, plus — for "Report date" with a time window — only the
+ * patients whose EMR discharge time falls inside it.
+ */
+async function resolveFilter(q = {}) {
+  const filter = buildFilter(q);
+  const win = timeWindow(q);
+  if (win && isReportBasis(q.basis) && DATE_RE.test(q.from || '') && DATE_RE.test(q.to || '')) {
+    filter.ipNo = { $in: (await dischargedInWindow(q.from, q.to, win)).map((r) => r.ipNo) };
+  }
+  return filter;
+}
+
 const secs = (a, b) => ({ $divide: [{ $subtract: [a, b] }, 1000] });
 
 export async function whatsappSummary(q = {}) {
   const c = await collection();
-  const match = buildFilter(q);
+  const match = await resolveFilter(q);
   const from = DATE_RE.test(q.from || '') ? q.from : null;
   const to = DATE_RE.test(q.to || '') ? q.to : null;
   const hourly = from && to && from === to;
@@ -780,7 +823,7 @@ function publicDoc(d) {
 
 export async function listWhatsappMessages(q = {}) {
   const c = await collection();
-  const filter = buildFilter(q);
+  const filter = await resolveFilter(q);
   const limit = Math.min(Math.max(parseInt(q.limit, 10) || 25, 5), 200);
   const page = Math.max(parseInt(q.page, 10) || 1, 1);
   const [total, docs] = await Promise.all([
@@ -857,9 +900,10 @@ export async function whatsappPatients(q = {}) {
   const limit = Math.min(Math.max(parseInt(q.limit, 10) || 25, 5), 5000);
   const page = Math.max(parseInt(q.page, 10) || 1, 1);
   const project = Object.fromEntries(MESSAGE_FIELDS.map((f) => [f, `$${f}`]));
+  const match = await resolveFilter(q);
   const grouped = await c
     .aggregate([
-      { $match: buildFilter(q) },
+      { $match: match },
       { $sort: { createdAt: 1 } },
       {
         $group: {
@@ -920,7 +964,7 @@ export async function whatsappPatients(q = {}) {
 /** Every message matching the filters (for exports), newest first. */
 export async function allWhatsappMessages(q = {}, max = 10000) {
   const c = await collection();
-  const docs = await c.find(buildFilter(q), { projection: { history: 0 } }).sort({ createdAt: -1 }).limit(max).toArray();
+  const docs = await c.find(await resolveFilter(q), { projection: { history: 0 } }).sort({ createdAt: -1 }).limit(max).toArray();
   return docs.map(publicDoc);
 }
 
@@ -1003,11 +1047,19 @@ function previousRange(from, to) {
  * Patient-based (by discharge date), so the status / document / trigger
  * filters don't apply here.
  */
-async function coverage(from, to) {
+async function coverage(from, to, win = null) {
   if (!DATE_RE.test(from || '') || !DATE_RE.test(to || '')) return null;
-  const reports = await (await getMongoCollection('discharge_reports'))
-    .find({ date: { $gte: from, $lte: to } }, { projection: { _id: 0, date: 1, ipNo: 1, name: 1, mobile: 1, department: 1, dateCount: 1, hasSummary: 1, summaryDataMissing: 1 } })
+  let reports = await (await getMongoCollection('discharge_reports'))
+    .find({ date: { $gte: from, $lte: to } }, { projection: { _id: 0, date: 1, ipNo: 1, name: 1, mobile: 1, department: 1, dateCount: 1, hasSummary: 1, summaryDataMissing: 1, dischargeDate: 1 } })
     .toArray();
+  if (win) {
+    const start = istAt(from, win.fromTime).getTime();
+    const end = istAt(to, win.toTime).getTime() + 60_000;
+    reports = reports.filter((r) => {
+      const t = dischargeMoment(r)?.getTime();
+      return t >= start && t < end;
+    });
+  }
   const c = await collection();
   const msgs = await c
     .find({ dischargeDate: { $gte: from, $lte: to }, ipNo: { $ne: null } }, { projection: { dischargeDate: 1, ipNo: 1, status: 1, notOnWhatsApp: 1 } })
@@ -1045,9 +1097,10 @@ async function coverage(from, to) {
 export async function whatsappInsights(q = {}) {
   const c = await collection();
   const now = Date.now();
+  const match = await resolveFilter(q);
   const [f] = await c
     .aggregate([
-      { $match: buildFilter(q) },
+      { $match: match },
       {
         $facet: {
           trend: [
@@ -1124,7 +1177,8 @@ export async function whatsappInsights(q = {}) {
   const prev = previousRange(q.from, q.to);
   let previous = null;
   if (prev) {
-    const rows = await c.aggregate([{ $match: buildFilter({ ...q, from: prev.from, to: prev.to }) }, { $group: { _id: '$status', n: { $sum: 1 } } }]).toArray();
+    const prevMatch = await resolveFilter({ ...q, from: prev.from, to: prev.to });
+    const rows = await c.aggregate([{ $match: prevMatch }, { $group: { _id: '$status', n: { $sum: 1 } } }]).toArray();
     const counts = Object.fromEntries(STATUSES.map((s) => [s, rows.find((r) => r._id === s)?.n || 0]));
     const total = STATUSES.reduce((sum, s) => sum + counts[s], 0);
     const accepted = counts.sent + counts.delivered + counts.read;
@@ -1149,7 +1203,8 @@ export async function whatsappInsights(q = {}) {
     trendRange = { from: fromDay, to: q.to };
     trendRows = await c
       .aggregate([
-        { $match: buildFilter({ ...q, from: fromDay, to: q.to }) },
+        // Whole days for the 14-day trend (a time window would only cut each end).
+        { $match: buildFilter({ ...q, from: fromDay, to: q.to, fromTime: null, toTime: null }) },
         {
           $group: {
             _id: dayOf(q.basis),
@@ -1194,62 +1249,24 @@ export async function whatsappInsights(q = {}) {
     departments: f.departments.map((d) => ({ department: d._id, total: d.total, delivered: d.delivered, read: d.read, failed: d.failed })),
     staff: f.staff.map((s) => ({ user: s._id || 'unknown', total: s.total, failed: s.failed, manual: s.manual })),
     attention: f.attention[0] ? { ...f.attention[0], _id: undefined } : { fixable: 0, nowa: 0, unread24: 0, stuck6: 0, autoRetrying: 0 },
-    coverage: await coverage(q.from, q.to),
+    coverage: await coverage(q.from, q.to, isReportBasis(q.basis) ? timeWindow(q) : null),
   };
 }
 
 // ---- For "Ask AI" (assistantService.js) ------------------------------------
 
 /**
- * Messages for a date range or one patient, trimmed for the assistant: the
- * rows (with names) go to the page; `facts` (no names or phone numbers) go to
- * the AI model.
+ * A WhatsApp report for Ask AI: totals plus patient-wise and message-wise rows
+ * for the same filters as the monitor (dates, "Dates by", time window, status,
+ * document, trigger, search).
  */
-export async function whatsappForAssistant({ from, to, ipNo, status, limit = 50 } = {}) {
-  const c = await collection();
-  const filter = ipNo ? { ipNo: { $regex: `^${escapeRegex(ipNo)}$`, $options: 'i' } } : buildFilter({ from, to, status });
-  if (ipNo && status) filter.status = status;
-  const docs = await c.find(filter).sort({ createdAt: -1 }).limit(Math.min(limit, 200)).toArray();
-  const rows = docs.map((d) => ({
-    id: String(d._id),
-    patientName: d.patientName || '',
-    ipNo: d.ipNo || '',
-    dischargeDate: d.dischargeDate || null,
-    document: d.documentLabel || d.document,
-    status: d.status,
-    notOnWhatsApp: Boolean(d.notOnWhatsApp),
-    at: d.readAt || d.deliveredAt || d.acceptedAt || d.failedAt || d.createdAt,
-    sentAt: d.acceptedAt || d.createdAt,
-    trigger: d.trigger,
-    attempts: d.attempts || 1,
-    reason: d.status === 'failed' ? failureCategory(d) : null,
-    nextRetryAt: d.status === 'failed' ? d.nextRetryAt || null : null,
-  }));
-  const failures = {};
-  for (const r of rows) if (r.reason) failures[r.reason] = (failures[r.reason] || 0) + 1;
-  return {
-    rows,
-    facts: {
-      messages: rows.length,
-      byStatus: rows.reduce((acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }), {}),
-      failureReasons: failures,
-      waitingForAutomaticRetry: rows.filter((r) => r.nextRetryAt).length,
-      ...(ipNo
-        ? {
-            perMessage: rows.map((r) => ({
-              document: r.document,
-              status: r.status,
-              sentAt: r.sentAt,
-              lastChangeAt: r.at,
-              trigger: r.trigger,
-              attempts: r.attempts,
-              reason: r.reason,
-              nextRetryAt: r.nextRetryAt,
-            })),
-          }
-        : {}),
-    },
-  };
+export async function whatsappReportData(q = {}, maxRows = 100) {
+  const [summary, patients, messages] = await Promise.all([
+    whatsappSummary(q),
+    whatsappPatients({ ...q, page: 1, limit: maxRows }),
+    listWhatsappMessages({ ...q, page: 1, limit: Math.min(maxRows, 200) }),
+  ]);
+  return { summary, patients, messages };
 }
 
 /** Reports waiting for an automatic re-send, and how many WATI refused (usage limit) in the last day. */

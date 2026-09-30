@@ -37,6 +37,7 @@ import { hasCriteria, labResultsCoverage, listLabTests, normaliseQuery, searchLa
 import { buildExport, EXPORT_FORMATS, exportFileName, shareLabResultsOnWhatsApp } from './services/labExportService.js';
 import { toWatiNumber } from './services/watiService.js';
 import { runAssistant } from './services/assistantService.js';
+import { buildDischargeExport, DISCHARGE_EXPORT_FORMATS } from './services/dischargeReportQuery.js';
 import { sendTestWhatsApp } from './services/whatsappTestService.js';
 import {
   getPollState,
@@ -525,6 +526,8 @@ app.get('/api/detail/:orderid', async (req, res) => {
     from: req.query.from,
     to: req.query.to,
     basis: req.query.basis === 'report' ? 'report' : 'sent', // "Dates by" (whatsappLogService.js rangeFilter)
+    fromTime: req.query.fromTime, // optional HH:MM window (timeWindow)
+    toTime: req.query.toTime,
     status: req.query.status,
     document: req.query.document,
     trigger: req.query.trigger,
@@ -653,6 +656,20 @@ app.get('/api/detail/:orderid', async (req, res) => {
       });
     } catch (error) {
       res.status(502).json({ ok: false, error: error.message });
+    }
+  });
+
+  /** Discharge report download (Ask AI's report tables): Excel, PDF or CSV. */
+  app.get('/api/discharges/export', async (req, res) => {
+    const format = String(req.query.format || '');
+    if (!DISCHARGE_EXPORT_FORMATS[format]) return res.status(400).json({ ok: false, error: 'Format must be xlsx, pdf or csv' });
+    try {
+      const { buffer, filename, mime } = await buildDischargeExport(req.query, format);
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(buffer);
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
     }
   });
 

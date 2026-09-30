@@ -107,10 +107,10 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPop);
   }, []);
 
-  function handleAssistantNavigate({ view: nextView, date, filter, query }) {
+  function handleAssistantNavigate({ view: nextView, date, filter, query, monitor }) {
     if (!nextView) return;
     setView(nextView);
-    setNavRequest({ id: Date.now(), view: nextView, date, filter, query });
+    setNavRequest({ id: Date.now(), view: nextView, date, filter, query, monitor });
   }
   const [regNo, setRegNo] = useState('');
   const [fromDate, setFromDate] = useState(defaultDateOnly());
@@ -311,7 +311,7 @@ export default function App() {
 
         {view === 'wati' && canOpen(me, 'wati') && <WatiSettings readOnly={access.wati.readOnly} />}
 
-        {view === 'admin' && canOpen(me, 'admin') && <AdminDashboard readOnly={access.monitor.readOnly} />}
+        {view === 'admin' && canOpen(me, 'admin') && <AdminDashboard readOnly={access.monitor.readOnly} navRequest={navRequest} />}
 
         {view === 'users' && canOpen(me, 'users') && <UserManagement />}
 

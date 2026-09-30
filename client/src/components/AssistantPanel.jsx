@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { EXPORT_LABELS, askAssistant, downloadLabResults, sendTestWhatsApp } from '../api/client';
+import { EXPORT_LABELS, askAssistant, downloadDischargeExport, downloadLabResults, downloadWhatsappExport, sendTestWhatsApp } from '../api/client';
 import ExportShareBar from './ExportShareBar';
 import { CheckIcon, CloseIcon, RotateCcwIcon, SendIcon, SparklesIcon, WhatsAppIcon } from './Icons';
 
@@ -7,13 +7,13 @@ const SUGGESTIONS = [
   "Show today's discharges",
   'Patients with urine glucose negative last week',
   'Is WhatsApp working right now?',
-  "Yesterday's WhatsApp messages",
+  "Today's WhatsApp report, patient and message wise",
+  'Patients discharged today 10 am to 2 pm',
   'What does the red No Summary button mean?',
   'Send a test WhatsApp message',
 ];
 
 const SCREEN_NAMES = { reports: 'Discharge Reports', labFinder: 'Lab Finder', search: 'Lab Search', wati: 'WATI Settings', admin: 'WhatsApp Monitor' };
-const WA_STATUS = { pending: 'Pending', sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Failed' };
 
 function formatIst(value) {
   if (!value) return '';
@@ -196,56 +196,187 @@ function StatusBlock({ block, onNavigate }) {
   );
 }
 
-/** WhatsApp messages for dates or one patient. */
-function WhatsAppBlock({ block, onNavigate }) {
-  const [all, setAll] = useState(false);
-  const rows = all ? block.rows : block.rows.slice(0, 8);
-  const t = block.totals;
+const DOC_STATUS = { read: 'Read', delivered: 'Delivered', sent: 'Sent', pending: 'Pending', failed: 'Failed' };
+const FORMAT_SHORT = { xlsx: 'XLS', pdf: 'PDF', csv: 'CSV', json: 'JSON' };
+
+/** Download buttons for a report card; `download(format)` returns the file name. */
+function ReportDownloads({ formats, download }) {
+  const [busy, setBusy] = useState('');
+  const [note, setNote] = useState('');
   return (
-    <div className="ai-block">
+    <div className="ai-report-dl">
+      <span>Download</span>
+      {formats.map((f) => (
+        <button
+          key={f}
+          type="button"
+          className={`xs-chip is-${f}`}
+          disabled={Boolean(busy)}
+          onClick={async () => {
+            setBusy(f);
+            setNote('');
+            try {
+              setNote(`Downloaded ${await download(f)}`);
+            } catch (err) {
+              setNote(err.message);
+            } finally {
+              setBusy('');
+            }
+          }}
+        >
+          {busy === f ? <span className="xs-spin" /> : <span className="xs-ext">{FORMAT_SHORT[f]}</span>}
+          {EXPORT_LABELS[f] || f.toUpperCase()}
+        </button>
+      ))}
+      {note && <div className="ai-report-note">{note}</div>}
+    </div>
+  );
+}
+
+function StatusPill({ status, notOnWhatsApp }) {
+  const key = notOnWhatsApp ? 'failed' : status;
+  return <span className={`ai-wa-status is-${key}`}>{notOnWhatsApp ? 'Not on WhatsApp' : DOC_STATUS[status] || status}</span>;
+}
+
+/** WhatsApp report: patient-wise and message-wise, with downloads. */
+function WhatsAppReportBlock({ block, onNavigate }) {
+  const [tab, setTab] = useState(block.view === 'messages' ? 'messages' : 'patients');
+  const [all, setAll] = useState(false);
+  const t = block.totals;
+  const rows = tab === 'patients' ? block.patients : block.messages;
+  const shown = all ? rows : rows.slice(0, 8);
+  const total = tab === 'patients' ? block.patientsTotal : block.messagesTotal;
+  return (
+    <div className="ai-block ai-report">
       <div className="ai-block-title">{block.title}</div>
-      {t && (
-        <div className="ai-wa-totals">
-          <span><b>{t.total}</b> messages</span>
-          <span><b>{t.sent}</b> sent</span>
-          <span><b>{t.delivered}</b> delivered</span>
-          <span className="is-read"><b>{t.read}</b> read</span>
-          {t.pending > 0 && <span className="is-pending"><b>{t.pending}</b> pending</span>}
-          <span className={t.failed ? 'is-failed' : ''}><b>{t.failed}</b> failed</span>
+      <div className="ai-wa-totals">
+        <span><b>{t.patients}</b> patients</span>
+        <span><b>{t.messages}</b> messages</span>
+        <span><b>{t.sent}</b> sent</span>
+        <span><b>{t.delivered}</b> delivered</span>
+        <span className="is-read"><b>{t.read}</b> read</span>
+        {t.pending > 0 && <span className="is-pending"><b>{t.pending}</b> pending</span>}
+        <span className={t.failed ? 'is-failed' : ''}><b>{t.failed}</b> failed</span>
+      </div>
+      {block.view === 'both' && (
+        <div className="ai-report-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === 'patients'} className={tab === 'patients' ? 'is-on' : ''} onClick={() => setTab('patients')}>
+            Patient-wise ({block.patientsTotal})
+          </button>
+          <button type="button" role="tab" aria-selected={tab === 'messages'} className={tab === 'messages' ? 'is-on' : ''} onClick={() => setTab('messages')}>
+            Message-wise ({block.messagesTotal})
+          </button>
         </div>
       )}
-      {block.rows.length === 0 ? (
-        <div className="ai-block-empty">No WhatsApp messages found.</div>
+      {rows.length === 0 ? (
+        <div className="ai-block-empty">Nothing matches.</div>
       ) : (
         <ul className="ai-wa-list">
-          {rows.map((r) => (
-            <li key={r.id}>
-              <span className={`ai-wa-status is-${r.notOnWhatsApp ? 'failed' : r.status}`}>{r.notOnWhatsApp ? 'Not on WhatsApp' : WA_STATUS[r.status] || r.status}</span>
-              <span className="ai-wa-main">
-                <b>{r.patientName || r.ipNo || 'Patient'}</b>
-                <span>
-                  {r.document}
-                  {r.ipNo ? ` · ${r.ipNo}` : ''} · {formatIst(r.at)}
-                </span>
-                {r.reason && (
-                  <span className="ai-wa-reason">
-                    {r.reason}
-                    {r.nextRetryAt ? ` · retry ${formatIst(r.nextRetryAt)}` : ''}
+          {tab === 'patients'
+            ? shown.map((p) => (
+                <li key={p.key}>
+                  <StatusPill status={p.status} notOnWhatsApp={p.notOnWhatsApp} />
+                  <span className="ai-wa-main">
+                    <b>{p.patientName || p.ipNo || 'Patient'}</b>
+                    <span>
+                      {[p.ipNo, p.department, p.dischargeDate && isoToDmy(p.dischargeDate)].filter(Boolean).join(' · ')}
+                    </span>
+                    <span className="ai-wa-docs">
+                      {p.lab && <em className={`is-${p.lab}`}>Lab: {DOC_STATUS[p.lab]}</em>}
+                      {p.summary && <em className={`is-${p.summary}`}>Summary: {DOC_STATUS[p.summary]}</em>}
+                    </span>
                   </span>
-                )}
+                </li>
+              ))
+            : shown.map((m) => (
+                <li key={m.id}>
+                  <StatusPill status={m.status} notOnWhatsApp={m.notOnWhatsApp} />
+                  <span className="ai-wa-main">
+                    <b>{m.patientName || m.ipNo || 'Message'}</b>
+                    <span>
+                      {m.document}
+                      {m.ipNo ? ` · ${m.ipNo}` : ''} · {formatIst(m.sentAt)}
+                    </span>
+                    {m.reason && (
+                      <span className="ai-wa-reason">
+                        {m.reason}
+                        {m.nextRetryAt ? ` · retry ${formatIst(m.nextRetryAt)}` : ''}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+        </ul>
+      )}
+      {total > rows.length && <div className="ai-report-note">Showing the first {rows.length} of {total} — the download has all of them.</div>}
+      <ReportDownloads formats={['xlsx', 'pdf', 'csv', 'json']} download={(f) => downloadWhatsappExport(block.query, tab, f)} />
+      <div className="ai-block-links">
+        {rows.length > 8 && (
+          <button type="button" className="ai-link" onClick={() => setAll((v) => !v)}>
+            {all ? 'Show fewer' : `Show all ${rows.length}`}
+          </button>
+        )}
+        <button type="button" className="ai-link" onClick={() => onNavigate({ view: 'admin', monitor: { ...block.query, tableView: tab } })}>
+          Open in WhatsApp Monitor
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const SUMMARY_TEXT = { ready: 'Summary', no_summary: 'No Summary', pending: 'Summary pending' };
+const WA_TEXT = { read: 'Read', delivered: 'Delivered', sent: 'Sent', pending: 'Pending', failed: 'WhatsApp failed', nowa: 'Not on WhatsApp', none: 'Not sent' };
+
+/** Discharge report: patients discharged in a date / time range, with downloads. */
+function DischargeReportBlock({ block, onNavigate }) {
+  const [all, setAll] = useState(false);
+  const t = block.totals;
+  const shown = all ? block.rows : block.rows.slice(0, 8);
+  return (
+    <div className="ai-block ai-report">
+      <div className="ai-block-title">{block.title}</div>
+      <div className="ai-wa-totals">
+        <span><b>{t.patients}</b> patients</span>
+        <span><b>{t.labReady}</b> lab reports</span>
+        <span><b>{t.summaryReady}</b> summaries</span>
+        {t.noSummary > 0 && <span className="is-failed"><b>{t.noSummary}</b> No Summary</span>}
+        <span className="is-read"><b>{t.whatsapp.read}</b> read on WhatsApp</span>
+        {t.whatsapp.failed > 0 && <span className="is-failed"><b>{t.whatsapp.failed}</b> WhatsApp failed</span>}
+        <span><b>{t.whatsapp.notSent}</b> not sent</span>
+      </div>
+      {t.byDepartment.length > 1 && (
+        <div className="ai-tests">{t.byDepartment.slice(0, 5).map((d) => `${d.department} ${d.patients}`).join(' · ')}</div>
+      )}
+      {block.rows.length === 0 ? (
+        <div className="ai-block-empty">No patients match.</div>
+      ) : (
+        <ul className="ai-wa-list">
+          {shown.map((r) => (
+            <li key={`${r.date}-${r.ipNo}`}>
+              <span className="ai-dis-time">{String(r.dischargedAt).split(' ')[1] || isoToDmy(r.date)}</span>
+              <span className="ai-wa-main">
+                <b>{r.name}</b>
+                <span>{[r.ipNo, r.department, r.doctor].filter(Boolean).join(' · ')}</span>
+                <span className="ai-wa-docs">
+                  <em className={r.lab === 'ready' ? 'is-read' : ''}>{r.lab === 'ready' ? 'Lab report' : 'No lab data'}</em>
+                  <em className={r.summary === 'ready' ? 'is-read' : r.summary === 'no_summary' ? 'is-failed' : ''}>{SUMMARY_TEXT[r.summary]}</em>
+                  <em className={r.whatsapp === 'read' ? 'is-read' : r.whatsapp === 'failed' || r.whatsapp === 'nowa' ? 'is-failed' : ''}>{WA_TEXT[r.whatsapp]}</em>
+                </span>
               </span>
             </li>
           ))}
         </ul>
       )}
+      {block.total > block.rows.length && <div className="ai-report-note">Showing the first {block.rows.length} of {block.total} — the download has all of them.</div>}
+      <ReportDownloads formats={['xlsx', 'pdf', 'csv']} download={(f) => downloadDischargeExport(block.query, f)} />
       <div className="ai-block-links">
         {block.rows.length > 8 && (
           <button type="button" className="ai-link" onClick={() => setAll((v) => !v)}>
             {all ? 'Show fewer' : `Show all ${block.rows.length}`}
           </button>
         )}
-        <button type="button" className="ai-link" onClick={() => onNavigate({ view: 'admin' })}>
-          Open WhatsApp Monitor
+        <button type="button" className="ai-link" onClick={() => onNavigate({ view: 'reports', date: block.query.to })}>
+          Open in Discharge Reports
         </button>
       </div>
     </div>
@@ -318,7 +449,8 @@ function Blocks({ blocks, onNavigate, onTestDone }) {
     if (b.type === 'testMessage') return <TestMessageBlock key={i} block={b} onDone={onTestDone} />;
     if (b.type === 'testDraft') return null;
     if (b.type === 'status') return <StatusBlock key={i} block={b} onNavigate={onNavigate} />;
-    if (b.type === 'whatsapp') return <WhatsAppBlock key={i} block={b} onNavigate={onNavigate} />;
+    if (b.type === 'whatsappReport') return <WhatsAppReportBlock key={i} block={b} onNavigate={onNavigate} />;
+    if (b.type === 'dischargeReport') return <DischargeReportBlock key={i} block={b} onNavigate={onNavigate} />;
     if (b.type === 'patients') return <PatientsBlock key={i} block={b} onNavigate={onNavigate} />;
     if (b.type === 'labResults') return <LabResultsBlock key={i} block={b} onNavigate={onNavigate} />;
     if (b.type === 'download') return <DownloadBlock key={i} block={b} />;

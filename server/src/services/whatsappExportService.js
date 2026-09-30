@@ -43,7 +43,8 @@ const docLabel = (m) => m.documentLabel || DOC_LABEL[m.document] || 'Message';
 const reason = (m) => (m.status === 'failed' ? m.failedDetail || m.error || '' : '');
 
 function describeFilters(q) {
-  const range = q.from === q.to ? dmy(q.from) : `${dmy(q.from)} to ${dmy(q.to)}`;
+  const time = q.fromTime || q.toTime ? `, ${q.fromTime || '00:00'}–${q.toTime || '23:59'}` : '';
+  const range = (q.from === q.to ? dmy(q.from) : `${dmy(q.from)} to ${dmy(q.to)}`) + time;
   const parts = [q.basis === 'report' ? `Patients discharged ${range}` : `Sent ${range}`];
   if (q.status) parts.push(`Status: ${String(q.status).split(',').map((s) => STATUS_LABEL[s] || s).join(', ')}`);
   if (q.document) parts.push(`Document: ${DOC_LABEL[q.document] || q.document}`);
@@ -220,7 +221,8 @@ export async function buildWhatsappExport(q, view, format) {
     { label: 'Not on WhatsApp', value: summary.notOnWhatsApp.numbers, note: 'numbers' },
   ];
   const subtitle = describeFilters(q);
-  const stamp = `${q.basis === 'report' ? 'discharged' : 'sent'}-${q.from || 'all'}${q.to && q.to !== q.from ? `_to_${q.to}` : ''}`;
+  const times = q.fromTime || q.toTime ? `_${(q.fromTime || '00:00').replace(':', '')}-${(q.toTime || '23:59').replace(':', '')}` : '';
+  const stamp = `${q.basis === 'report' ? 'discharged' : 'sent'}-${q.from || 'all'}${q.to && q.to !== q.from ? `_to_${q.to}` : ''}${times}`;
   const filename = `whatsapp-${view}-${stamp}.${format}`;
 
   let table;

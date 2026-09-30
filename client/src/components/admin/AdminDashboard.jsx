@@ -757,10 +757,13 @@ function savedBasis() {
   }
 }
 
-export default function AdminDashboard({ readOnly = false }) {
+export default function AdminDashboard({ readOnly = false, navRequest }) {
   const [preset, setPreset] = useState('yesterday');
   // "Dates by": the patient's report (discharge) date, or when the message was sent.
   const [basis, setBasis] = useState(savedBasis);
+  // Optional time of day, India time: from `from` at this time to `to` at that time.
+  const [fromTime, setFromTime] = useState('');
+  const [toTime, setToTime] = useState('');
   const [custom, setCustom] = useState(() => presetRange('yesterday'));
   const [statuses, setStatuses] = useState([]);
   const [docFilter, setDocFilter] = useState('');
@@ -794,9 +797,28 @@ export default function AdminDashboard({ readOnly = false }) {
 
   const range = preset === 'custom' ? custom : presetRange(preset);
   const params = useMemo(
-    () => ({ from: range.from, to: range.to, basis, status: statuses, document: docFilter, trigger, q }),
-    [range.from, range.to, basis, statuses, docFilter, trigger, q],
+    () => ({ from: range.from, to: range.to, basis, fromTime, toTime, status: statuses, document: docFilter, trigger, q }),
+    [range.from, range.to, basis, fromTime, toTime, statuses, docFilter, trigger, q],
   );
+
+  // "Open in WhatsApp Monitor" from Ask AI: take over its filters.
+  useEffect(() => {
+    const m = navRequest?.view === 'admin' ? navRequest.monitor : null;
+    if (!m) return;
+    if (m.from && m.to) {
+      setPreset('custom');
+      setCustom({ from: m.from, to: m.to });
+    }
+    if (m.basis) setBasis(m.basis === 'sent' ? 'sent' : 'report');
+    setFromTime(m.fromTime || '');
+    setToTime(m.toTime || '');
+    setStatuses(m.status ? [m.status] : []);
+    setDocFilter(m.document || '');
+    setTrigger(m.trigger || '');
+    setSearch(m.q || '');
+    if (m.tableView) setTableView(m.tableView === 'messages' ? 'messages' : 'patients');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navRequest?.id]);
 
   function chooseBasis(next) {
     setBasis(next);
@@ -1028,6 +1050,26 @@ export default function AdminDashboard({ readOnly = false }) {
             Sent date
           </button>
         </div>
+        <div className="wa-time" role="group" aria-label="Time of day">
+          <span>Time</span>
+          <input type="time" value={fromTime} onChange={(e) => setFromTime(e.target.value)} aria-label="From time" />
+          <span>to</span>
+          <input type="time" value={toTime} onChange={(e) => setToTime(e.target.value)} aria-label="To time" />
+          {(fromTime || toTime) && (
+            <button
+              type="button"
+              className="wa-time-clear"
+              onClick={() => {
+                setFromTime('');
+                setToTime('');
+              }}
+              aria-label="Clear time"
+              title="All day"
+            >
+              ×
+            </button>
+          )}
+        </div>
         </div>
         {preset === 'custom' && (
           <div className="wa-custom">
@@ -1073,7 +1115,7 @@ export default function AdminDashboard({ readOnly = false }) {
             <SearchIcon size={15} />
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Patient, IP, number or staff" />
           </label>
-          {(statuses.length > 0 || docFilter || trigger || search) && (
+          {(statuses.length > 0 || docFilter || trigger || search || fromTime || toTime) && (
             <button
               type="button"
               className="wa-clear"
@@ -1082,6 +1124,8 @@ export default function AdminDashboard({ readOnly = false }) {
                 setDocFilter('');
                 setTrigger('');
                 setSearch('');
+                setFromTime('');
+                setToTime('');
               }}
             >
               Clear filters
@@ -1090,7 +1134,10 @@ export default function AdminDashboard({ readOnly = false }) {
         </div>
         <div className="wa-range-note">
           {basis === 'report' ? 'Patients discharged ' : 'Messages sent '}
-          <b>{range.from === range.to ? dmy(range.from) : `${dmy(range.from)} to ${dmy(range.to)}`}</b>
+          <b>
+            {range.from === range.to ? dmy(range.from) : `${dmy(range.from)} to ${dmy(range.to)}`}
+            {(fromTime || toTime) && `, ${fromTime || '00:00'}–${toTime || '23:59'}`}
+          </b>
           {summary &&
             (basis === 'report'
               ? ` · ${summary.patients} patient${summary.patients === 1 ? '' : 's'} · ${summary.total} message${summary.total === 1 ? '' : 's'}`

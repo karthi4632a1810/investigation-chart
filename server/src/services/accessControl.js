@@ -81,6 +81,7 @@ const RULES = [
   ['GET', /^\/api\/admin\/whatsapp\//, screen('monitor', 'read')],
   ['POST', /^\/api\/admin\/whatsapp\//, screen('monitor', 'write')],
   ['GET', /^\/api\/whatsapp\/not-on-whatsapp$/, screen('reports', 'read')],
+  ['GET', /^\/api\/discharges\/export$/, screen('reports', 'read')],
 
   ['POST', /^\/api\/assistant$/, ai('ask')],
   ['POST', /^\/api\/assistant\/test-whatsapp$/, ai('act')],

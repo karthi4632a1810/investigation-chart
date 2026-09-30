@@ -25,7 +25,8 @@ import { GUIDE, searchGuide } from './appGuide.js';
 import { whatsappLinkInfo } from './publicLinkService.js';
 import { watiUsage } from './watiBudget.js';
 import { getWatiSettings } from './watiSettingsService.js';
-import { getPollState, retryQueueFacts, whatsappForAssistant, whatsappSummary } from './whatsappLogService.js';
+import { failureCategory, getPollState, retryQueueFacts, whatsappReportData, whatsappSummary } from './whatsappLogService.js';
+import { dischargeReport } from './dischargeReportQuery.js';
 import { cleanTestMessage, cleanTestNumber, formatNumber, sendTestWhatsApp } from './whatsappTestService.js';
 import { FULL_PERMISSIONS } from './userService.js';
 
@@ -98,6 +99,7 @@ const TOOL_ACCESS = {
   app_help: () => true,
   app_status: (a) => canRead(a, 'monitor') || canRead(a, 'wati'),
   whatsapp_report: (a) => canRead(a, 'monitor'),
+  discharge_report: (a) => canRead(a, 'reports'),
   open_screen: () => true,
   offer_download: (a) => canRead(a, 'labFinder') || canRead(a, 'reports'),
   offer_whatsapp_share: (a) => a.ai === 'act',
@@ -162,6 +164,7 @@ Rules:
 - After showing results, offer the options: download as PDF, Excel, Word or CSV, or share on WhatsApp. When they pick a format, call offer_download. When they want WhatsApp, ask for the number if they haven't given it, then call offer_whatsapp_share. Never say a message was sent — the user confirms with the Send button.
 - To take the user to a screen, call open_screen.
 - Questions about the portal itself — how to do something, what a screen, button, badge, colour, tick or message means, why something happened, what a setting does — call app_help and answer only from what it returns. Never guess how the portal works.
+- Reports: for WhatsApp delivery (patient-wise and/or message-wise), call whatsapp_report; for discharged patients (lists, counts, departments, doctors, lab / summary / WhatsApp status) call discharge_report. They take any dates plus an optional time window — "today 10 am to 2 pm" = from and to today, from_time 10:00, to_time 14:00; "yesterday evening" = 16:00–20:00. WhatsApp reports count patients by discharge date/time unless the user says "sent" (then date_basis sent). "patient and message wise" = view both. The table and downloads (Excel, PDF, CSV) appear on screen — summarise the totals in a sentence or two.
 - Live questions — is WhatsApp working, why reports aren't sending, WATI usage limit / 429, Test or Live mode, webhook, PDF links, when the next discharge check runs — call app_status. For WhatsApp counts, failures or one patient's messages, call whatsapp_report. Combine with app_help to explain what to do. Give times as shown (India time). Report watiApi as given — if it says UNKNOWN, say it isn't known yet whether WATI is accepting messages.
 - Only mention buttons, icons, menus and settings that app_help describes — never invent UI. Never mention tool names; offer to do it instead (e.g. "Shall I open the WhatsApp Monitor?").
 - To send a test WhatsApp message, call send_test_whatsapp with whatever the user gave. If it says the message or the number is missing, ask for that one thing (message first, then number) and nothing else. When it shows the confirmation card, tell the user to press Send or say yes. Only say it was sent when the tool returns sent: true.
@@ -245,14 +248,46 @@ const TOOLS = [
   {
     name: 'whatsapp_report',
     description:
-      "WhatsApp messages for dates or one patient: counts by status (sent, delivered, read, failed, pending), failure reasons, what's waiting to retry. With ip_no, that patient's messages and why any failed. Shows a message list on screen.",
+      "WhatsApp report for any dates and time of day, patient-wise and message-wise, like the WhatsApp Monitor: totals (patients, messages, sent / delivered / read / failed / pending), failure reasons, and a table on screen with Excel / PDF / CSV / JSON downloads. With ip_no, one patient's messages.",
     parameters: {
       type: 'object',
       properties: {
         from: { type: 'string', description: 'Start date YYYY-MM-DD (default today)' },
         to: { type: 'string', description: 'End date YYYY-MM-DD (default = from)' },
-        ip_no: { type: 'string', description: "One patient's IP number" },
+        from_time: { type: 'string', description: 'Optional start time HH:MM, 24-hour India time (10 am = 10:00)' },
+        to_time: { type: 'string', description: 'Optional end time HH:MM, 24-hour (2 pm = 14:00)' },
+        date_basis: {
+          type: 'string',
+          enum: ['report', 'sent'],
+          description: "report (default) = patients discharged in the range (their discharge time for a time window); sent = messages sent in the range",
+        },
+        view: { type: 'string', enum: ['both', 'patients', 'messages'], description: 'patient-wise, message-wise, or both (default)' },
         status: { type: 'string', enum: ['pending', 'sent', 'delivered', 'read', 'failed'] },
+        document: { type: 'string', enum: ['lab', 'summary'] },
+        trigger: { type: 'string', enum: ['auto', 'manual', 'share'] },
+        search: { type: 'string', description: 'Patient name, IP number, phone or staff name' },
+        ip_no: { type: 'string', description: "One patient's IP number" },
+      },
+    },
+  },
+  {
+    name: 'discharge_report',
+    description:
+      "Report of patients discharged in a date and optional time range, with filters (department, doctor, patient type, lab report / discharge summary status, WhatsApp status, search). Shows totals and a table with Excel / PDF / CSV downloads. Use for any discharge / patient report, counts or list with a time window or filters.",
+    parameters: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'Start date YYYY-MM-DD (default today)' },
+        to: { type: 'string', description: 'End date YYYY-MM-DD (default = from)' },
+        from_time: { type: 'string', description: 'Optional discharge time from, HH:MM 24-hour' },
+        to_time: { type: 'string', description: 'Optional discharge time to, HH:MM 24-hour' },
+        department: { type: 'string' },
+        doctor: { type: 'string' },
+        patient_type: { type: 'string', description: 'General or Corporate' },
+        lab: { type: 'string', enum: ['ready', 'none'], description: 'ready = has a lab report; none = no lab data' },
+        summary: { type: 'string', enum: ['ready', 'no_summary', 'pending'], description: 'no_summary = the red No Summary (EMR had no data)' },
+        whatsapp: { type: 'string', enum: ['read', 'delivered', 'sent', 'failed', 'none', 'nowa'], description: 'none = not sent; nowa = not on WhatsApp' },
+        search: { type: 'string', description: 'Patient name, IP number, UHID or mobile' },
       },
     },
   },
@@ -335,6 +370,39 @@ async function findPatientRecord(ipNo, date) {
 // ---- Live status (app_status) -------------------------------------------------
 
 const dmy = (iso) => String(iso || '').split('-').reverse().join('-');
+
+/** A time the model or user gave ("10:00", "10", "10am", "2 pm", "14:30") as HH:MM, or null. */
+function toHHMM(value) {
+  const m = /^\s*(\d{1,2})(?::|\.)?(\d{2})?\s*(am|pm|a\.m\.|p\.m\.)?\s*$/i.exec(String(value || ''));
+  if (!m) return null;
+  let h = Number(m[1]);
+  const min = Number(m[2] || 0);
+  const ap = (m[3] || '').toLowerCase().replace(/\./g, '');
+  if (ap === 'pm' && h < 12) h += 12;
+  if (ap === 'am' && h === 12) h = 0;
+  return h <= 23 && min <= 59 ? `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}` : null;
+}
+
+/** from / to dates (default today) and an optional time window from the tool arguments. */
+function reportDates(args = {}) {
+  const today = todayIst().iso;
+  const start = DATE_RE.test(args.from || '') ? args.from : today;
+  const end = DATE_RE.test(args.to || '') ? args.to : start;
+  const [from, to] = start <= end ? [start, end] : [end, start];
+  const fromTime = toHHMM(args.from_time);
+  const toTime = toHHMM(args.to_time);
+  if (!fromTime && !toTime) return { from, to };
+  // "8 pm to 8 am" on one day means overnight: from the evening before.
+  const overnight = from === to && fromTime && toTime && fromTime > toTime;
+  const firstDay = overnight ? new Date(new Date(`${from}T12:00:00+05:30`).getTime() - 86400_000 + 330 * 60_000).toISOString().slice(0, 10) : from;
+  return { from: firstDay, to, fromTime: fromTime || '00:00', toTime: toTime || '23:59' };
+}
+
+function describeRange(q) {
+  const days = q.from === q.to ? dmy(q.from) : `${dmy(q.from)} to ${dmy(q.to)}`;
+  const time = q.fromTime ? `, ${q.fromTime}–${q.toTime}` : '';
+  return `${q.basis === 'sent' ? 'sent' : 'patients discharged'} ${days}${time}`;
+}
 
 /** A time as India time, e.g. "30-09-2026 10:32". */
 function istTime(date) {
@@ -563,36 +631,104 @@ const handlers = {
     return { forModel: facts, block: { type: 'status', title: 'Portal status', sections } };
   },
 
-  async whatsapp_report({ from, to, ip_no, status }) {
-    const today = todayIst().iso;
-    const ipNo = /^ip\s*\d+$/i.test(String(ip_no || '').trim()) ? String(ip_no).replace(/\s+/g, '').toUpperCase() : null;
-    const start = DATE_RE.test(from || '') ? from : today;
-    const end = DATE_RE.test(to || '') ? to : start;
-    const [lo, hi] = start <= end ? [start, end] : [end, start];
-    const st = ['pending', 'sent', 'delivered', 'read', 'failed'].includes(status) ? status : undefined;
-    const { rows, facts } = await whatsappForAssistant({ from: lo, to: hi, ipNo, status: st, limit: 100 });
-    let totals = null;
-    if (!ipNo) {
-      // Cumulative like the Monitor: a read message was also delivered and sent.
-      const summary = await whatsappSummary({ from: lo, to: hi, status: st });
-      totals = {
-        total: summary.total,
-        sent: summary.funnel.sent,
-        delivered: summary.funnel.delivered,
-        read: summary.counts.read,
-        pending: summary.counts.pending,
-        failed: summary.counts.failed,
-        patients: summary.patients,
-        notOnWhatsAppNumbers: summary.notOnWhatsApp.numbers,
-        note: 'sent includes delivered and read; delivered includes read',
-      };
-    }
-    const title = ipNo
-      ? `WhatsApp messages · ${ipNo}`
-      : `WhatsApp messages · ${lo === hi ? dmy(lo) : `${dmy(lo)} to ${dmy(hi)}`}${st ? ` · ${st}` : ''}`;
+  async whatsapp_report(args) {
+    const q = reportDates(args);
+    const ipNo = /^ip\s*\d+$/i.test(String(args.ip_no || '').trim()) ? String(args.ip_no).replace(/\s+/g, '').toUpperCase() : null;
+    const query = ipNo
+      ? { q: ipNo, basis: 'sent' }
+      : {
+          from: q.from,
+          to: q.to,
+          ...(q.fromTime ? { fromTime: q.fromTime, toTime: q.toTime } : {}),
+          basis: args.date_basis === 'sent' ? 'sent' : 'report',
+          ...(['pending', 'sent', 'delivered', 'read', 'failed'].includes(args.status) ? { status: args.status } : {}),
+          ...(['lab', 'summary'].includes(args.document) ? { document: args.document } : {}),
+          ...(['auto', 'manual', 'share'].includes(args.trigger) ? { trigger: args.trigger } : {}),
+          ...(args.search ? { q: String(args.search).slice(0, 60) } : {}),
+        };
+    const { summary, patients, messages } = await whatsappReportData(query, 100);
+    const c = summary.counts;
+    const totals = {
+      patients: summary.patients,
+      messages: summary.total,
+      sent: summary.funnel.sent,
+      delivered: summary.funnel.delivered,
+      read: c.read,
+      pending: c.pending,
+      failed: c.failed,
+      notOnWhatsAppNumbers: summary.notOnWhatsApp.numbers,
+    };
+    const reasons = {};
+    for (const m of messages.items) if (m.status === 'failed') reasons[failureCategory(m)] = (reasons[failureCategory(m)] || 0) + 1;
+    const patientRows = patients.items.map((p) => ({
+      key: p.key,
+      patientName: p.patientName,
+      ipNo: p.ipNo,
+      dischargeDate: p.dischargeDate,
+      department: p.department,
+      status: p.status,
+      notOnWhatsApp: p.notOnWhatsApp,
+      lab: p.reports.find((r) => r.document === 'lab')?.status || null,
+      summary: p.reports.find((r) => r.document === 'summary')?.status || null,
+      lastAt: p.lastAt,
+    }));
+    const messageRows = messages.items.map((m) => ({
+      id: m.id,
+      patientName: m.patientName,
+      ipNo: m.ipNo,
+      document: m.documentLabel || m.document,
+      status: m.status,
+      notOnWhatsApp: Boolean(m.notOnWhatsApp),
+      sentAt: m.acceptedAt || m.createdAt,
+      trigger: m.trigger,
+      reason: m.status === 'failed' ? failureCategory(m) : null,
+      nextRetryAt: m.status === 'failed' ? m.nextRetryAt || null : null,
+    }));
+    const view = ['patients', 'messages'].includes(args.view) ? args.view : 'both';
     return {
-      forModel: { range: ipNo ? 'all dates' : { from: lo, to: hi }, ...(totals ? { totals } : {}), ...facts },
-      block: { type: 'whatsapp', title, rows, totals, from: lo, to: hi, ipNo },
+      forModel: {
+        range: ipNo ? `all messages for ${ipNo}` : describeRange(query),
+        totals,
+        note: 'sent includes delivered and read; delivered includes read',
+        failureReasons: reasons,
+        shownOnScreen: `${patientRows.length} patient rows, ${messageRows.length} message rows, with downloads`,
+      },
+      block: {
+        type: 'whatsappReport',
+        title: ipNo ? `WhatsApp · ${ipNo}` : `WhatsApp report · ${describeRange(query)}`,
+        query,
+        view,
+        totals,
+        patients: patientRows,
+        patientsTotal: patients.total,
+        messages: messageRows,
+        messagesTotal: messages.total,
+      },
+    };
+  },
+
+  async discharge_report(args) {
+    const q = reportDates(args);
+    const report = await dischargeReport({
+      ...q,
+      department: args.department,
+      doctor: args.doctor,
+      patientType: args.patient_type,
+      lab: args.lab,
+      summary: args.summary,
+      whatsapp: args.whatsapp,
+      q: args.search,
+    });
+    return {
+      forModel: { range: report.description, totals: report.totals, shownOnScreen: `${report.rows.length} patients in a table with downloads` },
+      block: {
+        type: 'dischargeReport',
+        title: `Discharge report · ${report.description}`,
+        query: report.query,
+        totals: report.totals,
+        rows: report.rows.slice(0, 300).map(({ dischargeTime, ...r }) => r),
+        total: report.rows.length,
+      },
     };
   },
 
@@ -774,6 +910,24 @@ function findDates(text) {
   return dates;
 }
 
+/** "10am to 2pm", "10:00-14:00", "10 to 2 pm", "from 9.30 am till 1 pm" → { from: 'HH:MM', to: 'HH:MM' } */
+function timeRangeIn(text) {
+  const m = /\b(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?\s*(?:to|-|–|till|until|upto|up to)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?\b/i.exec(text);
+  if (!m || (!m[3] && !m[6] && !m[2] && !m[5])) return null; // bare "3 to 5" isn't a time
+  const conv = (h, min, ap) => {
+    let hour = Number(h);
+    if (ap?.toLowerCase() === 'pm' && hour < 12) hour += 12;
+    if (ap?.toLowerCase() === 'am' && hour === 12) hour = 0;
+    return hour <= 23 && Number(min || 0) <= 59 ? `${String(hour).padStart(2, '0')}:${String(min || '00').padStart(2, '0')}` : null;
+  };
+  let from = conv(m[1], m[2], m[3] || (m[6] && Number(m[1]) > Number(m[4]) ? 'am' : m[6]));
+  const to = conv(m[4], m[5], m[6]);
+  if (!m[3] && m[6] && from && to && from > to) from = conv(m[1], m[2], 'am');
+  return from && to ? { from, to } : null;
+}
+
+const labLikeText = (lower) => /\b(glucose|haemoglobin|hemoglobin|creatinine|sodium|potassium|platelet|urea|wbc|rbc|negative|positive)\b/.test(lower);
+
 function dateRange(text) {
   const dates = findDates(text).sort();
   if (dates.length >= 2) return { from: dates[0], to: dates[dates.length - 1] };
@@ -859,15 +1013,39 @@ async function ruleBasedAnswer(messages, ctx) {
   const ip = /\bip\s*0?\d{6,}\b/i.exec(text)?.[0]?.replace(/\s+/g, '').toUpperCase();
   const aboutWhatsApp = /whats\s*app|wati|message|tick|deliver|\bread\b|\bsent\b|sending|429|quota|usage limit|webhook/i.test(text);
 
+  const summarise = (t) =>
+    `${t.patients} patient${t.patients === 1 ? '' : 's'}, ${t.messages} message${t.messages === 1 ? '' : 's'} — ${t.read} read, ${t.delivered} delivered, ${t.sent} sent${t.pending ? `, ${t.pending} pending` : ''}, ${t.failed} failed`;
+
   // One patient's WhatsApp messages
   if (ip && aboutWhatsApp) {
     const r = await run('whatsapp_report', { ip_no: ip });
-    if (!r.messages) return { reply: `No WhatsApp messages recorded for ${ip}.`, blocks };
+    if (!r.totals.messages) return { reply: `No WhatsApp messages recorded for ${ip}.`, blocks };
     const failed = Object.entries(r.failureReasons || {}).map(([k, n]) => `${n} × ${k}`).join(', ');
+    return { reply: `${ip}: ${summarise(r.totals)}.${failed ? ` Failed because: ${failed}.` : ''} Details below.`, blocks };
+  }
+
+  // Reports for a date / time window: "today 10am to 2pm patient and message wise"
+  const timeWin = timeRangeIn(text);
+  const reportRange = dateRange(text);
+  const wantsReport = Boolean(timeWin) || /\breport|wise\b|\blist\b|export|download|excel|pdf|csv|how many|count/i.test(text);
+  if (!ip && wantsReport && (aboutWhatsApp || /\bwise\b/i.test(text)) && (!statusQuestion || timeWin || /\breport\b/i.test(text))) {
+    const waStatus = /\bfailed\b/i.test(text) ? 'failed' : /\bpending\b/i.test(text) ? 'pending' : undefined;
+    const r = await run('whatsapp_report', {
+      from: reportRange.from,
+      to: reportRange.to,
+      from_time: timeWin?.from,
+      to_time: timeWin?.to,
+      status: waStatus,
+      date_basis: /\bsent\b/i.test(text) && !/discharg/i.test(text) ? 'sent' : 'report',
+      view: /message\s*wise/i.test(text) && !/patient\s*wise/i.test(text) ? 'messages' : /patient\s*wise/i.test(text) && !/message\s*wise/i.test(text) ? 'patients' : 'both',
+    });
+    return { reply: `${r.range}: ${summarise(r.totals)}. The report and downloads are below.`, blocks };
+  }
+  if (!ip && wantsReport && /discharg|patients?\b/i.test(text) && !labLikeText(lower)) {
+    const r = await run('discharge_report', { from: reportRange.from, to: reportRange.to, from_time: timeWin?.from, to_time: timeWin?.to });
+    const t = r.totals;
     return {
-      reply: `${ip}: ${r.messages} WhatsApp message${r.messages === 1 ? '' : 's'} — ${Object.entries(r.byStatus)
-        .map(([k, n]) => `${n} ${k}`)
-        .join(', ')}.${failed ? ` Failed because: ${failed}.` : ''}${r.waitingForAutomaticRetry ? ` ${r.waitingForAutomaticRetry} will be re-sent automatically.` : ''} Details below.`,
+      reply: `${r.range}: ${t.patients} patient${t.patients === 1 ? '' : 's'} — ${t.labReady} lab reports, ${t.summaryReady} summaries${t.noSummary ? `, ${t.noSummary} No Summary` : ''}. The report and downloads are below.`,
       blocks,
     };
   }
