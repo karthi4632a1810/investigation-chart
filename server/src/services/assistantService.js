@@ -27,6 +27,7 @@ import { watiUsage } from './watiBudget.js';
 import { getWatiSettings } from './watiSettingsService.js';
 import { getPollState, retryQueueFacts, whatsappForAssistant, whatsappSummary } from './whatsappLogService.js';
 import { cleanTestMessage, cleanTestNumber, formatNumber, sendTestWhatsApp } from './whatsappTestService.js';
+import { FULL_PERMISSIONS } from './userService.js';
 
 const GROQ_KEY = process.env.GROQ_API_KEY || process.env.GROQ_API;
 const GROQ_URL = 'https://api.groq.com/openai/v1';
@@ -86,8 +87,44 @@ function todayIst() {
 
 const SCREEN_LABELS = { reports: 'Discharge Reports', labFinder: 'Lab Finder', search: 'Lab Search', wati: 'WATI Settings', admin: 'WhatsApp Monitor' };
 
+// What each tool needs (the user's permissions, userService.js) — the model is
+// only offered tools the user may use, and each call is checked again.
+const canRead = (a, screen) => a.screens[screen] !== 'none';
+const TOOL_ACCESS = {
+  find_patient: (a) => canRead(a, 'reports'),
+  list_discharges: (a) => canRead(a, 'reports'),
+  search_lab_results: (a) => canRead(a, 'labFinder'),
+  list_lab_tests: (a) => canRead(a, 'labFinder'),
+  app_help: () => true,
+  app_status: (a) => canRead(a, 'monitor') || canRead(a, 'wati'),
+  whatsapp_report: (a) => canRead(a, 'monitor'),
+  open_screen: () => true,
+  offer_download: (a) => canRead(a, 'labFinder') || canRead(a, 'reports'),
+  offer_whatsapp_share: (a) => a.ai === 'act',
+  send_test_whatsapp: (a) => a.ai === 'act',
+};
+const SCREEN_OF = { discharge_reports: 'reports', lab_finder: 'labFinder', lab_search: 'search', wati_settings: 'wati', whatsapp_monitor: 'monitor' };
+const NO_ACCESS = "This user's account has no access to that. Tell them to ask the super admin if they need it.";
+
+class NoAccessError extends Error {}
+
+function describeAccess(a) {
+  if (!a) return '';
+  const names = { search: 'Lab Search', reports: 'Discharge Reports', labFinder: 'Lab Finder', wati: 'WATI Settings', monitor: 'WhatsApp Monitor' };
+  const none = Object.entries(a.screens).filter(([, v]) => v === 'none').map(([k]) => names[k]);
+  const readOnly = Object.entries(a.screens).filter(([k, v]) => v === 'read' && k !== 'search').map(([k]) => names[k]);
+  const lines = [];
+  if (none.length) lines.push(`- This user has no access to: ${none.join(', ')}. If they ask for those, say their account doesn't include it and the super admin can add it.`);
+  if (readOnly.length) lines.push(`- Read-only for this user: ${readOnly.join(', ')}.`);
+  if (a.documents !== 'both') lines.push(`- This user only sees ${a.documents === 'lab' ? 'lab reports' : 'discharge summaries'}.`);
+  if (a.ai !== 'act') lines.push('- This user can ask questions but not send or share on WhatsApp from Ask AI.');
+  return lines.join('\n');
+}
+
 function describeContext(context) {
   const lines = [];
+  const access = describeAccess(context.access);
+  if (access) lines.push(access);
   if (context.view && SCREEN_LABELS[context.view]) {
     lines.push(`- The user is on the ${SCREEN_LABELS[context.view]} screen. "This screen", "here" etc. mean it.`);
   }
@@ -587,9 +624,10 @@ const handlers = {
     };
   },
 
-  async open_screen({ screen, date, filter }) {
+  async open_screen({ screen, date, filter }, context) {
     const views = { discharge_reports: 'reports', lab_finder: 'labFinder', lab_search: 'search', wati_settings: 'wati', whatsapp_monitor: 'admin' };
     if (!views[screen]) return { forModel: { error: 'Unknown screen' } };
+    if (context.access && !canRead(context.access, SCREEN_OF[screen])) return { forModel: { error: NO_ACCESS } };
     return {
       forModel: { opened: screen },
       block: { type: 'navigate', view: views[screen], date: DATE_RE.test(date || '') ? date : undefined, filter: filter ? String(filter).slice(0, 60) : undefined },
@@ -598,6 +636,10 @@ const handlers = {
 
   async offer_download({ format, target, ip_no, date }, context) {
     if (!['pdf', 'xlsx', 'docx', 'csv'].includes(format)) return { forModel: { error: 'format must be pdf, xlsx, docx or csv' } };
+    const a = context.access;
+    if (a && (target === 'patient' ? !canRead(a, 'reports') || a.documents === 'summary' : !canRead(a, 'labFinder'))) {
+      return { forModel: { error: NO_ACCESS } };
+    }
     if (target === 'patient') {
       const ipNo = ip_no || context.lastPatient?.ipNo;
       const record = ipNo && (await findPatientRecord(ipNo, date || context.lastPatient?.date));
@@ -610,6 +652,8 @@ const handlers = {
   },
 
   async offer_whatsapp_share({ target, to_number, ip_no, date }, context) {
+    const a = context.access;
+    if (a && !canRead(a, target === 'patient' ? 'reports' : 'labFinder')) return { forModel: { error: NO_ACCESS } };
     const toNumber = String(to_number || '').replace(/[^\d+]/g, '');
     if (target === 'patient') {
       const ipNo = ip_no || context.lastPatient?.ipNo;
@@ -664,8 +708,8 @@ async function callProvider(provider, messages, tools) {
 }
 
 /** First model that answers wins; returns null if none could. */
-async function chatCompletion(messages) {
-  const tools = TOOLS.map((t) => ({ type: 'function', function: t }));
+async function chatCompletion(messages, toolDefs = TOOLS) {
+  const tools = toolDefs.map((t) => ({ type: 'function', function: t }));
   const now = Date.now();
   const ready = PROVIDERS.filter((p) => (cooldownUntil.get(p.name) || 0) <= now);
   // If every model is cooling down, try them anyway rather than give up.
@@ -744,6 +788,7 @@ async function ruleBasedAnswer(messages, ctx) {
   const lower = text.toLowerCase();
   const blocks = [];
   const run = async (tool, args) => {
+    if (ctx.allowedTools && !ctx.allowedTools.has(tool)) throw new NoAccessError(tool);
     const outcome = await handlers[tool](args, ctx);
     if (outcome.block) blocks.push(outcome.block);
     return outcome.forModel;
@@ -931,9 +976,12 @@ function sanitiseContext(context = {}) {
   return ctx;
 }
 
-export async function runAssistant({ messages, context = {}, user = null }) {
+export async function runAssistant({ messages, context = {}, user = null, access = FULL_PERMISSIONS }) {
   const ctx = sanitiseContext(context);
   ctx.user = user;
+  ctx.access = access;
+  ctx.allowedTools = new Set(TOOLS.filter((t) => TOOL_ACCESS[t.name]?.(access)).map((t) => t.name));
+  const toolDefs = TOOLS.filter((t) => ctx.allowedTools.has(t.name));
 
   // "Cancel" while a test message is being prepared ends it for sure, without the model.
   const latest = String([...messages].reverse().find((m) => m.role === 'user')?.content || '');
@@ -944,12 +992,19 @@ export async function runAssistant({ messages, context = {}, user = null }) {
   const blocks = [];
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const message = await chatCompletion(convo);
+    const message = await chatCompletion(convo, toolDefs);
     if (!message) {
       // No AI model answered. If tools already ran this turn, show what they
       // found; otherwise answer the question with the rule-based matcher.
       if (blocks.length) return { reply: 'Here is what I found.', blocks, fallback: true };
-      return { ...(await ruleBasedAnswer(messages, ctx)), fallback: true };
+      try {
+        return { ...(await ruleBasedAnswer(messages, ctx)), fallback: true };
+      } catch (error) {
+        if (error instanceof NoAccessError) {
+          return { reply: "Your account doesn't have access to that — ask the super admin if you need it.", blocks: [], fallback: true };
+        }
+        throw error;
+      }
     }
     const calls = message.tool_calls || [];
     if (!calls.length) {
@@ -963,10 +1018,12 @@ export async function runAssistant({ messages, context = {}, user = null }) {
       } catch {
         // leave args empty — the handler reports what's missing
       }
-      const handler = handlers[call.function?.name];
+      const name = call.function?.name;
+      const handler = handlers[name];
       let outcome;
       try {
-        outcome = handler ? await handler(args, ctx) : { forModel: { error: 'Unknown tool' } };
+        if (handler && !ctx.allowedTools.has(name)) outcome = { forModel: { error: NO_ACCESS } };
+        else outcome = handler ? await handler(args, ctx) : { forModel: { error: 'Unknown tool' } };
       } catch (error) {
         outcome = { forModel: { error: error.message } };
       }

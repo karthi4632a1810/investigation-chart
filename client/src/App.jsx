@@ -18,17 +18,35 @@ import WatiSettings from './components/WatiSettings';
 import LabFinder from './components/LabFinder';
 import AssistantPanel from './components/AssistantPanel';
 import AdminDashboard from './components/admin/AdminDashboard';
-import { useDevMode } from './utils/devMode';
+import UserManagement from './components/UserManagement';
+import ProfileMenu from './components/ProfileMenu';
+import { accessFor, canOpen, firstOpenView } from './utils/access';
 import {
   FilePdfIcon,
   ChartIcon,
   FlaskIcon,
   HospitalIcon,
-  LogoutIcon,
+  LockIcon,
   SearchIcon,
-  SparklesIcon,
+  UsersIcon,
   WhatsAppIcon,
 } from './components/Icons';
+
+// Screens with their own address: /admin (WhatsApp Monitor) and /users.
+const VIEW_PATHS = { admin: '/admin', users: '/users' };
+const pathView = () => {
+  const path = window.location.pathname.replace(/\/+$/, '');
+  return Object.keys(VIEW_PATHS).find((v) => VIEW_PATHS[v] === path) || null;
+};
+
+function storedUser() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('investigation-auth') || 'null');
+    return saved?.permissions ? saved : null;
+  } catch {
+    return null;
+  }
+}
 
 const RECENT_SEARCHES_KEY = 'portal_recent_searches';
 
@@ -54,23 +72,26 @@ function saveRecentSearch(regNo) {
 
 export default function App() {
   const [hospital, setHospital] = useState(null);
-  // /admin opens the WhatsApp monitor; every other path the normal screens.
-  const [view, setView] = useState(() =>
-    typeof window !== 'undefined' && window.location.pathname.replace(/\/+$/, '') === '/admin' ? 'admin' : 'reports',
-  ); // 'search' | 'reports' | 'labFinder' | 'wati' | 'admin'
+  // The signed-in user and their permissions (server: userService.js).
+  const [me, setMe] = useState(storedUser);
+  // /admin opens the WhatsApp monitor, /users user management; / the rest.
+  const [view, setView] = useState(() => pathView() || 'reports'); // 'search' | 'reports' | 'labFinder' | 'wati' | 'admin' | 'users'
   // Set by the AI assistant to open a screen at a given date / filter / query;
   // the screen applies it when `id` changes.
   const [navRequest, setNavRequest] = useState(null);
-  // ?dev=1 / ?admin=1 (or =true) shows Ask AI and Lab Finder — see utils/devMode.js.
-  const devMode = useDevMode();
+  const access = accessFor(me);
 
+  // A screen this user can't open (or lost access to) → their first allowed one.
   useEffect(() => {
-    if (!devMode && view === 'labFinder') setView('reports');
-  }, [devMode, view]);
+    if (me && !canOpen(me, view)) {
+      const next = firstOpenView(me);
+      if (next && next !== view) setView(next);
+    }
+  }, [me, view]);
 
-  // Keep the address in step with the screen (/admin ↔ /), keeping ?dev etc.
+  // Keep the address in step with the screen (/admin, /users ↔ /), keeping ?query.
   useEffect(() => {
-    const path = view === 'admin' ? '/admin' : '/';
+    const path = VIEW_PATHS[view] || '/';
     if (window.location.pathname !== path) {
       window.history.pushState(null, '', `${path}${window.location.search}`);
     }
@@ -78,8 +99,9 @@ export default function App() {
 
   useEffect(() => {
     const onPop = () => {
-      if (window.location.pathname.replace(/\/+$/, '') === '/admin') setView('admin');
-      else setView((v) => (v === 'admin' ? 'reports' : v));
+      const v = pathView();
+      if (v) setView(v);
+      else setView((cur) => (VIEW_PATHS[cur] ? 'reports' : cur));
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
@@ -99,9 +121,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('chart');
   const [detailOrderId, setDetailOrderId] = useState(null);
   const [recentSearches, setRecentSearches] = useState(getRecentSearches);
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return Boolean(sessionStorage.getItem('investigation-auth'));
-  });
+  const isAuthenticated = Boolean(me);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
@@ -117,19 +137,35 @@ export default function App() {
   // only remembers the UI state. Drop back to the login screen whenever the
   // server says the session is gone — on load (e.g. after a redeploy or
   // password change) and on any API call that comes back 401.
+  // Also re-reads the permissions every few minutes and when the tab comes
+  // back, so changes the super admin makes show up without a reload.
   useEffect(() => {
     if (!isAuthenticated) return undefined;
-    const expire = () => {
+    const expire = (reason) => {
       sessionStorage.removeItem('investigation-auth');
-      setIsAuthenticated(false);
+      setMe(null);
       setPassword('');
-      setLoginError('Your session has ended — please log in again.');
+      setLoginError(reason || 'Your session has ended — please log in again.');
     };
-    checkSession()
-      .then((ok) => !ok && expire())
-      .catch(() => {});
-    window.addEventListener(AUTH_EXPIRED_EVENT, expire);
-    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, expire);
+    const refresh = () =>
+      checkSession()
+        .then(({ user, reason }) => {
+          if (!user) return expire(reason);
+          sessionStorage.setItem('investigation-auth', JSON.stringify(user));
+          setMe(user);
+        })
+        .catch(() => {});
+    refresh();
+    const onExpired = (e) => expire(e.detail?.reason);
+    const onFocus = () => !document.hidden && refresh();
+    const timer = setInterval(refresh, 3 * 60_000);
+    window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
   }, [isAuthenticated]);
 
   async function handleLogin(e) {
@@ -139,9 +175,11 @@ export default function App() {
 
     try {
       const data = await login({ username, password });
-      if (data.ok) {
-        sessionStorage.setItem('investigation-auth', JSON.stringify({ username }));
-        setIsAuthenticated(true);
+      if (data.ok && data.user) {
+        sessionStorage.setItem('investigation-auth', JSON.stringify(data.user));
+        setMe(data.user);
+        setPassword('');
+        if (!canOpen(data.user, view)) setView(firstOpenView(data.user) || 'reports');
       } else {
         setLoginError(data.error || 'Login failed');
       }
@@ -155,7 +193,7 @@ export default function App() {
   function handleLogout() {
     logout();
     sessionStorage.removeItem('investigation-auth');
-    setIsAuthenticated(false);
+    setMe(null);
     setUsername('');
     setPassword('');
     setLoginError('');
@@ -237,74 +275,47 @@ export default function App() {
 
         <div className="page-header-actions">
           <nav className="nav-segmented-control no-print" aria-label="Main Navigation">
-            <button
-              type="button"
-              className={`nav-segment-btn ${view === 'search' ? 'active' : ''}`}
-              onClick={() => setView('search')}
-            >
-              <SearchIcon size={16} />
-              <span>Lab Search</span>
-            </button>
-            <button
-              type="button"
-              className={`nav-segment-btn ${view === 'reports' ? 'active' : ''}`}
-              onClick={() => setView('reports')}
-            >
-              <FilePdfIcon size={16} />
-              <span>Discharge Reports</span>
-            </button>
-            {devMode && (
-              <button
-                type="button"
-                className={`nav-segment-btn ${view === 'labFinder' ? 'active' : ''}`}
-                onClick={() => setView('labFinder')}
-              >
-                <FlaskIcon size={16} />
-                <span>Lab Finder</span>
-              </button>
-            )}
-            <button
-              type="button"
-              className={`nav-segment-btn ${view === 'wati' ? 'active' : ''}`}
-              onClick={() => setView('wati')}
-            >
-              <WhatsAppIcon size={16} />
-              <span>WATI Settings</span>
-            </button>
-            {(devMode || view === 'admin') && (
-              <button
-                type="button"
-                className={`nav-segment-btn ${view === 'admin' ? 'active' : ''}`}
-                onClick={() => setView('admin')}
-              >
-                <ChartIcon size={16} />
-                <span>Monitor</span>
-              </button>
-            )}
+            {[
+              ['search', 'Lab Search', SearchIcon],
+              ['reports', 'Discharge Reports', FilePdfIcon],
+              ['labFinder', 'Lab Finder', FlaskIcon],
+              ['wati', 'WATI Settings', WhatsAppIcon],
+              ['admin', 'Monitor', ChartIcon],
+              ['users', 'Users', UsersIcon],
+            ]
+              .filter(([id]) => canOpen(me, id))
+              .map(([id, label, Icon]) => (
+                <button key={id} type="button" className={`nav-segment-btn ${view === id ? 'active' : ''}`} onClick={() => setView(id)}>
+                  <Icon size={16} />
+                  <span>{label}</span>
+                </button>
+              ))}
           </nav>
 
-          <button
-            type="button"
-            className="btn btn-ghost-logout no-print"
-            onClick={handleLogout}
-            title="Sign out of hospital portal"
-          >
-            <LogoutIcon size={16} />
-            <span className="hide-on-mobile">Logout</span>
-          </button>
+          <ProfileMenu me={me} onLogout={handleLogout} />
         </div>
       </header>
 
       <main className="page">
-        {view === 'reports' && <DischargeReports navRequest={navRequest} />}
+        {!firstOpenView(me) && (
+          <div className="no-access">
+            <LockIcon size={28} />
+            <b>Your account has no screens yet</b>
+            <span>Ask the super admin to give you access.</span>
+          </div>
+        )}
 
-        {devMode && view === 'labFinder' && <LabFinder navRequest={navRequest} />}
+        {view === 'reports' && canOpen(me, 'reports') && <DischargeReports navRequest={navRequest} access={access} />}
 
-        {view === 'wati' && <WatiSettings />}
+        {view === 'labFinder' && canOpen(me, 'labFinder') && <LabFinder navRequest={navRequest} canShare={access.labFinder.canShare} />}
 
-        {view === 'admin' && <AdminDashboard />}
+        {view === 'wati' && canOpen(me, 'wati') && <WatiSettings readOnly={access.wati.readOnly} />}
 
-        {view === 'search' && (
+        {view === 'admin' && canOpen(me, 'admin') && <AdminDashboard readOnly={access.monitor.readOnly} />}
+
+        {view === 'users' && canOpen(me, 'users') && <UserManagement />}
+
+        {view === 'search' && canOpen(me, 'search') && (
           <div className="search-view-container">
             <div className="section-header">
               <h2>Lab Result Search & Diagnostics Summary</h2>
@@ -448,7 +459,7 @@ export default function App() {
         )}
       </main>
 
-      {devMode && <AssistantPanel onNavigate={handleAssistantNavigate} view={view} />}
+      {access.ai !== 'none' && <AssistantPanel onNavigate={handleAssistantNavigate} view={view} access={access} />}
     </div>
   );
 }

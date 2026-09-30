@@ -17,18 +17,30 @@ import { CheckIcon, FilePdfIcon, WhatsAppIcon } from './Icons';
  * Give either `query` (a Lab Finder search) or `patient` (one discharge record:
  * PDFs are the patient's own reports; Excel/Word/CSV are their lab values).
  */
-export default function ExportShareBar({ query, patient, highlight, shareNumber, openShare = false, compact = false, via }) {
+export default function ExportShareBar({
+  query,
+  patient,
+  highlight,
+  shareNumber,
+  openShare = false,
+  compact = false,
+  via,
+  // From the user's permissions (utils/access.js).
+  allowShare = true,
+  showLab = true,
+  showSummary = true,
+}) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [done, setDone] = useState('');
   const [sharing, setSharing] = useState(openShare);
   const [number, setNumber] = useState(shareNumber || '');
 
-  const hasLab = patient ? patient.dateCount !== undefined : true;
-  const hasSummary = patient ? Boolean(patient.hasSummary && !patient.summaryDataMissing) : false;
+  const hasLab = patient ? showLab && patient.dateCount !== undefined : true;
+  const hasSummary = patient ? showSummary && Boolean(patient.hasSummary && !patient.summaryDataMissing) : false;
   const labQuery = patient ? { ipNo: patient.ipNo, from: patient.date, to: patient.date } : query;
   const tableFormats = patient ? (hasLab ? ['xlsx', 'docx', 'csv'] : []) : ['pdf', 'xlsx', 'docx', 'csv'];
-  const canShare = patient ? hasLab || hasSummary : true;
+  const canShare = allowShare && (patient ? hasLab || hasSummary : true);
 
   async function download(format) {
     setBusy(format);
@@ -100,7 +112,7 @@ export default function ExportShareBar({ query, patient, highlight, shareNumber,
         )}
       </div>
 
-      {sharing && (
+      {sharing && canShare && (
         <form className="xs-share" onSubmit={send}>
           <label className="xs-share-label" htmlFor={`xs-number-${patient?.ipNo || 'results'}`}>
             {patient ? `Send ${hasLab && hasSummary ? 'lab report + discharge summary' : hasLab ? 'lab report' : 'discharge summary'} to` : 'Send this results PDF to'}

@@ -16,7 +16,7 @@ export const GUIDE = [
 2. For each new patient it builds the Lab Report (all lab results of the stay, as a "Diagnostics Summary" PDF) and fetches the Discharge Summary.
 3. PDFs are stored in MinIO, the patient list in MongoDB.
 4. In Live mode both PDFs go to the patient's WhatsApp through WATI automatically; in Test mode nothing is sent automatically and manual sends go to the test number.
-Screens: Lab Search, Discharge Reports, WATI Settings for everyone; Lab Finder, Monitor (WhatsApp Monitor) and Ask AI appear with ?dev=1 or ?admin=1 in the address, or at /admin.`,
+Screens: Lab Search, Discharge Reports, Lab Finder, WATI Settings, Monitor (WhatsApp Monitor) and, for the super admin, Users. Each person sees only the screens and features their account allows (see "Users and access").`,
   },
   {
     id: 'login',
@@ -26,10 +26,9 @@ Screens: Lab Search, Discharge Reports, WATI Settings for everyone; Lab Finder, 
   },
   {
     id: 'navigation',
-    title: 'Header, tabs and hidden features',
-    keywords: 'header tabs navigation menu top bar dev admin url hidden lab finder monitor ask ai show enable ?dev=1 ?admin=1',
-    text: `Top bar: hospital name and "Diagnostics Summary Portal · EMR Portal" on the left; tabs Lab Search, Discharge Reports, WATI Settings; Logout on the right.
-Extra tabs — Lab Finder and Monitor — and the Ask AI button (bottom right) only show when the address has ?dev=1, ?dev=true, ?admin=1 or ?admin=true (e.g. http://194.238.22.210:1003/?dev=1). Opening /admin goes straight to the WhatsApp Monitor.`,
+    title: 'Header, tabs and the profile menu',
+    keywords: 'header tabs navigation menu top bar missing tab hidden lab finder monitor ask ai profile avatar name logout sign out where',
+    text: `Top bar: hospital name on the left; the tabs this account may open (Lab Search, Discharge Reports, Lab Finder, WATI Settings, Monitor, and Users for the super admin); on the right the profile button (initials + name). A tab or the Ask AI button that's missing means the account doesn't include it — the super admin can add it. The profile button shows your access, your access hours, Change password and Sign out. /admin opens the WhatsApp Monitor and /users the user list directly.`,
   },
   {
     id: 'discharge-reports',
@@ -87,7 +86,7 @@ Extra tabs — Lab Finder and Monitor — and the Ask AI button (bottom right) o
     id: 'lab-finder',
     title: 'Lab Finder screen',
     keywords: 'lab finder search across patients test result contains flag high low value from to dates department patient export pdf excel word csv whatsapp share examples coverage',
-    text: `Lab Finder (with ?dev=1 / ?admin=1) searches stored lab values across all discharged patients: Test (suggestions as you type), Result contains (e.g. Negative), Flag (High, Low, High or low, Within range), Value from/to, From/To dates, "Dates are" discharge or test result dates, Patient or IP No, Department. "Try:" chips run example searches. Results can be downloaded as PDF, Excel, Word or CSV, or sent on WhatsApp to a number you type. Coverage (which discharge dates have stored values) is shown in the header.`,
+    text: `Lab Finder searches stored lab values across all discharged patients: Test (suggestions as you type), Result contains (e.g. Negative), Flag (High, Low, High or low, Within range), Value from/to, From/To dates, "Dates are" discharge or test result dates, Patient or IP No, Department. "Try:" chips run example searches. Results can be downloaded as PDF, Excel, Word or CSV, or sent on WhatsApp to a number you type. Coverage (which discharge dates have stored values) is shown in the header.`,
   },
   {
     id: 'wati-settings',
@@ -162,7 +161,7 @@ To send sooner: ask WATI support to reset or raise the limit (more quota needs t
     id: 'monitor',
     title: 'WhatsApp Monitor screen (/admin)',
     keywords: 'monitor admin whatsapp monitor dashboard analytics live check wati now presets yesterday filters tiles charts kpi',
-    text: `The WhatsApp Monitor (/admin, or the Monitor tab with ?dev=1) tracks every message:
+    text: `The WhatsApp Monitor (the Monitor tab, or /admin) tracks every message:
 - Header: "Live · updated …" (refreshes every 15 s), when WATI was last checked or that it's paused, and "Check WATI now" (asks WATI for the latest ticks; max once per 5 min).
 - Filters in one row: date presets (Today, Yesterday — the default, Last 7 days, Last 30 days, This month, Custom), status chips, document, trigger (automatic / manual click / share / retry) and search by name, IP or number.
 - Tiles: Triggered, Sent, Delivered, Read, Pending, Failed — each with a trend and the change vs the previous period.
@@ -198,7 +197,27 @@ To send sooner: ask WATI support to reset or raise the limit (more quota needs t
     id: 'ask-ai',
     title: 'Ask AI (this assistant)',
     keywords: 'ask ai assistant chat help what can you do privacy data sent',
-    text: `Ask AI (bottom right, with ?dev=1 / ?admin=1) can: find a patient's reports (IP number, UHID or name) with download and WhatsApp options; list discharges for a date; search lab results across patients (e.g. "urine glucose negative last week") and export them; take you to a screen; explain any screen, button or colour; and report live status — WATI quota and pauses, webhook, Test/Live mode, the 15-minute check, WhatsApp sent/delivered/read/failed counts and why a patient's message failed. Patient names and lab values stay in the portal; the AI service only sees counts and IDs. If the AI service is busy it answers from built-in rules.`,
+    text: `Ask AI (bottom right, for accounts with Ask AI turned on) can: find a patient's reports (IP number, UHID or name) with download and WhatsApp options; list discharges for a date; search lab results across patients (e.g. "urine glucose negative last week") and export them; take you to a screen; explain any screen, button or colour; and report live status — WATI quota and pauses, webhook, Test/Live mode, the 15-minute check, WhatsApp sent/delivered/read/failed counts and why a patient's message failed. Patient names and lab values stay in the portal; the AI service only sees counts and IDs. If the AI service is busy it answers from built-in rules.`,
+  },
+  {
+    id: 'users-access',
+    title: 'Users and access (super admin)',
+    keywords: 'user users account accounts add create staff role roles permission permissions access rbac super admin screen read only write edit disable delete reset password hours schedule preset doctor nurse front desk lab viewer',
+    text: `The super admin (the login in the server .env) manages everyone on the Users screen:
+- Add user: profile (name, username, designation, department, mobile, email, password — Generate makes one), then a role preset (Admin, Doctor, Nurse / ward staff, Lab staff, Front desk, View only) and adjust.
+- Screens: tick each screen the person may open, then Read only or Read & write. Read & write on Discharge Reports = Check Now and sending WhatsApp; on Lab Finder = sharing on WhatsApp; on WATI Settings = changing mode, number and extra line; on the Monitor = Retry and "Check WATI now". Lab Search is look-up only.
+- Ask AI: Off, Ask questions, or Ask + send (share / test messages). It only ever shows what the person's screens allow.
+- WhatsApp button on patient cards: on or off (needs Discharge Reports Read & write).
+- Reports shown: Both, Lab report only, or Discharge summary only — also limits what they can send.
+- Access hours: days and a from–to time (India time; overnight works). Outside them they can't sign in and an open session ends.
+- On the list: the switch disables an account; the key sets a new password; the arrow signs them out on every device; the bin deletes. Five wrong passwords lock an account for 15 minutes (the lock icon unlocks it).
+Changes apply from the person's next click. Every rule is checked by the server too, not just hidden.`,
+  },
+  {
+    id: 'my-profile',
+    title: 'My profile and password',
+    keywords: 'my profile password change forgot locked sign out account hours my access',
+    text: `Click your name at the top right: it shows your access and access hours. Change password asks for the current one and signs you out on other devices. Forgot it, or locked after five wrong tries? Ask the super admin to set a new one. The super admin's own password is set in the server .env (APP_PASSWORD).`,
   },
   {
     id: 'test-message',

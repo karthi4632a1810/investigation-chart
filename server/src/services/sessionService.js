@@ -12,6 +12,8 @@
  */
 import crypto from 'crypto';
 import { config } from '../config.js';
+import { authorize } from './accessControl.js';
+import { describeSchedule, normalizePermissions, resolveSessionUser, scheduleAllows } from './userService.js';
 
 const COOKIE_NAME = 'inv_session';
 const SESSION_TTL_SECONDS = 12 * 60 * 60;
@@ -24,9 +26,11 @@ function sign(payload) {
   return crypto.createHmac('sha256', signingKey).update(payload).digest('base64url');
 }
 
-function createSessionToken(username) {
+// `v` is the user's tokenVersion: a password reset or "sign out everywhere"
+// bumps it, and older sessions stop working.
+function createSessionToken(username, tokenVersion = 0) {
   const payload = Buffer.from(
-    JSON.stringify({ u: username, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS }),
+    JSON.stringify({ u: username, v: tokenVersion, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS }),
   ).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
@@ -39,8 +43,8 @@ function readCookie(req, name) {
   return '';
 }
 
-/** The logged-in username, or null for a missing / tampered / expired session. */
-export function getSessionUser(req) {
+/** { u, v } from a valid session cookie, or null for a missing / tampered / expired one. */
+function getSessionClaims(req) {
   const [payload, signature] = readCookie(req, COOKIE_NAME).split('.');
   if (!payload || !signature) return null;
 
@@ -49,11 +53,32 @@ export function getSessionUser(req) {
   if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) return null;
 
   try {
-    const { u, exp } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    return exp > Date.now() / 1000 ? u : null;
+    const { u, v, exp } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return exp > Date.now() / 1000 ? { u, v: v || 0 } : null;
   } catch {
     return null;
   }
+}
+
+/** The logged-in username (from the cookie alone), or null. */
+export function getSessionUser(req) {
+  return getSessionClaims(req)?.u || null;
+}
+
+/**
+ * The signed-in account, checked against the database: null if it's gone,
+ * disabled or signed out everywhere; { blocked } outside its access hours.
+ */
+export async function loadSessionAccount(req) {
+  const claims = getSessionClaims(req);
+  if (!claims) return null;
+  const user = await resolveSessionUser(claims.u, claims.v);
+  if (!user || user.active === false) return null;
+  if (!user.isSuperAdmin) {
+    const schedule = normalizePermissions(user.permissions).schedule;
+    if (!scheduleAllows(schedule)) return { user, blocked: `Your access hours are ${describeSchedule(schedule)} (India time)` };
+  }
+  return { user };
 }
 
 function cookieAttributes(req, maxAge) {
@@ -63,10 +88,10 @@ function cookieAttributes(req, maxAge) {
   return `Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${https ? '; Secure' : ''}`;
 }
 
-export function setSessionCookie(req, res, username) {
+export function setSessionCookie(req, res, username, tokenVersion = 0) {
   res.setHeader(
     'Set-Cookie',
-    `${COOKIE_NAME}=${encodeURIComponent(createSessionToken(username))}; ${cookieAttributes(req, SESSION_TTL_SECONDS)}`,
+    `${COOKIE_NAME}=${encodeURIComponent(createSessionToken(username, tokenVersion))}; ${cookieAttributes(req, SESSION_TTL_SECONDS)}`,
   );
 }
 
@@ -77,9 +102,20 @@ export function clearSessionCookie(req, res) {
 // Reachable without a session: the login screen needs these before anyone is signed in.
 const PUBLIC_API_PATHS = new Set(['/api/health', '/api/login', '/api/logout', '/api/session', '/api/config/hospital']);
 
-/** Express middleware: every /api route except the public ones needs a valid session. */
-export function requireSession(req, res, next) {
+/**
+ * Express middleware: every /api route except the public ones needs a valid
+ * session for an active account inside its access hours — then the route's
+ * permission (accessControl.js).
+ */
+export async function requireSession(req, res, next) {
   if (!req.path.startsWith('/api/') || PUBLIC_API_PATHS.has(req.path)) return next();
-  if (getSessionUser(req)) return next();
-  res.status(401).json({ ok: false, error: 'Please log in again' });
+  try {
+    const account = await loadSessionAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'Please log in again' });
+    if (account.blocked) return res.status(401).json({ ok: false, code: 'outside_hours', error: account.blocked });
+    req.user = account.user;
+    authorize(req, res, next);
+  } catch (error) {
+    res.status(503).json({ ok: false, error: `Sign-in check failed: ${error.message}` });
+  }
 }

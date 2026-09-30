@@ -6,7 +6,11 @@ export const AUTH_EXPIRED_EVENT = 'investigation-auth-expired';
 
 async function apiFetch(url, options) {
   const res = await fetch(url, options);
-  if (res.status === 401) window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+  if (res.status === 401) {
+    // e.g. "Your access hours are Mon–Fri, 09:00–18:00" — shown on the login screen.
+    const reason = await res.clone().json().then((d) => (d.code === 'outside_hours' ? d.error : ''), () => '');
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { reason } }));
+  }
   return res;
 }
 
@@ -27,10 +31,12 @@ export async function login({ username, password }) {
   return data;
 }
 
-/** Whether the browser still holds a valid server session. */
+/** The signed-in user ({ username, permissions, … }), or { user: null, reason }. */
 export async function checkSession() {
   const res = await fetch(`${API_BASE}/session`);
-  return res.ok;
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) return { user: data.user };
+  return { user: null, reason: data.code === 'outside_hours' ? data.error : '' };
 }
 
 export async function logout() {
@@ -297,4 +303,46 @@ export function defaultDateOnly() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+// ---- Users & access (super admin) ------------------------------------------
+
+async function sendJson(method, url, body) {
+  const res = await apiFetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+export function fetchUsers() {
+  return sendJson('GET', `${API_BASE}/users`);
+}
+
+export function createUser(user) {
+  return sendJson('POST', `${API_BASE}/users`, user).then((d) => d.user);
+}
+
+export function updateUser(username, patch) {
+  return sendJson('PUT', `${API_BASE}/users/${encodeURIComponent(username)}`, patch).then((d) => d.user);
+}
+
+export function resetUserPassword(username, password) {
+  return sendJson('POST', `${API_BASE}/users/${encodeURIComponent(username)}/password`, { password });
+}
+
+export function signOutUserEverywhere(username) {
+  return sendJson('POST', `${API_BASE}/users/${encodeURIComponent(username)}/sign-out`, {});
+}
+
+export function deleteUser(username) {
+  return sendJson('DELETE', `${API_BASE}/users/${encodeURIComponent(username)}`);
+}
+
+/** The signed-in user's own password. */
+export function changeMyPassword(current, password) {
+  return sendJson('POST', `${API_BASE}/me/password`, { current, password });
 }

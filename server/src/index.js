@@ -19,7 +19,20 @@ import { getPdfStream, pdfExists, reportObjectKey, reportSummaryObjectKey } from
 import { isWebhookKey, readDocToken, webhookKey, whatsappLinkInfo } from './services/publicLinkService.js';
 import { watiUsage } from './services/watiBudget.js';
 import { getWatiSettings, updateWatiSettings } from './services/watiSettingsService.js';
-import { clearSessionCookie, getSessionUser, requireSession, setSessionCookie } from './services/sessionService.js';
+import { clearSessionCookie, getSessionUser, loadSessionAccount, requireSession, setSessionCookie } from './services/sessionService.js';
+import { allowedDocuments, effectivePermissions } from './services/accessControl.js';
+import {
+  accessModel,
+  authenticate,
+  changeOwnPassword,
+  createUser,
+  deleteUser,
+  listUsers,
+  publicUser,
+  setPassword,
+  signOutEverywhere,
+  updateUser,
+} from './services/userService.js';
 import { hasCriteria, labResultsCoverage, listLabTests, normaliseQuery, searchLabResults } from './services/labResultsService.js';
 import { buildExport, EXPORT_FORMATS, exportFileName, shareLabResultsOnWhatsApp } from './services/labExportService.js';
 import { toWatiNumber } from './services/watiService.js';
@@ -114,27 +127,27 @@ export function createApp() {
     res.json({ ok: true });
   });
 
-  app.post('/api/login', (req, res) => {
+  // Staff accounts and the built-in super admin (userService.js).
+  app.post('/api/login', async (req, res) => {
     const { username, password } = req.body || {};
-
-    if (!username || !password) {
-      return res.status(400).json({ ok: false, error: 'Username and password are required' });
+    try {
+      const user = await authenticate(username, password, req.ip);
+      setSessionCookie(req, res, user.username, user.tokenVersion || 0);
+      res.json({ ok: true, username: user.username, user: publicUser(user) });
+    } catch (error) {
+      res.status(error.status || 401).json({ ok: false, code: error.code, error: error.message });
     }
-
-    const isValid = username === config.auth.username && password === config.auth.password;
-
-    if (!isValid) {
-      return res.status(401).json({ ok: false, error: 'Invalid username or password' });
-    }
-
-    setSessionCookie(req, res, username);
-    res.json({ ok: true, username });
   });
 
-  app.get('/api/session', (req, res) => {
-    const username = getSessionUser(req);
-    if (!username) return res.status(401).json({ ok: false, error: 'Not logged in' });
-    res.json({ ok: true, username });
+  app.get('/api/session', async (req, res) => {
+    try {
+      const account = await loadSessionAccount(req);
+      if (!account) return res.status(401).json({ ok: false, error: 'Not logged in' });
+      if (account.blocked) return res.status(401).json({ ok: false, code: 'outside_hours', error: account.blocked });
+      res.json({ ok: true, username: account.user.username, user: publicUser(account.user) });
+    } catch (error) {
+      res.status(503).json({ ok: false, error: error.message });
+    }
   });
 
   app.post('/api/logout', (req, res) => {
@@ -335,10 +348,12 @@ app.get('/api/detail/:orderid', async (req, res) => {
         getReportRecord(date, ip),
         getWatiSettings(),
       ]);
-      // A summary the EMR returned with no patient data is never sent.
+      // A summary the EMR returned with no patient data is never sent; a user
+      // who only sees one kind of report only sends that kind.
+      const allowed = allowedDocuments(req.user);
       const kinds = [];
-      if (labExists) kinds.push('lab');
-      if (summaryExists && !record?.summaryDataMissing) kinds.push('summary');
+      if (labExists && allowed.includes('lab')) kinds.push('lab');
+      if (summaryExists && !record?.summaryDataMissing && allowed.includes('summary')) kinds.push('summary');
       if (!kinds.length) {
         return res.status(404).json({ ok: false, error: 'No lab report or discharge summary to send' });
       }
@@ -468,9 +483,10 @@ app.get('/api/detail/:orderid', async (req, res) => {
         getReportRecord(date, ip),
         getWatiSettings(),
       ]);
+      const allowed = allowedDocuments(req.user);
       const kinds = [];
-      if (labExists) kinds.push('lab');
-      if (summaryExists && !record?.summaryDataMissing) kinds.push('summary');
+      if (labExists && allowed.includes('lab')) kinds.push('lab');
+      if (summaryExists && !record?.summaryDataMissing && allowed.includes('summary')) kinds.push('summary');
       if (!kinds.length) return res.status(404).json({ ok: false, error: 'No lab report or discharge summary to send' });
       const result = await sendReportsWhatsApp({
         dateFolder: date,
@@ -599,14 +615,15 @@ app.get('/api/detail/:orderid', async (req, res) => {
   });
 
   /** WATI API calls made (today / this month), status-check state, webhook and link setup. */
-  app.get('/api/admin/whatsapp/wati-usage', async (_req, res) => {
+  app.get('/api/admin/whatsapp/wati-usage', async (req, res) => {
     try {
       res.json({
         ok: true,
         usage: await watiUsage(),
         poll: getPollState(),
         link: whatsappLinkInfo(),
-        webhookPath: `/api/public/wati-webhook/${webhookKey()}`,
+        // The webhook URL is a secret — only for those who can change things here.
+        webhookPath: effectivePermissions(req.user).screens.monitor === 'write' ? `/api/public/wati-webhook/${webhookKey()}` : null,
       });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
@@ -629,7 +646,10 @@ app.get('/api/detail/:orderid', async (req, res) => {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
     if (!messages.length) return res.status(400).json({ ok: false, error: 'Ask a question' });
     try {
-      res.json({ ok: true, ...(await runAssistant({ messages, context: req.body?.context || {}, user: getSessionUser(req) })) });
+      res.json({
+        ok: true,
+        ...(await runAssistant({ messages, context: req.body?.context || {}, user: getSessionUser(req), access: effectivePermissions(req.user) })),
+      });
     } catch (error) {
       res.status(502).json({ ok: false, error: error.message });
     }
@@ -642,6 +662,56 @@ app.get('/api/detail/:orderid', async (req, res) => {
       res.json({ ok: true, ...sent });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+
+  /**
+   * User management — super admin only (accessControl.js). Users sign in with
+   * their own username; each has screens, Ask AI, WhatsApp button, reports and
+   * access hours (userService.js).
+   */
+  const userRoute = (fn) => async (req, res) => {
+    try {
+      res.json({ ok: true, ...(await fn(req)) });
+    } catch (error) {
+      res.status(error.status || 500).json({ ok: false, error: error.message });
+    }
+  };
+  app.get('/api/users', userRoute(async () => ({ users: await listUsers(), model: accessModel() })));
+  app.post('/api/users', userRoute(async (req) => ({ user: await createUser(req.body || {}, getSessionUser(req)) })));
+  app.put('/api/users/:username', userRoute(async (req) => ({ user: await updateUser(req.params.username, req.body || {}, getSessionUser(req)) })));
+  app.post(
+    '/api/users/:username/password',
+    userRoute(async (req) => {
+      await setPassword(req.params.username, req.body?.password, getSessionUser(req));
+      return {};
+    }),
+  );
+  app.post(
+    '/api/users/:username/sign-out',
+    userRoute(async (req) => {
+      await signOutEverywhere(req.params.username, getSessionUser(req));
+      return {};
+    }),
+  );
+  app.delete(
+    '/api/users/:username',
+    userRoute(async (req) => {
+      await deleteUser(req.params.username);
+      return {};
+    }),
+  );
+
+  /** The signed-in user's own profile and password. */
+  app.get('/api/me', userRoute(async (req) => ({ user: publicUser(req.user) })));
+  app.post('/api/me/password', async (req, res) => {
+    try {
+      const version = await changeOwnPassword(req.user.username, req.body?.current, req.body?.password);
+      // Stay signed in here; sessions on other devices end.
+      setSessionCookie(req, res, req.user.username, version);
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(error.status || 500).json({ ok: false, error: error.message });
     }
   });
 

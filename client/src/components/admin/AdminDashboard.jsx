@@ -224,7 +224,7 @@ function explainFailure(text) {
   return 'WATI did not accept or deliver this message.';
 }
 
-function MessageDrawer({ id, onClose, onChanged }) {
+function MessageDrawer({ id, onClose, onChanged, readOnly = false }) {
   const [message, setMessage] = useState(null);
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
@@ -306,7 +306,7 @@ function MessageDrawer({ id, onClose, onChanged }) {
                       ? `Tried ${message.attempts} times — no more automatic retries.`
                       : 'Not retried automatically — fix the cause, then press Retry.'}
                 </p>
-                {['lab', 'summary'].includes(message.document) && message.ipNo && (
+                {!readOnly && ['lab', 'summary'].includes(message.document) && message.ipNo && (
                   <button type="button" className="btn wa-retry" onClick={retryNow} disabled={retrying}>
                     <RefreshIcon size={15} spinning={retrying} /> {retrying ? 'Sending again…' : 'Retry now'}
                   </button>
@@ -326,9 +326,11 @@ function MessageDrawer({ id, onClose, onChanged }) {
               <div><dt>Last checked</dt><dd>{formatTime(message.lastCheckedAt)}</dd></div>
               {message.watiMessageId && <div><dt>WATI message id</dt><dd className="wa-mono">{message.watiMessageId}</dd></div>}
             </dl>
+            {!readOnly && (
             <button type="button" className="btn btn-secondary wa-check" onClick={checkNow} disabled={checking}>
               <RefreshIcon size={15} spinning={checking} /> {checking ? 'Checking WATI…' : 'Check status now'}
             </button>
+            )}
           </div>
         )}
       </aside>
@@ -652,7 +654,7 @@ function CopyField({ value }) {
   );
 }
 
-function WatiCard({ info, now }) {
+function WatiCard({ info, now, readOnly = false }) {
   const [showSetup, setShowSetup] = useState(false);
   if (!info) return null;
   const { usage, poll, link, webhookPath } = info;
@@ -698,9 +700,11 @@ function WatiCard({ info, now }) {
                 {poll?.enabled === false && ' (Scheduled checks are turned off.)'}
               </span>
             )}
-            <button type="button" className="ai-link" onClick={() => setShowSetup((v) => !v)}>
-              {showSetup ? 'Hide webhook setup' : hooked ? 'Webhook URL' : 'Connect the webhook (free, instant ticks)'}
-            </button>
+            {!readOnly && (
+              <button type="button" className="ai-link" onClick={() => setShowSetup((v) => !v)}>
+                {showSetup ? 'Hide webhook setup' : hooked ? 'Webhook URL' : 'Connect the webhook (free, instant ticks)'}
+              </button>
+            )}
           </div>
         </div>
 
@@ -744,7 +748,7 @@ function WatiCard({ info, now }) {
 
 // ---- the dashboard ------------------------------------------------------------
 
-export default function AdminDashboard() {
+export default function AdminDashboard({ readOnly = false }) {
   const [preset, setPreset] = useState('yesterday');
   const [custom, setCustom] = useState(() => presetRange('yesterday'));
   const [statuses, setStatuses] = useState([]);
@@ -962,10 +966,12 @@ export default function AdminDashboard() {
               summary?.poll?.at && <span className="wa-live-sub"> · WATI checked {timeAgo(summary.poll.at, now)}</span>
             )}
           </span>
+          {!readOnly && (
           <button type="button" className="wa-live-btn" onClick={checkWati} disabled={checking} title="Ask WATI for the latest delivery and read status now">
             <RefreshIcon size={15} spinning={checking} />
             {checking ? 'Checking…' : 'Check WATI now'}
           </button>
+          )}
         </div>
       </header>
 
@@ -1087,7 +1093,7 @@ export default function AdminDashboard() {
         </div>
 
         <div className="wa-grid">
-          <WatiCard info={wati} now={now} />
+          <WatiCard info={wati} now={now} readOnly={readOnly} />
           <CoverageCard coverage={insights?.coverage} liveEnabled={insights?.liveEnabled} range={range} />
           <AttentionCard attention={insights?.attention} onShow={showAttention} />
 
@@ -1517,7 +1523,7 @@ export default function AdminDashboard() {
         </section>
       </div>
 
-      {openId && <MessageDrawer id={openId} onClose={() => setOpenId(null)} onChanged={() => load(true)} />}
+      {openId && <MessageDrawer id={openId} onClose={() => setOpenId(null)} onChanged={() => load(true)} readOnly={readOnly} />}
     </div>
   );
 }

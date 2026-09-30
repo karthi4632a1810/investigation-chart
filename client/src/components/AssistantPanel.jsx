@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { EXPORT_LABELS, askAssistant, downloadLabResults, sendTestWhatsApp } from '../api/client';
 import ExportShareBar from './ExportShareBar';
 import { CheckIcon, CloseIcon, RotateCcwIcon, SendIcon, SparklesIcon, WhatsAppIcon } from './Icons';
@@ -22,6 +22,12 @@ function formatIst(value) {
   return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
 }
 const FLAG = { high: 'High', low: 'Low', normal: 'Normal' };
+
+// The user's permissions for every download / share bar in the chat (utils/access.js).
+const BarAccess = createContext({ allowShare: true, showLab: true, showSummary: true });
+function Bar(props) {
+  return <ExportShareBar {...useContext(BarAccess)} {...props} />;
+}
 
 /** The model sometimes uses **bold** — show it as bold, everything else as plain text. */
 function formatReply(text) {
@@ -52,7 +58,7 @@ function PatientsBlock({ block, onNavigate }) {
             {p.regNo && <span>UHID {p.regNo}</span>}
             {p.department && <span>{p.department}</span>}
           </div>
-          <ExportShareBar via="assistant" patient={p} compact />
+          <Bar via="assistant" patient={p} compact />
         </div>
       ))}
       <div className="ai-block-links">
@@ -114,7 +120,7 @@ function LabResultsBlock({ block, onNavigate }) {
           {block.total > 6 ? `See all ${block.total} in Lab Finder` : 'Open in Lab Finder'}
         </button>
       </div>
-      <ExportShareBar via="assistant" query={block.query} compact />
+      <Bar via="assistant" query={block.query} compact />
     </div>
   );
 }
@@ -141,7 +147,7 @@ function DownloadBlock({ block }) {
         {isPatientPdf ? 'Open the PDFs' : `${EXPORT_LABELS[block.format]} download`}
         {note && <span className="ai-block-note"> · {note}</span>}
       </div>
-      {block.target === 'patient' ? <ExportShareBar via="assistant" patient={block.patient} highlight={block.format} compact /> : <ExportShareBar via="assistant" query={block.query} highlight={block.format} compact />}
+      {block.target === 'patient' ? <Bar via="assistant" patient={block.patient} highlight={block.format} compact /> : <Bar via="assistant" query={block.query} highlight={block.format} compact />}
     </div>
   );
 }
@@ -151,9 +157,9 @@ function ShareBlock({ block }) {
     <div className="ai-block">
       <div className="ai-block-title">Check the number, then press Send</div>
       {block.target === 'patient' ? (
-        <ExportShareBar via="assistant" patient={block.patient} shareNumber={block.toNumber} openShare compact />
+        <Bar via="assistant" patient={block.patient} shareNumber={block.toNumber} openShare compact />
       ) : (
-        <ExportShareBar via="assistant" query={block.query} shareNumber={block.toNumber} openShare compact />
+        <Bar via="assistant" query={block.query} shareNumber={block.toNumber} openShare compact />
       )}
     </div>
   );
@@ -329,7 +335,12 @@ function Blocks({ blocks, onNavigate, onTestDone }) {
   });
 }
 
-export default function AssistantPanel({ onNavigate, view }) {
+export default function AssistantPanel({ onNavigate, view, access }) {
+  const barAccess = {
+    allowShare: !access || access.ai === 'act',
+    showLab: access ? access.showLab : true,
+    showSummary: access ? access.showSummary : true,
+  };
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -397,6 +408,7 @@ export default function AssistantPanel({ onNavigate, view }) {
       )}
 
       {open && (
+        <BarAccess.Provider value={barAccess}>
         <section className="ai-panel no-print" role="dialog" aria-label="Ask AI assistant">
           <header className="ai-head">
             <div className="ai-head-icon">
@@ -431,7 +443,7 @@ export default function AssistantPanel({ onNavigate, view }) {
                 <div className="ai-welcome-title">How can I help?</div>
                 <p>Ask for a patient's reports, find patients by lab result, check whether WhatsApp is working, or ask what anything on screen means.</p>
                 <div className="ai-suggestions">
-                  {SUGGESTIONS.map((s) => (
+                  {SUGGESTIONS.filter((s) => access?.ai === 'act' || !/send a test/i.test(s)).map((s) => (
                     <button key={s} type="button" className="ai-suggestion" onClick={() => send(s)}>
                       {s}
                     </button>
@@ -498,6 +510,7 @@ export default function AssistantPanel({ onNavigate, view }) {
           </form>
           <div className="ai-foot">AI can misread questions — check results before acting on them.</div>
         </section>
+        </BarAccess.Provider>
       )}
     </>
   );

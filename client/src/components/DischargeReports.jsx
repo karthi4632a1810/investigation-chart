@@ -51,6 +51,9 @@ const EMPTY_FILTERS = {
   toDate: '',
 };
 
+// Without an access prop (e.g. the super admin): everything. See utils/access.js.
+const FULL_ACCESS = { showLab: true, showSummary: true, reports: { canRun: true, showWhatsApp: true } };
+
 function formatCountdown(ms) {
   if (ms <= 0) return 'any moment now';
   const totalSeconds = Math.floor(ms / 1000);
@@ -111,7 +114,7 @@ function getHumanDate(dateStr) {
   return dateStr;
 }
 
-function AutomationStatus({ status, onRunNow, running }) {
+function AutomationStatus({ status, onRunNow, running, canRun = true }) {
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -198,16 +201,18 @@ function AutomationStatus({ status, onRunNow, running }) {
         </div>
       )}
 
-      <button
-        type="button"
-        className="btn btn-secondary btn-check-now"
-        onClick={onRunNow}
-        disabled={running || checking}
-        title="Trigger an immediate check for new discharges"
-      >
-        <RefreshIcon spinning={running || checking} size={16} />
-        <span>{running || checking ? 'Checking…' : 'Check Now'}</span>
-      </button>
+      {canRun && (
+        <button
+          type="button"
+          className="btn btn-secondary btn-check-now"
+          onClick={onRunNow}
+          disabled={running || checking}
+          title="Trigger an immediate check for new discharges"
+        >
+          <RefreshIcon spinning={running || checking} size={16} />
+          <span>{running || checking ? 'Checking…' : 'Check Now'}</span>
+        </button>
+      )}
     </div>
   );
 }
@@ -346,7 +351,7 @@ function NoWhatsAppBadge() {
   );
 }
 
-function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp }) {
+function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS }) {
   if (!patients.length) return null;
 
   return (
@@ -451,7 +456,7 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                 </td>
                 <td className="cell-action">
                   <div className="action-btn-group">
-                    {p.dateCount !== undefined && (
+                    {access.showLab && p.dateCount !== undefined && (
                       <a
                         className="btn btn-view-pdf"
                         href={getPdfUrl(p)}
@@ -463,7 +468,7 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                         <span>Lab Report</span>
                       </a>
                     )}
-                    {p.hasSummary && p.summaryDataMissing ? (
+                    {!access.showSummary ? null : p.hasSummary && p.summaryDataMissing ? (
                       <span className="btn btn-summary-missing" title={SUMMARY_NO_DATA_TITLE}>
                         No Summary
                       </span>
@@ -479,7 +484,7 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                         <span>Summary</span>
                       </a>
                     ) : null}
-                    {hasSendableDocument(p) && (
+                    {access.reports.showWhatsApp && hasSendableDocument(p, access) && (
                       <SendWhatsAppButton
                         date={p.date}
                         ipNo={p.ipNo}
@@ -514,8 +519,8 @@ function patientInitials(name) {
 const SUMMARY_NO_DATA_TITLE = 'The EMR returned no patient data for this discharge summary, so it is not shown or sent';
 
 // A summary the EMR returned empty is never sent (see the send-whatsapp route).
-function hasSendableDocument(p) {
-  return p.dateCount !== undefined || (p.hasSummary && !p.summaryDataMissing);
+function hasSendableDocument(p, access = FULL_ACCESS) {
+  return (access.showLab && p.dateCount !== undefined) || (access.showSummary && p.hasSummary && !p.summaryDataMissing);
 }
 
 // The name printed as "Prepared & Approved by" on the summary PDF. Records
@@ -524,7 +529,7 @@ function summaryApprover(p) {
   return p.summaryApprovedBy || p.doctor || 'Treating Consultant';
 }
 
-function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp }) {
+function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS }) {
   if (!patients.length) return null;
 
   return (
@@ -613,7 +618,7 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
 
             <footer className="pcard-actions">
               {/* Always one line, whichever state, so every card in a row keeps the same height. */}
-              {p.hasSummary && p.summaryDataMissing ? (
+              {!access.showSummary ? null : p.hasSummary && p.summaryDataMissing ? (
                 <div className="pcard-status" title={SUMMARY_NO_DATA_TITLE}>
                   <span>Discharge summary unavailable</span>
                 </div>
@@ -633,7 +638,7 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                 </div>
               )}
               <div className="pcard-buttons">
-                {hasLab ? (
+                {!access.showLab ? null : hasLab ? (
                   <a
                     className="btn btn-view-pdf pcard-btn"
                     href={getPdfUrl(p)}
@@ -649,7 +654,7 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                     <span>No lab data</span>
                   </span>
                 )}
-                {p.hasSummary && p.summaryDataMissing ? (
+                {!access.showSummary ? null : p.hasSummary && p.summaryDataMissing ? (
                   <span className="btn pcard-btn btn-summary-missing" title={SUMMARY_NO_DATA_TITLE}>
                     <span>No Summary</span>
                   </span>
@@ -669,7 +674,7 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                     <span>No summary</span>
                   </span>
                 )}
-                {hasSendableDocument(p) && (
+                {access.reports.showWhatsApp && hasSendableDocument(p, access) && (
                   <SendWhatsAppButton date={p.date} ipNo={p.ipNo} name={p.name} onToast={onToast} />
                 )}
               </div>
@@ -975,7 +980,7 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
   );
 }
 
-export default function DischargeReports({ navRequest }) {
+export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
   const [mode, setMode] = useState('date'); // 'date' | 'search'
   const [date, setDate] = useState(defaultDateOnly());
   const [filters, setFilters] = useState(EMPTY_FILTERS);
@@ -1260,7 +1265,7 @@ export default function DischargeReports({ navRequest }) {
         </div>
       </div>
 
-      <AutomationStatus status={status} onRunNow={handleRunNow} running={running} />
+      <AutomationStatus status={status} onRunNow={handleRunNow} running={running} canRun={access.reports.canRun} />
 
       {/* Control Bar: Mode Tabs + Live Status */}
       <div className="reports-mode-row">
@@ -1450,33 +1455,39 @@ export default function DischargeReports({ navRequest }) {
               <span>All Patients</span>
               <span className="cat-count-badge">{categoryCounts.all}</span>
             </button>
-            <button
-              type="button"
-              className={`cat-chip cat-chip-lab ${categoryFilter === 'lab' ? 'active' : ''}`}
-              onClick={() => handleCategoryFilterChange('lab')}
-              title="Filter to patients with lab reports ready"
-            >
-              <span>📋 Lab Ready</span>
-              <span className="cat-count-badge">{categoryCounts.lab}</span>
-            </button>
-            <button
-              type="button"
-              className={`cat-chip cat-chip-summary ${categoryFilter === 'summary' ? 'active' : ''}`}
-              onClick={() => handleCategoryFilterChange('summary')}
-              title="Filter to patients with discharge summaries"
-            >
-              <span>📄 Summary Ready</span>
-              <span className="cat-count-badge">{categoryCounts.summary}</span>
-            </button>
-            <button
-              type="button"
-              className={`cat-chip cat-chip-nolab ${categoryFilter === 'nolab' ? 'active' : ''}`}
-              onClick={() => handleCategoryFilterChange('nolab')}
-              title="Filter to patients with no lab orders"
-            >
-              <span>⏳ No Lab Data</span>
-              <span className="cat-count-badge">{categoryCounts.noLab}</span>
-            </button>
+            {access.showLab && (
+              <button
+                type="button"
+                className={`cat-chip cat-chip-lab ${categoryFilter === 'lab' ? 'active' : ''}`}
+                onClick={() => handleCategoryFilterChange('lab')}
+                title="Filter to patients with lab reports ready"
+              >
+                <span>📋 Lab Ready</span>
+                <span className="cat-count-badge">{categoryCounts.lab}</span>
+              </button>
+            )}
+            {access.showSummary && (
+              <button
+                type="button"
+                className={`cat-chip cat-chip-summary ${categoryFilter === 'summary' ? 'active' : ''}`}
+                onClick={() => handleCategoryFilterChange('summary')}
+                title="Filter to patients with discharge summaries"
+              >
+                <span>📄 Summary Ready</span>
+                <span className="cat-count-badge">{categoryCounts.summary}</span>
+              </button>
+            )}
+            {access.showLab && (
+              <button
+                type="button"
+                className={`cat-chip cat-chip-nolab ${categoryFilter === 'nolab' ? 'active' : ''}`}
+                onClick={() => handleCategoryFilterChange('nolab')}
+                title="Filter to patients with no lab orders"
+              >
+                <span>⏳ No Lab Data</span>
+                <span className="cat-count-badge">{categoryCounts.noLab}</span>
+              </button>
+            )}
             {categoryCounts.corporate > 0 && (
               <button
                 type="button"
@@ -1559,6 +1570,7 @@ export default function DischargeReports({ navRequest }) {
                   getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
                   onToast={showToast}
                   noWhatsApp={noWhatsApp}
+                  access={access}
                 />
               ) : (
                 <>
@@ -1570,6 +1582,7 @@ export default function DischargeReports({ navRequest }) {
                       getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
                       onToast={showToast}
                       noWhatsApp={noWhatsApp}
+                      access={access}
                     />
                   </div>
                   <div className="responsive-cards-view">
@@ -1580,6 +1593,7 @@ export default function DischargeReports({ navRequest }) {
                       getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
                       onToast={showToast}
                       noWhatsApp={noWhatsApp}
+                      access={access}
                     />
                   </div>
                 </>

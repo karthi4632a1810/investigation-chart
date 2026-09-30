@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchWatiSettings, updateWatiSettings } from '../api/client';
-import { AlertIcon, CheckIcon, FilePdfIcon, PhoneIcon, WhatsAppIcon } from './Icons';
+import { AlertIcon, CheckIcon, FilePdfIcon, LockIcon, PhoneIcon, WhatsAppIcon } from './Icons';
 
 // One message per document, in this order — mirrors WHATSAPP_DOCUMENTS on the server.
 const DOCUMENTS = [
@@ -40,7 +40,7 @@ function SavedTick({ show }) {
   ) : null;
 }
 
-export default function WatiSettings() {
+export default function WatiSettings({ readOnly = false }) {
   const [settings, setSettings] = useState(null);
   const [fixedNumberInput, setFixedNumberInput] = useState('');
   const [secondParamInput, setSecondParamInput] = useState('');
@@ -62,6 +62,7 @@ export default function WatiSettings() {
   }, []);
 
   async function persist(field, patch) {
+    if (readOnly) return;
     setSaving(field);
     setError('');
     setSavedField('');
@@ -128,8 +129,14 @@ export default function WatiSettings() {
         </div>
       )}
 
+      {readOnly && (
+        <div className="readonly-banner" role="note">
+          <LockIcon size={14} /> Read only — you can see these settings but not change them.
+        </div>
+      )}
+
       <div className="wati-grid">
-        <div className="wati-col">
+        <fieldset className="wati-col wati-fieldset" disabled={readOnly}>
           <section className="wati-panel">
             <div className="wati-panel-head">
               <div>
@@ -288,7 +295,7 @@ export default function WatiSettings() {
               </p>
             )}
           </form>
-        </div>
+        </fieldset>
 
         <aside className="wati-preview" aria-label="Message preview">
           <div className="wati-preview-title">

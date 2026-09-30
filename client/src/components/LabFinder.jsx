@@ -38,7 +38,7 @@ function toQuery(f) {
   return q;
 }
 
-export default function LabFinder({ navRequest }) {
+export default function LabFinder({ navRequest, canShare = true }) {
   const [form, setForm] = useState(EMPTY);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -239,7 +239,7 @@ export default function LabFinder({ navRequest }) {
             </div>
           </div>
 
-          {result.total > 0 && <ExportShareBar query={result.query} via="lab_finder" />}
+          {result.total > 0 && <ExportShareBar query={result.query} via="lab_finder" allowShare={canShare} />}
 
           {result.total > 0 ? (
             <div className="table-wrap lf-table-wrap">
