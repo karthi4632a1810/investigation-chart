@@ -5,8 +5,8 @@
  */
 
 // App view id → permission screen id.
-export const VIEW_SCREEN = { search: 'search', reports: 'reports', labFinder: 'labFinder', wati: 'wati', admin: 'monitor' };
-export const VIEW_ORDER = ['reports', 'search', 'labFinder', 'wati', 'admin'];
+export const VIEW_SCREEN = { search: 'search', reports: 'reports', labFinder: 'labFinder', wati: 'wati', admin: 'monitor', audit: 'audit' };
+export const VIEW_ORDER = ['reports', 'search', 'labFinder', 'wati', 'admin', 'audit'];
 
 export function canOpen(me, view) {
   if (!me) return false;

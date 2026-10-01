@@ -9303,3 +9303,537 @@ table.unmapped tbody tr:nth-child(even) {
 .ai-lookup-sent .ai-link {
   align-self: flex-start;
 }
+
+/* ==========================================================================
+   Audit log (AuditLog.jsx)
+   ========================================================================== */
+.al-page {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.al-hero {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 22px 24px;
+  margin-bottom: 16px;
+  border-radius: 20px;
+  color: #ffffff;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.08) 1px, transparent 0) 0 0 / 22px 22px,
+    linear-gradient(135deg, #0b2956 0%, #334155 55%, #0f766e 100%);
+  box-shadow: 0 18px 40px -24px rgba(11, 41, 86, 0.8);
+}
+
+.al-hero-icon {
+  flex: 0 0 auto;
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.al-hero-text {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.al-hero-text h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.al-hero-text p {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.al-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.al-hero-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.al-hero-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.al-select {
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text-main);
+  background: #ffffff;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  max-width: 240px;
+}
+
+.al-search {
+  flex: 1 1 200px;
+}
+
+.al-cats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.al-dot {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.al-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.al-active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.al-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.al-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+}
+
+.al-tile b {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.al-tile span {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.al-tile.is-bad b {
+  color: var(--red);
+}
+
+.al-tabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 10px;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+}
+
+.al-tabs button {
+  padding: 7px 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.al-tabs button.is-on {
+  color: var(--primary);
+  background: var(--bg-surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.al-count {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.al-day + .al-day {
+  margin-top: 14px;
+}
+
+.al-day-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 0;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-surface);
+}
+
+.al-events {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.al-event {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  align-items: start;
+  gap: 4px 12px;
+  padding: 6px 0;
+  border-top: 1px solid #f1f5f9;
+}
+
+.al-event.is-failed .al-text {
+  color: #991b1b;
+}
+
+.al-event-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 4px 6px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.al-event-main:hover {
+  background: var(--bg-subtle);
+}
+
+.al-time {
+  flex: 0 0 auto;
+  min-width: 92px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.al-event-main .al-dot {
+  margin-top: 5px;
+}
+
+.al-text {
+  min-width: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text-main);
+  overflow-wrap: anywhere;
+}
+
+.al-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: 6px;
+}
+
+.al-meta em {
+  padding: 0 6px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 700;
+  color: #1e3a8a;
+  background: var(--primary-subtle);
+  border-radius: 6px;
+}
+
+.al-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 4px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.al-person:disabled {
+  cursor: default;
+}
+
+.al-person:hover:not(:disabled) {
+  background: var(--bg-subtle);
+}
+
+.al-avatar {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #ffffff;
+  background: linear-gradient(135deg, #2563eb, #0d9488);
+  border-radius: 50%;
+}
+
+.al-person-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.al-person-text b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text-main);
+}
+
+.al-person-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.al-details {
+  grid-column: 1 / -1;
+  margin: 2px 0 6px 108px;
+  padding: 10px 12px;
+  background: var(--bg-subtle);
+  border-radius: 10px;
+}
+
+.al-details dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 14px;
+  margin: 0;
+}
+
+.al-details dt {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.al-details dd {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-main);
+  overflow-wrap: anywhere;
+}
+
+.al-reply {
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-main);
+  white-space: pre-wrap;
+}
+
+.al-more {
+  align-self: center;
+  margin-top: 12px;
+}
+
+.al-empty {
+  padding: 24px;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--text-muted);
+}
+
+.al-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.al-table th {
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.al-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid #f1f5f9;
+  color: var(--text-main);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.al-table td.is-bad {
+  color: var(--red);
+  font-weight: 700;
+}
+
+.al-split {
+  display: inline-flex;
+  width: 120px;
+  height: 8px;
+  overflow: hidden;
+  vertical-align: middle;
+  background: var(--bg-subtle);
+  border-radius: 999px;
+}
+
+.al-split i {
+  display: block;
+  height: 100%;
+}
+
+.al-split i.is-active { background: #16a34a; }
+.al-split i.is-idle { background: #f59e0b; }
+.al-split i.is-hidden { background: #94a3b8; }
+
+.al-muted {
+  color: var(--text-muted);
+}
+
+.al-online {
+  font-weight: 700;
+  color: #16a34a;
+}
+
+.al-chats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.al-chat {
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+.al-chat summary {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.al-chat summary::-webkit-details-marker {
+  display: none;
+}
+
+.al-chat-first {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  color: var(--text-main);
+}
+
+.al-chat ol {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0 14px 14px 32px;
+}
+
+.al-q {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+.al-a {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-main);
+  white-space: pre-wrap;
+}
+
+@media (max-width: 760px) {
+  .al-event {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .al-details {
+    margin-left: 0;
+  }
+
+  .al-chat summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* With many tabs (super admin) the header would wrap on laptop screens: show
+   the other tabs as icons (name on hover), the open one with its name. Phones
+   keep their own label-only layout (max-width: 680px). */
+.app-brand-subtitle span {
+  white-space: nowrap;
+}
+
+@media (min-width: 681px) and (max-width: 1560px) {
+  .nav-segment-btn:not(.active) > span {
+    display: none;
+  }
+
+  .nav-segment-btn {
+    padding: 8px 11px;
+  }
+}

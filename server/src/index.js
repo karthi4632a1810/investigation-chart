@@ -21,6 +21,18 @@ import { watiUsage } from './services/watiBudget.js';
 import { getWatiSettings, updateWatiSettings } from './services/watiSettingsService.js';
 import { clearSessionCookie, getSessionUser, loadSessionAccount, requireSession, setSessionCookie } from './services/sessionService.js';
 import { allowedDocuments, effectivePermissions } from './services/accessControl.js';
+import { auditMiddleware } from './services/auditMiddleware.js';
+import {
+  auditAiChats,
+  auditFilterOptions,
+  auditSummary,
+  CATEGORIES as AUDIT_CATEGORIES,
+  exportAudit,
+  listAuditEvents,
+  listAuditSessions,
+  recordClientEvents,
+  startSession,
+} from './services/auditService.js';
 import {
   accessModel,
   authenticate,
@@ -122,6 +134,10 @@ export function createApp() {
     }
   });
 
+  // Audit log: records API actions as they finish (auditMiddleware.js) —
+  // registered first so sign-in / sign-out are covered too.
+  app.use(auditMiddleware);
+
   // Everything under /api below needs a logged-in session, except the few
   // routes the login screen itself uses (see sessionService.js).
   app.use(requireSession);
@@ -135,7 +151,10 @@ export function createApp() {
     const { username, password } = req.body || {};
     try {
       const user = await authenticate(username, password, req.ip);
-      setSessionCookie(req, res, user.username, user.tokenVersion || 0);
+      // A new audit session (sign-in → sign-out), carried in the cookie.
+      const sid = await startSession(user, req).catch(() => null);
+      req.sessionId = sid;
+      setSessionCookie(req, res, user.username, user.tokenVersion || 0, sid);
       res.json({ ok: true, username: user.username, user: publicUser(user) });
     } catch (error) {
       res.status(error.status || 401).json({ ok: false, code: error.code, error: error.message });
@@ -369,6 +388,11 @@ app.get('/api/detail/:orderid', async (req, res) => {
         if (!checked.ok) return res.status(400).json({ ok: false, error: checked.error });
         toNumber = checked.digits;
       }
+      // For the audit log: the number used, and whether staff changed it.
+      res.locals.auditExtra = {
+        to: toNumber ? `+${toWatiNumber(toNumber)}` : '',
+        numberEdited: Boolean(req.body?.toNumber) && toWatiNumber(req.body.toNumber) !== toWatiNumber(defaultNumber),
+      };
       if (!toNumber) {
         return res.status(400).json({
           ok: false,
@@ -730,6 +754,55 @@ app.get('/api/detail/:orderid', async (req, res) => {
     }
   });
 
+  /**
+   * Audit log (auditService.js): the browser's own events (screens, popups,
+   * idle / hidden time), and the Audit Log screen's data and downloads.
+   */
+  app.post('/api/audit/events', async (req, res) => {
+    try {
+      // sendBeacon posts text/plain — parse it here.
+      const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};
+      res.json({ ok: true, recorded: await recordClientEvents(req, body) });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+  const auditQuery = (req) => ({
+    from: req.query.from,
+    to: req.query.to,
+    user: req.query.user,
+    department: req.query.department,
+    category: req.query.category,
+    session: req.query.session,
+    presence: req.query.presence,
+    q: req.query.q,
+    page: req.query.page,
+    limit: req.query.limit,
+  });
+  const auditRoute = (fn) => async (req, res) => {
+    try {
+      res.json({ ok: true, ...(await fn(req)) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  };
+  app.get('/api/audit/summary', auditRoute(async (req) => auditSummary(auditQuery(req))));
+  app.get('/api/audit/events', auditRoute(async (req) => listAuditEvents(auditQuery(req))));
+  app.get('/api/audit/sessions', auditRoute(async (req) => ({ sessions: await listAuditSessions(auditQuery(req)) })));
+  app.get('/api/audit/ai-chats', auditRoute(async (req) => ({ chats: await auditAiChats(auditQuery(req)) })));
+  app.get('/api/audit/options', auditRoute(async () => ({ ...(await auditFilterOptions()), categories: AUDIT_CATEGORIES })));
+  app.get('/api/audit/export', async (req, res) => {
+    const format = req.query.format === 'csv' ? 'csv' : 'xlsx';
+    try {
+      const { buffer, filename, mime } = await exportAudit(auditQuery(req), format);
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.send(buffer);
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   /** The Send button on an Ask AI test-message card. */
   app.post('/api/assistant/test-whatsapp', async (req, res) => {
     try {
@@ -783,7 +856,7 @@ app.get('/api/detail/:orderid', async (req, res) => {
     try {
       const version = await changeOwnPassword(req.user.username, req.body?.current, req.body?.password);
       // Stay signed in here; sessions on other devices end.
-      setSessionCookie(req, res, req.user.username, version);
+      setSessionCookie(req, res, req.user.username, version, req.sessionId);
       res.json({ ok: true });
     } catch (error) {
       res.status(error.status || 500).json({ ok: false, error: error.message });

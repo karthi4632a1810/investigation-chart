@@ -34,6 +34,7 @@ export const SCREENS = [
   { id: 'labFinder', label: 'Lab Finder', write: 'Share result lists on WhatsApp' },
   { id: 'wati', label: 'WATI Settings', write: 'Change Test / Live mode, the test number and the extra line' },
   { id: 'monitor', label: 'WhatsApp Monitor', write: 'Retry failed messages and ask WATI for the latest ticks' },
+  { id: 'audit', label: 'Audit Log', write: null, note: "Everyone's sign-ins, screens, clicks and Ask AI chats" },
 ];
 const SCREEN_IDS = SCREENS.map((s) => s.id);
 const LEVELS = ['none', 'read', 'write'];
@@ -47,7 +48,7 @@ const screens = (levels) => Object.fromEntries(SCREEN_IDS.map((id) => [id, level
 const ANY_TIME = { enabled: false, days: [1, 2, 3, 4, 5], from: '09:00', to: '18:00' };
 
 export const FULL_PERMISSIONS = {
-  screens: screens({ search: 'read', reports: 'write', labFinder: 'write', wati: 'write', monitor: 'write' }),
+  screens: screens({ search: 'read', reports: 'write', labFinder: 'write', wati: 'write', monitor: 'write', audit: 'read' }),
   ai: 'act',
   whatsappButton: true,
   documents: 'both',
@@ -127,7 +128,7 @@ export function normalizePermissions(input = {}) {
   const out = { screens: {}, ai: base.ai, whatsappButton: base.whatsappButton, documents: base.documents, schedule: { ...base.schedule } };
   for (const id of SCREEN_IDS) {
     let level = LEVELS.includes(input.screens?.[id]) ? input.screens[id] : base.screens[id];
-    if (id === 'search' && level === 'write') level = 'read'; // Lab Search has nothing to write
+    if ((id === 'search' || id === 'audit') && level === 'write') level = 'read'; // nothing to write there
     out.screens[id] = level;
   }
   if (AI_LEVELS.includes(input.ai)) out.ai = input.ai;

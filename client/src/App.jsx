@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AUTH_EXPIRED_EVENT,
   checkSession,
@@ -21,6 +21,8 @@ import AdminDashboard from './components/admin/AdminDashboard';
 import UserManagement from './components/UserManagement';
 import ProfileMenu from './components/ProfileMenu';
 import SetPasswordScreen from './components/SetPasswordScreen';
+import AuditLog from './components/AuditLog';
+import { startAudit, stopAudit, track } from './utils/audit';
 import { accessFor, canOpen, firstOpenView } from './utils/access';
 import {
   FilePdfIcon,
@@ -29,12 +31,13 @@ import {
   HospitalIcon,
   LockIcon,
   SearchIcon,
+  ShieldCheckIcon,
   UsersIcon,
   WhatsAppIcon,
 } from './components/Icons';
 
 // Screens with their own address: /admin (WhatsApp Monitor) and /users.
-const VIEW_PATHS = { admin: '/admin', users: '/users' };
+const VIEW_PATHS = { admin: '/admin', users: '/users', audit: '/audit' };
 const pathView = () => {
   const path = window.location.pathname.replace(/\/+$/, '');
   return Object.keys(VIEW_PATHS).find((v) => VIEW_PATHS[v] === path) || null;
@@ -81,6 +84,22 @@ export default function App() {
   // the screen applies it when `id` changes.
   const [navRequest, setNavRequest] = useState(null);
   const access = accessFor(me);
+
+  // Audit log (utils/audit.js): this browser's screens, clicks and idle time.
+  const viewRef = useRef(view);
+  const screenSince = useRef({ view, at: Date.now() });
+  useEffect(() => {
+    if (!me?.username) return undefined;
+    startAudit(() => viewRef.current);
+    return () => stopAudit();
+  }, [me?.username]);
+  useEffect(() => {
+    viewRef.current = view;
+    if (!me?.username) return;
+    const prev = screenSince.current;
+    track('screen_open', { screen: view, details: prev.view !== view ? { from: prev.view, prevMs: Date.now() - prev.at } : undefined });
+    screenSince.current = { view, at: Date.now() };
+  }, [view, me?.username]);
 
   // A screen this user can't open (or lost access to) → their first allowed one.
   useEffect(() => {
@@ -195,6 +214,7 @@ export default function App() {
   }
 
   function handleLogout() {
+    stopAudit();
     logout();
     sessionStorage.removeItem('investigation-auth');
     setMe(null);
@@ -303,11 +323,12 @@ export default function App() {
               ['labFinder', 'Lab Finder', FlaskIcon],
               ['wati', 'WATI Settings', WhatsAppIcon],
               ['admin', 'Monitor', ChartIcon],
+              ['audit', 'Audit Log', ShieldCheckIcon],
               ['users', 'Users', UsersIcon],
             ]
               .filter(([id]) => canOpen(me, id))
               .map(([id, label, Icon]) => (
-                <button key={id} type="button" className={`nav-segment-btn ${view === id ? 'active' : ''}`} onClick={() => setView(id)}>
+                <button key={id} type="button" className={`nav-segment-btn ${view === id ? 'active' : ''}`} onClick={() => setView(id)} title={label} aria-label={label}>
                   <Icon size={16} />
                   <span>{label}</span>
                 </button>
@@ -336,6 +357,8 @@ export default function App() {
         {view === 'admin' && canOpen(me, 'admin') && <AdminDashboard readOnly={access.monitor.readOnly} navRequest={navRequest} />}
 
         {view === 'users' && canOpen(me, 'users') && <UserManagement />}
+
+        {view === 'audit' && canOpen(me, 'audit') && <AuditLog />}
 
         {view === 'search' && canOpen(me, 'search') && (
           <div className="search-view-container">

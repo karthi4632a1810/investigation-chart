@@ -12,6 +12,7 @@ import {
   retryWhatsappMessage,
 } from '../../api/client';
 import { AlertIcon, CheckIcon, CloseIcon, CopyIcon, RefreshIcon, SearchIcon, WhatsAppIcon } from '../Icons';
+import { track } from '../../utils/audit';
 import { ChartCard, Columns, Delta, HBars, LegendItem, RateLines, StackedColumns, StackedHBars, StatTile } from './Charts';
 
 const LIVE_REFRESH_MS = 15_000;
@@ -226,6 +227,17 @@ function explainFailure(text) {
 
 function MessageDrawer({ id, onClose, onChanged, readOnly = false }) {
   const [message, setMessage] = useState(null);
+  // Audit log: whose message was opened (once per drawer).
+  const opened = useRef(false);
+  useEffect(() => {
+    if (!message || opened.current) return;
+    opened.current = true;
+    track('message_open', {
+      screen: 'admin',
+      target: { patientName: message.patientName, ipNo: message.ipNo, date: message.dischargeDate },
+      details: { document: message.documentLabel || message.document, status: message.status },
+    });
+  }, [message]);
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -819,6 +831,27 @@ export default function AdminDashboard({ readOnly = false, navRequest }) {
     if (m.tableView) setTableView(m.tableView === 'messages' ? 'messages' : 'patients');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navRequest?.id]);
+
+  // Audit log: the filters used (after they settle).
+  const firstParams = useRef(true);
+  useEffect(() => {
+    if (firstParams.current) {
+      firstParams.current = false;
+      return undefined;
+    }
+    const t = setTimeout(() => {
+      const parts = [
+        `${params.from === params.to ? params.from : `${params.from} to ${params.to}`}${params.fromTime || params.toTime ? ` ${params.fromTime || '00:00'}–${params.toTime || '23:59'}` : ''}`,
+        `by ${params.basis === 'sent' ? 'sent' : 'report'} date`,
+        params.status?.length ? `status ${params.status.join(',')}` : '',
+        params.document && `document ${params.document}`,
+        params.trigger && `trigger ${params.trigger}`,
+        params.q && `search “${params.q}”`,
+      ].filter(Boolean);
+      track('filter_change', { screen: 'admin', details: { summary: parts.join(' · ') } });
+    }, 2000);
+    return () => clearTimeout(t);
+  }, [params]);
 
   function chooseBasis(next) {
     setBasis(next);

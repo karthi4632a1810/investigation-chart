@@ -51,7 +51,7 @@ const anyOf = (...rules) => (user) => {
   return reason;
 };
 
-const LABELS = { search: 'Lab Search', reports: 'Discharge Reports', labFinder: 'Lab Finder', wati: 'WATI Settings', monitor: 'the WhatsApp Monitor' };
+const LABELS = { search: 'Lab Search', reports: 'Discharge Reports', labFinder: 'Lab Finder', wati: 'WATI Settings', monitor: 'the WhatsApp Monitor', audit: 'the Audit Log' };
 const label = (id) => LABELS[id] || id;
 
 const SEG = '[^/]+';
@@ -91,6 +91,9 @@ const RULES = [
   ['POST', /^\/api\/assistant\/message\/[^/]+\/status$/, ai('act')],
 
   [null, /^\/api\/users(\/|$)/, superAdmin],
+  // Every signed-in browser reports its own screens / clicks / idle time; reading the log needs access.
+  ['POST', /^\/api\/audit\/events$/, loggedIn],
+  [null, /^\/api\/audit\//, screen('audit', 'read')],
   [null, /^\/api\/me(\/|$)/, loggedIn],
 ];
 

@@ -13,6 +13,7 @@
 import crypto from 'crypto';
 import { config } from '../config.js';
 import { authorize } from './accessControl.js';
+import { touchSession } from './auditService.js';
 import { describeSchedule, normalizePermissions, resolveSessionUser, scheduleAllows } from './userService.js';
 
 const COOKIE_NAME = 'inv_session';
@@ -28,9 +29,10 @@ function sign(payload) {
 
 // `v` is the user's tokenVersion: a password reset or "sign out everywhere"
 // bumps it, and older sessions stop working.
-function createSessionToken(username, tokenVersion = 0) {
+// `sid` is the audit session (auditService.js) — sign-in to sign-out.
+function createSessionToken(username, tokenVersion = 0, sid = null) {
   const payload = Buffer.from(
-    JSON.stringify({ u: username, v: tokenVersion, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS }),
+    JSON.stringify({ u: username, v: tokenVersion, sid, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS }),
   ).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
@@ -43,8 +45,8 @@ function readCookie(req, name) {
   return '';
 }
 
-/** { u, v } from a valid session cookie, or null for a missing / tampered / expired one. */
-function getSessionClaims(req) {
+/** { u, v, sid } from a valid session cookie, or null for a missing / tampered / expired one. */
+export function getSessionClaims(req) {
   const [payload, signature] = readCookie(req, COOKIE_NAME).split('.');
   if (!payload || !signature) return null;
 
@@ -53,8 +55,8 @@ function getSessionClaims(req) {
   if (expected.length !== given.length || !crypto.timingSafeEqual(expected, given)) return null;
 
   try {
-    const { u, v, exp } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
-    return exp > Date.now() / 1000 ? { u, v: v || 0 } : null;
+    const { u, v, sid, exp } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    return exp > Date.now() / 1000 ? { u, v: v || 0, sid: typeof sid === 'string' ? sid : null } : null;
   } catch {
     return null;
   }
@@ -88,10 +90,10 @@ function cookieAttributes(req, maxAge) {
   return `Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${https ? '; Secure' : ''}`;
 }
 
-export function setSessionCookie(req, res, username, tokenVersion = 0) {
+export function setSessionCookie(req, res, username, tokenVersion = 0, sid = null) {
   res.setHeader(
     'Set-Cookie',
-    `${COOKIE_NAME}=${encodeURIComponent(createSessionToken(username, tokenVersion))}; ${cookieAttributes(req, SESSION_TTL_SECONDS)}`,
+    `${COOKIE_NAME}=${encodeURIComponent(createSessionToken(username, tokenVersion, sid))}; ${cookieAttributes(req, SESSION_TTL_SECONDS)}`,
   );
 }
 
@@ -114,6 +116,8 @@ export async function requireSession(req, res, next) {
     if (!account) return res.status(401).json({ ok: false, error: 'Please log in again' });
     if (account.blocked) return res.status(401).json({ ok: false, code: 'outside_hours', error: account.blocked });
     req.user = account.user;
+    req.sessionId = getSessionClaims(req)?.sid || null;
+    touchSession(req.sessionId);
     if (account.user.mustChangePassword && !['/api/me', '/api/me/password'].includes(req.path)) {
       return res.status(403).json({ ok: false, code: 'must_change_password', error: 'Choose your own password first' });
     }

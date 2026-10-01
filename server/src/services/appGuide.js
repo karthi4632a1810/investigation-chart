@@ -218,6 +218,13 @@ To send sooner: ask WATI support to reset or raise the limit (more quota needs t
 Changes apply from the person's next click. Every rule is checked by the server too, not just hidden.`,
   },
   {
+    id: 'audit-log',
+    title: 'Audit Log',
+    keywords: 'audit log activity who did what when track tracking sign in sign out login logout session idle inactive tab away time clicks cancelled popup ai chats history department user report',
+    text: `The Audit Log (tab "Audit Log"; super admin, or anyone given access) records who did what and when: sign-ins (and failed ones), sign-outs and session length, every screen opened, discharge dates viewed, filters used, IDs copied, PDFs opened, each WhatsApp click — and whether the popup was sent (to which number, edited or not) or cancelled — retries, exports, settings and user changes, and every Ask AI question with its answer. Each session shows active time, idle time (no mouse or keyboard for 5+ minutes) and time away from the tab.
+Views: Timeline (click a row for details, a person to see only them, "Show this session"), People, Departments, Sessions (online now, signed out or closed without signing out) and AI chats (full conversations). Filter by dates, person, department, type and text; "Show tab switches & idle" adds those events. Download as Excel or CSV. Records are kept for a year (AUDIT_RETENTION_DAYS). Opening or downloading the audit log is itself logged.`,
+  },
+  {
     id: 'my-profile',
     title: 'My profile and password',
     keywords: 'my profile password change forgot locked sign out account hours my access',

@@ -11,6 +11,7 @@ import {
   sendLookupWhatsApp,
   sendTestWhatsApp,
 } from '../api/client';
+import { track } from '../utils/audit';
 import ExportShareBar from './ExportShareBar';
 import { CheckIcon, CloseIcon, ExternalLinkIcon, FilePdfIcon, RotateCcwIcon, SendIcon, SparklesIcon, WhatsAppIcon } from './Icons';
 
@@ -33,6 +34,8 @@ function formatIst(value) {
   return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
 }
 const FLAG = { high: 'High', low: 'Low', normal: 'Normal' };
+
+const newChatId = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 // The user's permissions for every download / share bar in the chat (utils/access.js).
 const BarAccess = createContext({ allowShare: true, showLab: true, showSummary: true });
@@ -668,6 +671,8 @@ export default function AssistantPanel({ onNavigate, view, access }) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [context, setContext] = useState({});
+  // One id per conversation, so the audit log shows its questions together.
+  const chatId = useRef(newChatId());
   const listRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -690,6 +695,7 @@ export default function AssistantPanel({ onNavigate, view, access }) {
       const res = await askAssistant(
         history.map(({ role, content }) => ({ role, content })),
         { ...context, view },
+        chatId.current,
       );
       const next = { ...context };
       for (const b of res.blocks || []) {
@@ -724,7 +730,15 @@ export default function AssistantPanel({ onNavigate, view, access }) {
   return (
     <>
       {!open && (
-        <button type="button" className="ai-launcher no-print" onClick={() => setOpen(true)} aria-label="Ask AI">
+        <button
+          type="button"
+          className="ai-launcher no-print"
+          onClick={() => {
+            setOpen(true);
+            track('ai_open', { screen: view });
+          }}
+          aria-label="Ask AI"
+        >
           <SparklesIcon size={18} />
           <span>Ask AI</span>
         </button>
@@ -747,6 +761,8 @@ export default function AssistantPanel({ onNavigate, view, access }) {
                 className="ai-icon-btn"
                 onClick={() => {
                   setMessages([]);
+                  chatId.current = newChatId();
+                  track('ai_new_chat', { screen: view });
                   setContext({});
                 }}
                 title="New chat"
@@ -755,7 +771,16 @@ export default function AssistantPanel({ onNavigate, view, access }) {
                 <RotateCcwIcon size={16} />
               </button>
             )}
-            <button type="button" className="ai-icon-btn" onClick={() => setOpen(false)} title="Close" aria-label="Close">
+            <button
+              type="button"
+              className="ai-icon-btn"
+              onClick={() => {
+                setOpen(false);
+                track('ai_close', { screen: view });
+              }}
+              title="Close"
+              aria-label="Close"
+            >
               <CloseIcon size={18} />
             </button>
           </header>

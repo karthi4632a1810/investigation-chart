@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { track } from '../utils/audit';
 import {
   checkWhatsAppNumber,
   defaultDateOnly,
@@ -227,6 +228,7 @@ function CopyableChip({ value, label, className = '', onToast, iconOnly = false 
     e.preventDefault();
     e.stopPropagation();
     if (!value || value === '—') return;
+    track('copy', { screen: 'reports', details: { label: label || 'value', value: String(value).slice(0, 40) } });
     try {
       await navigator.clipboard.writeText(value);
       setCopied(true);
@@ -301,11 +303,13 @@ function SendConfirmDialog({ patient, live, defaultNumber, documents, onCancel, 
   const check = checkWhatsAppNumber(number);
   const edited = String(number).replace(/\D/g, '').slice(-10) !== String(defaultNumber || '').replace(/\D/g, '').slice(-10);
 
+  const cancel = () => onCancel(edited);
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && !busy && onCancel();
+    const onKey = (e) => e.key === 'Escape' && !busy && cancel();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [busy, onCancel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, edited]);
 
   async function submit(e) {
     e.preventDefault();
@@ -325,7 +329,7 @@ function SendConfirmDialog({ patient, live, defaultNumber, documents, onCancel, 
   // popup sit inside the card — it then jumped between the card and the
   // screen as the mouse moved (the flicker). Clicks stay out of the card too.
   return createPortal(
-    <div className="um-modal-backdrop" onMouseDown={() => !busy && onCancel()} onClick={(e) => e.stopPropagation()}>
+    <div className="um-modal-backdrop" onMouseDown={() => !busy && cancel()} onClick={(e) => e.stopPropagation()}>
       <form className="um-modal wa-send" onMouseDown={(e) => e.stopPropagation()} onSubmit={submit} aria-label="Send on WhatsApp">
         <h3>
           <WhatsAppIcon size={18} /> Send on WhatsApp
@@ -371,7 +375,7 @@ function SendConfirmDialog({ patient, live, defaultNumber, documents, onCancel, 
         <p className="wa-send-note">Each report goes as its own WhatsApp message.</p>
         {error && <div className="wa-send-error is-block">{error}</div>}
         <div className="um-modal-actions">
-          <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={busy}>
+          <button type="button" className="btn btn-secondary" onClick={cancel} disabled={busy}>
             Cancel
           </button>
           <button type="submit" className="btn btn-primary wa-send-btn" disabled={busy || !check.ok}>
@@ -412,10 +416,13 @@ function SendWhatsAppButton({ date, ipNo, name, onToast, patient, waSettings, ac
     }
   }
 
+  const auditTarget = { patientName: patient?.name || name, ipNo, date, department: patient?.department || '' };
+
   function handleClick(e) {
     e?.preventDefault?.();
     e?.stopPropagation?.();
     if (status === 'sending') return;
+    track('whatsapp_click', { screen: 'reports', target: auditTarget, details: { mode: live ? 'live' : 'test', popup: Boolean(waSettings?.confirmBeforeSend) } });
     if (waSettings?.confirmBeforeSend && patient) setConfirming(true);
     else send().catch(() => {});
   }
@@ -453,7 +460,10 @@ function SendWhatsAppButton({ date, ipNo, name, onToast, patient, waSettings, ac
           live={live}
           defaultNumber={defaultNumber}
           documents={documents}
-          onCancel={() => setConfirming(false)}
+          onCancel={(edited) => {
+            track('whatsapp_popup_cancel', { screen: 'reports', target: auditTarget, details: { numberEdited: Boolean(edited) } });
+            setConfirming(false);
+          }}
           onSend={send}
         />
       )}
@@ -1152,6 +1162,24 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navRequest?.id]);
   const [categoryFilter, setCategoryFilter] = useState('all'); // 'all' | 'lab' | 'summary' | 'nolab' | 'corporate'
+
+  // Audit log: which day's list was looked at, and filters used.
+  useEffect(() => {
+    if (mode === 'date') track('date_change', { screen: 'reports', details: { date } });
+  }, [date, mode]);
+  useEffect(() => {
+    if (!filterText.trim()) return undefined;
+    const t = setTimeout(() => track('filter_change', { screen: 'reports', details: { summary: `searched “${filterText.trim().slice(0, 60)}”` } }), 1500);
+    return () => clearTimeout(t);
+  }, [filterText]);
+  const firstCategory = useRef(true);
+  useEffect(() => {
+    if (firstCategory.current) {
+      firstCategory.current = false;
+      return;
+    }
+    track('filter_change', { screen: 'reports', details: { summary: `category: ${categoryFilter}` } });
+  }, [categoryFilter]);
   const [toast, setToast] = useState(null);
   const toastTimerRef = useRef(null);
 

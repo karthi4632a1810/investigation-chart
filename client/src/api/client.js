@@ -317,8 +317,9 @@ export function sendTestWhatsApp(message, toNumber) {
   return postJson(`${API_BASE}/assistant/test-whatsapp`, { message, toNumber });
 }
 
-export function askAssistant(messages, context) {
-  return postJson(`${API_BASE}/assistant`, { messages, context });
+/** `chatId` groups one conversation's questions in the audit log. */
+export function askAssistant(messages, context, chatId) {
+  return postJson(`${API_BASE}/assistant`, { messages, context, chatId });
 }
 
 export function defaultDateOnly() {
@@ -403,4 +404,30 @@ export function checkWhatsAppNumber(raw) {
   }
   if (digits.length >= 11 && digits.length <= 15 && !digits.startsWith('91')) return { ok: true, digits };
   return { ok: false, error: `That number has ${digits.length} digits — please check it` };
+}
+
+// ---- Audit log (server: auditService.js) ---------------------------------------
+
+export const fetchAuditSummary = (params) => getJson(`${API_BASE}/audit/summary?${adminParams(params)}`);
+export const fetchAuditEvents = (params) => getJson(`${API_BASE}/audit/events?${adminParams(params)}`);
+export const fetchAuditSessions = (params) => getJson(`${API_BASE}/audit/sessions?${adminParams(params)}`).then((d) => d.sessions);
+export const fetchAuditAiChats = (params) => getJson(`${API_BASE}/audit/ai-chats?${adminParams(params)}`).then((d) => d.chats);
+export const fetchAuditOptions = () => getJson(`${API_BASE}/audit/options`);
+
+export async function downloadAuditExport(params, format) {
+  const res = await apiFetch(`${API_BASE}/audit/export?${adminParams({ ...params, format })}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Export failed');
+  }
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || `audit-log.${format}`;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return name;
 }
