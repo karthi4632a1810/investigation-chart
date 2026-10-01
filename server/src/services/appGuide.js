@@ -209,9 +209,9 @@ To send sooner: ask WATI support to reset or raise the limit (more quota needs t
     keywords: 'user users account accounts add create staff role roles permission permissions access rbac super admin screen read only write edit disable delete reset password hours schedule preset doctor nurse front desk lab viewer',
     text: `The super admin (the login in the server .env) manages everyone on the Users screen:
 - Add user: profile (name, username, designation, department, mobile, email, password — Generate makes one), then a role preset (Admin, Doctor, Nurse / ward staff, Lab staff, Front desk, View only) and adjust.
-- Screens: tick each screen the person may open, then Read only or Read & write. Read & write on Discharge Reports = Check Now and sending WhatsApp; on Lab Finder = sharing on WhatsApp; on WATI Settings = changing mode, number and extra line; on the Monitor = Retry and "Check WATI now". Lab Search is look-up only.
+- Screens: tick each screen the person may open, then View only, or View & send (View & edit on WATI Settings). View & send on Discharge Reports = Check Now and sending WhatsApp; on Lab Finder = sharing on WhatsApp; on the Monitor = Retry and "Check WATI now". View & edit on WATI Settings = changing mode, number and extra line. Lab Search is look-up only.
 - Ask AI: Off, Ask questions, or Ask + send (share / test messages). It only ever shows what the person's screens allow.
-- WhatsApp button on patient cards: on or off (needs Discharge Reports Read & write).
+- WhatsApp button on patient cards: on or off (needs Discharge Reports View & send).
 - Reports shown: Both, Lab report only, or Discharge summary only — also limits what they can send.
 - Access hours: days and a from–to time (India time; overnight works). Outside them they can't sign in and an open session ends.
 - On the list: the switch disables an account; the key sets a new password; the arrow signs them out on every device; the bin deletes. Five wrong passwords lock an account for 15 minutes (the lock icon unlocks it).

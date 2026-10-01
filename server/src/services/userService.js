@@ -27,7 +27,7 @@ export const MIN_PASSWORD_LENGTH = 8;
 
 // ---- Permission model ------------------------------------------------------
 
-/** Screens, in tab order. `write` says what "Read & write" adds on that screen. */
+/** Screens, in tab order. `write` says what the higher level ("View & send" / "View & edit") adds on that screen. */
 export const SCREENS = [
   { id: 'search', label: 'Lab Search', write: null },
   { id: 'reports', label: 'Discharge Reports', write: 'Check for new discharges now and send reports on WhatsApp' },

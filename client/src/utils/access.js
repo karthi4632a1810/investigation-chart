@@ -44,3 +44,8 @@ export function initials(name) {
   const parts = String(name || '?').trim().split(/[\s._-]+/).filter(Boolean);
   return ((parts[0]?.[0] || '?') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
 }
+
+/** How each access level reads on screen: "View only", and per screen what the extra right is. */
+export const VIEW_LABEL = 'View only';
+const WRITE_LABELS = { reports: 'View & send', labFinder: 'View & send', monitor: 'View & send', wati: 'View & edit' };
+export const levelLabel = (screen, level) => (level === 'write' ? WRITE_LABELS[screen] || 'View & edit' : VIEW_LABEL);

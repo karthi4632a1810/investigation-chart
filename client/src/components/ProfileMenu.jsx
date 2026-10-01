@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { changeMyPassword } from '../api/client';
-import { initials } from '../utils/access';
+import { initials, levelLabel } from '../utils/access';
 import { CheckIcon, ClockIcon, KeyIcon, LogoutIcon, ShieldCheckIcon } from './Icons';
 
 const SCREEN_NAMES = { search: 'Lab Search', reports: 'Discharge Reports', labFinder: 'Lab Finder', wati: 'WATI Settings', monitor: 'WhatsApp Monitor' };
-const LEVEL = { read: 'View', write: 'View & change' };
 const AI = { none: 'Off', ask: 'Ask questions', act: 'Ask + send' };
 const DOCS = { both: 'Lab report + summary', lab: 'Lab report only', summary: 'Discharge summary only' };
 
@@ -81,7 +80,7 @@ export default function ProfileMenu({ me, onLogout }) {
                   {screens.map(([id, level]) => (
                     <li key={id}>
                       <span>{SCREEN_NAMES[id]}</span>
-                      <em className={level === 'write' ? 'is-write' : ''}>{LEVEL[level]}</em>
+                      <em className={level === 'write' ? 'is-write' : ''}>{levelLabel(id, level)}</em>
                     </li>
                   ))}
                   <li>

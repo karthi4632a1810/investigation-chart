@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createUser, deleteUser, fetchUsers, resetUserPassword, signOutUserEverywhere, updateUser } from '../api/client';
-import { initials } from '../utils/access';
+import { initials, levelLabel } from '../utils/access';
 import {
   AlertIcon,
   CheckIcon,
@@ -318,7 +318,7 @@ function UserEditor({ model, user, onClose, onSaved }) {
                       <span className="um-check-box">{on && <CheckIcon size={12} />}</span>
                       <span className="um-screen-text">
                         <b>{sc.label}</b>
-                        <small>{sc.write ? `Read & write: ${sc.write.charAt(0).toLowerCase()}${sc.write.slice(1)}` : 'Look-up only — nothing to change here'}</small>
+                        <small>{sc.write ? `${levelLabel(sc.id, 'write')}: ${sc.write.charAt(0).toLowerCase()}${sc.write.slice(1)}` : 'Look-up only — nothing to send or change here'}</small>
                       </span>
                     </label>
                     <Segmented
@@ -327,8 +327,8 @@ function UserEditor({ model, user, onClose, onSaved }) {
                       disabled={!on}
                       onChange={(v) => setScreen(sc.id, v)}
                       options={[
-                        { value: 'read', label: 'Read only' },
-                        { value: 'write', label: 'Read & write', disabled: !sc.write, title: sc.write ? '' : 'Nothing to change on this screen' },
+                        { value: 'read', label: levelLabel(sc.id, 'read') },
+                        { value: 'write', label: sc.write ? levelLabel(sc.id, 'write') : 'View & send', disabled: !sc.write, title: sc.write ? '' : 'Nothing to send or change on this screen' },
                       ]}
                     />
                   </div>
@@ -368,7 +368,7 @@ function UserEditor({ model, user, onClose, onSaved }) {
                 <span>Lets them send a patient's reports on WhatsApp.</span>
                 {whatsappNeedsWrite && (
                   <span className="um-warn">
-                    <AlertIcon size={12} /> Needs Discharge Reports set to Read & write to take effect.
+                    <AlertIcon size={12} /> Needs Discharge Reports set to View &amp; send to take effect.
                   </span>
                 )}
               </div>
@@ -455,7 +455,7 @@ function UserEditor({ model, user, onClose, onSaved }) {
               {tabs.length ? tabs.map((t) => (
                 <span key={t.id} className={`um-tab ${p.screens[t.id] === 'write' ? 'is-write' : ''}`}>
                   {t.label}
-                  <small>{p.screens[t.id] === 'write' ? 'edit' : 'view'}</small>
+                  <small>{p.screens[t.id] === 'write' ? (t.id === 'wati' ? 'edit' : 'send') : 'view'}</small>
                 </span>
               )) : <span className="um-muted">No screens — they couldn't do anything after signing in.</span>}
             </div>
@@ -596,7 +596,7 @@ function AccessChips({ user }) {
     <div className="um-pills">
       {screens.length ? (
         screens.map(([id, v]) => (
-          <span key={id} className={`um-pill ${v === 'write' ? 'is-write' : ''}`} title={v === 'write' ? 'Read & write' : 'Read only'}>
+          <span key={id} className={`um-pill ${v === 'write' ? 'is-write' : ''}`} title={levelLabel(id, v)}>
             {SCREEN_SHORT[id]}
           </span>
         ))
