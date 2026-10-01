@@ -431,3 +431,9 @@ export async function downloadAuditExport(params, format) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
   return name;
 }
+
+/** A file Ask AI made from this chat's results. */
+export function chatExportUrl(file, download = false) {
+  const name = encodeURIComponent(file.filename || `ask-ai-results.${file.format}`);
+  return `${API_BASE}/assistant/export/${file.day}/${file.id}.${file.format}?name=${name}${download ? '&download=1' : ''}`;
+}

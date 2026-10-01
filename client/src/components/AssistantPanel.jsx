@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
   EXPORT_LABELS,
   askAssistant,
+  chatExportUrl,
   checkWhatsAppNumber,
   downloadDischargeExport,
   downloadLabResults,
@@ -397,6 +398,190 @@ function DischargeReportBlock({ block, onNavigate }) {
   );
 }
 
+// ---- Patient details, journey, comparison, files -------------------------------
+
+const CORE_FIELDS = 12;
+
+function PatientDetailsBlock({ block }) {
+  const [all, setAll] = useState(false);
+  const fields = all ? block.fields : block.fields.slice(0, CORE_FIELDS);
+  const abnormal = block.labs?.abnormal || [];
+  return (
+    <div className="ai-block ai-details">
+      <div className="ai-block-title">{block.title}</div>
+      <dl className="ai-kv">
+        {fields.map((f) => (
+          <div key={f.label}>
+            <dt>{f.label}</dt>
+            <dd>{f.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {block.fields.length > CORE_FIELDS && (
+        <button type="button" className="ai-link" onClick={() => setAll((v) => !v)}>
+          {all ? 'Show fewer' : `Show all ${block.fields.length} details`}
+        </button>
+      )}
+      <div className="ai-wa-docs">
+        <em>Lab report: {block.reports?.labReport}</em>
+        <em>Summary: {block.reports?.dischargeSummary}</em>
+        {(block.whatsapp || []).map((w) => (
+          <em key={w.document} className={w.status === 'Read' ? 'is-read' : /Failed|Not on/.test(w.status) ? 'is-failed' : ''}>
+            WhatsApp {w.document}: {w.status}
+          </em>
+        ))}
+      </div>
+      {abnormal.length > 0 && (
+        <div className="ai-tests">
+          Out of range ({block.labs.abnormalTotal}):{' '}
+          {abnormal.slice(0, 8).map((l) => `${l.test} ${l.value} ${l.flag === 'high' ? '↑' : '↓'}`).join(' · ')}
+          {block.labs.abnormalTotal > 8 ? ' …' : ''}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const LANES = {
+  stay: { label: 'Stay', color: '#2563eb' },
+  lab: { label: 'Lab', color: '#0d9488' },
+  reports: { label: 'Reports', color: '#7c3aed' },
+  whatsapp: { label: 'WhatsApp', color: '#16a34a' },
+  staff: { label: 'Staff', color: '#64748b' },
+};
+const TONE_COLOR = { warn: '#d97706', bad: '#dc2626' };
+
+/** A patient's journey as a vertical flowchart. */
+function JourneyBlock({ block }) {
+  const [all, setAll] = useState(false);
+  const steps = all ? block.steps : block.steps.slice(0, 14);
+  return (
+    <div className="ai-block ai-journey">
+      <div className="ai-block-title">{block.title}</div>
+      <div className="ai-lanes">
+        {Object.entries(LANES).map(([k, l]) => (
+          <span key={k}>
+            <i style={{ background: l.color }} /> {l.label}
+          </span>
+        ))}
+      </div>
+      <ol className="ai-flow">
+        {steps.map((st, i) => (
+          <li key={i}>
+            <span className="ai-flow-dot" style={{ background: TONE_COLOR[st.tone] || LANES[st.lane]?.color || '#64748b' }} />
+            <div className="ai-flow-body">
+              <div className="ai-flow-time">{formatIst(st.at)}</div>
+              <div className="ai-flow-title">{st.title}</div>
+              {st.detail && <div className="ai-flow-detail">{st.detail}</div>}
+            </div>
+          </li>
+        ))}
+      </ol>
+      {block.steps.length > 14 && (
+        <button type="button" className="ai-link" onClick={() => setAll((v) => !v)}>
+          {all ? 'Show fewer' : `Show all ${block.steps.length} steps`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+const flagClass = (v) => (v?.flag === 'high' || v?.flag === 'low' ? `is-${v.flag}` : '');
+
+/** Two patients (or two dates) side by side. */
+function CompareBlock({ block }) {
+  const [onlyChanged, setOnlyChanged] = useState(false);
+  const rows = onlyChanged ? block.labs.filter((l) => l.changed || !l.a || !l.b) : block.labs;
+  const sum = block.summary || {};
+  return (
+    <div className="ai-block ai-compare">
+      <div className="ai-block-title">{block.title}</div>
+      <div className="ai-wa-totals">
+        <span><b>{sum.testsCompared}</b> tests compared</span>
+        <span className={sum.changed ? 'is-pending' : ''}><b>{sum.changed}</b> changed</span>
+        <span><b>{sum.abnormalA}</b> out of range (A)</span>
+        <span><b>{sum.abnormalB}</b> out of range (B)</span>
+      </div>
+      {block.demographics?.length > 0 && (
+        <div className="ai-table-wrap">
+          <table className="ai-table ai-cmp">
+            <thead>
+              <tr>
+                <th />
+                <th>A · {block.labelA}</th>
+                <th>B · {block.labelB}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {block.demographics.map((d) => (
+                <tr key={d.label} className={d.a !== d.b ? 'is-diff' : ''}>
+                  <td className="ai-cell-sub">{d.label}</td>
+                  <td>{d.a || '—'}</td>
+                  <td>{d.b || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <label className="ai-cmp-toggle">
+        <input type="checkbox" checked={onlyChanged} onChange={(e) => setOnlyChanged(e.target.checked)} /> Only changed or missing
+      </label>
+      <div className="ai-table-wrap ai-cmp-scroll">
+        <table className="ai-table ai-cmp">
+          <thead>
+            <tr>
+              <th>Test</th>
+              <th>A{block.samePatient ? ` · ${block.labelA.split(' · ').pop()}` : ''}</th>
+              <th>B{block.samePatient ? ` · ${block.labelB.split(' · ').pop()}` : ''}</th>
+              <th>Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((l) => (
+              <tr key={`${l.section}|${l.test}`} className={l.changed ? 'is-diff' : ''}>
+                <td>
+                  <div className="ai-cell-name">{l.test}</div>
+                  <div className="ai-cell-sub">{l.range}</div>
+                </td>
+                <td className={`ai-value ${flagClass(l.a)}`}>{l.a ? l.a.value : '—'}</td>
+                <td className={`ai-value ${flagClass(l.b)}`}>{l.b ? l.b.value : '—'}</td>
+                <td className="ai-cell-sub">{l.diff === null || l.diff === undefined ? '' : `${l.diff > 0 ? '▲ +' : l.diff < 0 ? '▼ ' : ''}${l.diff}`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const KIND = { pdf: 'PDF', xlsx: 'Excel', csv: 'CSV' };
+
+function ChatExportBlock({ block }) {
+  return (
+    <div className="ai-block ai-file">
+      <span className={`ai-file-icon is-${block.format}`}>{KIND[block.format]}</span>
+      <div className="ai-file-text">
+        <b>{block.filename}</b>
+        <span>
+          {block.results.map((n) => `#${n}`).join(', ')} · {Math.max(1, Math.round(block.size / 1024))} KB
+        </span>
+      </div>
+      <div className="ai-file-actions">
+        {block.format === 'pdf' && (
+          <a className="xs-chip is-pdf" href={chatExportUrl(block)} target="_blank" rel="noreferrer">
+            <ExternalLinkIcon size={13} /> Open
+          </a>
+        )}
+        <a className="xs-chip is-xlsx" href={chatExportUrl(block, true)}>
+          <FilePdfIcon size={13} /> Download
+        </a>
+      </div>
+    </div>
+  );
+}
+
 // ---- Lab reports looked up in the EMR (OP patients too) ------------------------
 
 const STATE_TEXT = {
@@ -635,29 +820,61 @@ function TestMessageBlock({ block, onDone }) {
 }
 
 function Blocks({ blocks, onNavigate, onTestDone }) {
+  // Numbered results (#1, #2 …) — "put #1 and #2 in a PDF".
+  return blocks.map((b, i) =>
+    b.n ? (
+      <div key={i} className="ai-numbered">
+        <span className="ai-num" title={`Result #${b.n} — ask e.g. "put #${b.n} in a PDF"`}>#{b.n}</span>
+        <OneBlock b={b} onNavigate={onNavigate} onTestDone={onTestDone} />
+      </div>
+    ) : (
+      <OneBlock key={i} b={b} onNavigate={onNavigate} onTestDone={onTestDone} />
+    ),
+  );
+}
+
+function OneBlock({ b, onNavigate, onTestDone }) {
   const bar = useContext(BarAccess);
-  return blocks.map((b, i) => {
-    if (b.type === 'labLookup') return <LabLookupBlock key={i} block={b} canSend={bar.allowShare} />;
-    if (b.type === 'lookupShare') return <LookupShareBlock key={i} block={b} />;
-    if (b.type === 'testMessage') return <TestMessageBlock key={i} block={b} onDone={onTestDone} />;
-    if (b.type === 'testDraft') return null;
-    if (b.type === 'status') return <StatusBlock key={i} block={b} onNavigate={onNavigate} />;
-    if (b.type === 'whatsappReport') return <WhatsAppReportBlock key={i} block={b} onNavigate={onNavigate} />;
-    if (b.type === 'dischargeReport') return <DischargeReportBlock key={i} block={b} onNavigate={onNavigate} />;
-    if (b.type === 'patients') return <PatientsBlock key={i} block={b} onNavigate={onNavigate} />;
-    if (b.type === 'labResults') return <LabResultsBlock key={i} block={b} onNavigate={onNavigate} />;
-    if (b.type === 'download') return <DownloadBlock key={i} block={b} />;
-    if (b.type === 'share') return <ShareBlock key={i} block={b} />;
-    if (b.type === 'navigate')
+  switch (b.type) {
+    case 'patientDetails':
+      return <PatientDetailsBlock block={b} />;
+    case 'journey':
+      return <JourneyBlock block={b} />;
+    case 'compare':
+      return <CompareBlock block={b} />;
+    case 'chatExport':
+      return <ChatExportBlock block={b} />;
+    case 'labLookup':
+      return <LabLookupBlock block={b} canSend={bar.allowShare} />;
+    case 'lookupShare':
+      return <LookupShareBlock block={b} />;
+    case 'testMessage':
+      return <TestMessageBlock block={b} onDone={onTestDone} />;
+    case 'status':
+      return <StatusBlock block={b} onNavigate={onNavigate} />;
+    case 'whatsappReport':
+      return <WhatsAppReportBlock block={b} onNavigate={onNavigate} />;
+    case 'dischargeReport':
+      return <DischargeReportBlock block={b} onNavigate={onNavigate} />;
+    case 'patients':
+      return <PatientsBlock block={b} onNavigate={onNavigate} />;
+    case 'labResults':
+      return <LabResultsBlock block={b} onNavigate={onNavigate} />;
+    case 'download':
+      return <DownloadBlock block={b} />;
+    case 'share':
+      return <ShareBlock block={b} />;
+    case 'navigate':
       return (
-        <div key={i} className="ai-nav-note">
+        <div className="ai-nav-note">
           Opened {SCREEN_NAMES[b.view] || 'screen'}
           {b.date ? ` · ${isoToDmy(b.date)}` : ''}
           {b.filter ? ` · “${b.filter}”` : ''}
         </div>
       );
-    return null;
-  });
+    default:
+      return null; // testDraft and anything unknown
+  }
 }
 
 export default function AssistantPanel({ onNavigate, view, access }) {

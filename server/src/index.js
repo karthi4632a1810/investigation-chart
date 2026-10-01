@@ -52,6 +52,7 @@ import { runAssistant } from './services/assistantService.js';
 import { buildDischargeExport, DISCHARGE_EXPORT_FORMATS } from './services/dischargeReportQuery.js';
 import { sendTestWhatsApp } from './services/whatsappTestService.js';
 import { lookupKey, sendLookupWhatsApp } from './services/labLookupService.js';
+import { chatExportStream, EXPORT_TYPES as CHAT_EXPORT_TYPES } from './services/chatResultsService.js';
 import { checkMessageStatus } from './services/whatsappLogService.js';
 import {
   getPollState,
@@ -686,7 +687,13 @@ app.get('/api/detail/:orderid', async (req, res) => {
     try {
       res.json({
         ok: true,
-        ...(await runAssistant({ messages, context: req.body?.context || {}, user: getSessionUser(req), access: effectivePermissions(req.user) })),
+        ...(await runAssistant({
+          messages,
+          context: req.body?.context || {},
+          user: getSessionUser(req),
+          access: effectivePermissions(req.user),
+          chatId: req.body?.chatId,
+        })),
       });
     } catch (error) {
       res.status(502).json({ ok: false, error: error.message });
@@ -725,6 +732,22 @@ app.get('/api/detail/:orderid', async (req, res) => {
       pdf.stream.pipe(res);
     } catch (error) {
       res.status(503).json({ ok: false, error: `Reports store unavailable: ${error.message}` });
+    }
+  });
+
+  /** A file Ask AI made from this chat's results (chatResultsService.js). */
+  app.get('/api/assistant/export/:day/:id.:ext', async (req, res) => {
+    try {
+      const file = await chatExportStream(req.params.day, req.params.id, req.params.ext);
+      if (!file) return res.status(404).json({ ok: false, error: 'That file is no longer available — ask again' });
+      const name = String(req.query.name || `ask-ai-results.${req.params.ext}`).replace(/[^\w.-]+/g, '-');
+      res.setHeader('Content-Type', CHAT_EXPORT_TYPES[req.params.ext]);
+      res.setHeader('Content-Length', file.size);
+      res.setHeader('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${name}"`);
+      file.stream.on('error', () => res.destroy());
+      file.stream.pipe(res);
+    } catch (error) {
+      res.status(503).json({ ok: false, error: error.message });
     }
   });
 

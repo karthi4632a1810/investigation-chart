@@ -81,8 +81,23 @@ function isRealPatient(row) {
  * advanced search screen filters on straight from the raw discharge-list row —
  * captured once at generation time rather than re-fetched from the EMR later.
  */
+/**
+ * Every non-empty column of the EMR discharge-list row (address, city,
+ * relation, diagnosis, referral doctor, duration…) — kept with the record so
+ * Ask AI can answer "anything about this patient" (patientInsightService.js).
+ */
+export function emrDetails(row = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries(row)) {
+    const text = stripHtml(value);
+    if (text !== '' && text !== '-' && text !== '--' && String(key).trim()) out[String(key).trim()] = text.slice(0, 300);
+  }
+  return out;
+}
+
 function buildBaselineFields(row) {
   return {
+    emr: emrDetails(row),
     ipNo: row['IP NO']?.trim(),
     regNo: row['REG NO'] || '',
     name: stripHtml(row['PATIENT NAME']),

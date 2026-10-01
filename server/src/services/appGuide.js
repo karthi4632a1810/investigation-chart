@@ -21,7 +21,7 @@ Screens: Lab Search, Discharge Reports, Lab Finder, WATI Settings, Monitor (What
   {
     id: 'login',
     title: 'Login screen',
-    keywords: 'login sign in password username lock screen logout session expired log out',
+    keywords: 'login sign in password username lock screen logout session expired log out forgot reset',
     text: `The portal opens on a full-screen lock screen: clock, hospital name, and the Staff sign in card (username + password, eye icon shows the password). A session lasts 12 hours; after that, or after Logout (top right), you sign in again. "Please log in again" means the session expired.`,
   },
   {
@@ -250,6 +250,17 @@ Views: Timeline (click a row for details, a person to see only them, "Show this 
 - WhatsApp report (needs WhatsApp Monitor access): e.g. "today 10 am to 2 pm WhatsApp report patient and message wise", "failed messages yesterday", "WhatsApp sent between 6 pm and 9 pm". Patient-wise and Message-wise tabs; download Excel, PDF, CSV or JSON; "Open in WhatsApp Monitor" opens the Monitor with the same filters. By default it counts patients by discharge date / time; say "sent" to count by send time.
 - Discharge report (needs Discharge Reports access): e.g. "patients discharged today 10 am to 2 pm", "ENT discharges this week with No Summary", "Dr. Samson's patients yesterday not sent on WhatsApp". Totals, departments, each patient's lab report / summary / WhatsApp status; download Excel, PDF or CSV.
 Times are India time; "8 pm to 8 am" means overnight from the evening before.`,
+  },
+  {
+    id: 'ai-patient-answers',
+    title: 'Ask AI: patient details, journey, compare, files',
+    keywords: 'details whatsapp number mobile age address discharge time format journey flowchart timeline compare comparison two patients two reports change pdf csv excel group results combine file number #1 #2',
+    text: `Ask AI answers with the patient's own data:
+- Details: "WhatsApp number and discharge time of IP07028684 in 12-hour format", "age and address of UHID 6176487" — mobile, age, gender, address, city, relation, email, diagnosis, admission / discharge date and time, length of stay, doctor, ward, bed, reports, WhatsApp status, out-of-range lab values (from the EMR discharge list).
+- Journey: "patient journey of IP…" — a flowchart from admission, lab test days and discharge to reports made, WhatsApp sent / delivered / read and staff actions.
+- Compare: "compare IP… and IP…" (two patients side by side) or "compare the lab reports of IP… first vs last day" — every test with both values and the change.
+- Files: every table or card in a chat is numbered #1, #2 …; ask "put #1 and #2 in one PDF and #3 in a CSV", "everything in one PDF", "first two in Excel" (add "with answers" to include the questions and replies).
+Patient details are sent to the AI service to answer (AI_SHARE_PATIENT_DATA; ABHA ID and religion never are).`,
   },
   {
     id: 'exports',

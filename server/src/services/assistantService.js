@@ -29,6 +29,14 @@ import { failureCategory, getPollState, retryQueueFacts, whatsappReportData, wha
 import { dischargeReport } from './dischargeReportQuery.js';
 import { cleanLookupId, lookupLabReport } from './labLookupService.js';
 import { checkWhatsAppNumber } from './watiService.js';
+import { comparePatients, detailsForModel, patientDetails, patientJourney } from './patientInsightService.js';
+import { buildChatExport, listResults, numberResult, saveReply } from './chatResultsService.js';
+
+// Patient details (name, age, mobile, address, lab values…) go to the AI
+// service so it can answer with them — "her WhatsApp number", "discharge time
+// in 12-hour format", "compare these two". AI_SHARE_PATIENT_DATA=off keeps them
+// on screen only (the model then just gets counts). ABHA ID and religion are never sent.
+const SHARE = !/^(off|false|0|no)$/i.test(String(process.env.AI_SHARE_PATIENT_DATA || 'on'));
 import { cleanTestMessage, cleanTestNumber, formatNumber, sendTestWhatsApp } from './whatsappTestService.js';
 import { FULL_PERMISSIONS } from './userService.js';
 
@@ -107,6 +115,10 @@ const TOOL_ACCESS = {
   offer_whatsapp_share: (a) => a.ai === 'act',
   send_test_whatsapp: (a) => a.ai === 'act',
   lab_report_lookup: (a) => a.ai !== 'none' && canRead(a, 'search'),
+  patient_details: (a) => canRead(a, 'reports'),
+  patient_journey: (a) => canRead(a, 'reports'),
+  compare_patients: (a) => canRead(a, 'reports'),
+  export_results: () => true,
   offer_lookup_whatsapp: (a) => a.ai === 'act' && canRead(a, 'search'),
 };
 const SCREEN_OF = { discharge_reports: 'reports', lab_finder: 'labFinder', lab_search: 'search', wati_settings: 'wati', whatsapp_monitor: 'monitor' };
@@ -131,6 +143,9 @@ function describeContext(context) {
   const lines = [];
   const access = describeAccess(context.access);
   if (access) lines.push(access);
+  if (context.results?.length) {
+    lines.push(`- Results so far in this chat: ${context.results.map((r) => `#${r.n} ${r.title}`).join('; ')}.`);
+  }
   if (context.view && SCREEN_LABELS[context.view]) {
     lines.push(`- The user is on the ${SCREEN_LABELS[context.view]} screen. "This screen", "here" etc. mean it.`);
   }
@@ -167,7 +182,14 @@ Rules:
 - Use the tools for anything about patients, reports or lab results. Never invent names, IP numbers, values or counts.
 - When the user asks for a specific patient's report, lab report or discharge summary (by IP number, UHID or name), call find_patient — it shows their reports with download and WhatsApp options. Don't send them to Lab Search for that.
 - If find_patient finds nothing for a UHID or IP number (often an OP / out-patient, who isn't in the discharge data), call lab_report_lookup with that number to search the EMR lab directly (last 30 days unless they give dates). OP patients exist only here in the chat — never say they'll appear in Discharge Reports. Once found, offer: open or download the PDF, or send it on WhatsApp. For WhatsApp ask "Which WhatsApp number should I send it to?", then call offer_lookup_whatsapp; if it says the number is wrong (e.g. only 9 digits), tell them exactly that and ask for the correct number. They press Send on the card, which then shows whether it was sent, not on WhatsApp, delivered or read.
-- Tool results are shown to the user on screen; you only get counts. Don't repeat patient details — say briefly what was found and that it's shown below.
+${SHARE
+    ? `- Tool results come to you with the patient data, and also appear on screen as numbered results (#1, #2 …). Answer the question itself from the data — a mobile number, a discharge time, an age, an address, a value — formatted the way the user asks (e.g. "29/09/2026, 12:24 PM", 12-hour time, "3 days 4 hours"). Don't paste long lists; the table is on screen.
+- For anything about one discharged patient (mobile / WhatsApp number, age, gender, address, city, relation, email, diagnosis, admission or discharge date and time, length of stay, doctor, ward, bed, reports, WhatsApp status, out-of-range lab values) call patient_details.`
+    : "- Tool results are shown to the user on screen; you only get counts. Don't repeat patient details — say briefly what was found and that it's shown below."}
+- Patient journey / timeline / flowchart / "what happened to this patient": call patient_journey and describe it in order with dates and times.
+- Compare two patients, or one patient's lab values on two dates ("compare this report with the earlier one", "how did her values change"): call compare_patients, then explain the main differences with numbers — which values rose or fell, which are out of range.
+- Any other question about patients or data: work out which tools give the data, call them (several if needed), then answer with the numbers. Never say you can't when a tool can get it.
+- Each result on screen is numbered #1, #2 … in this chat (listed above). To make files: call export_results with the numbers (empty = all) and a format — pdf, xlsx (Excel) or csv. Several files = several calls (e.g. #1 and #2 as one PDF, #3 as CSV). include_answers adds the questions and your answers. "Everything in one PDF" = all results, pdf.
 - For lab questions use search_lab_results. Qualitative results (negative, positive, nil, trace, reactive) go in "value"; "high"/"low"/"abnormal" go in "status"; numbers in "min"/"max". If you're unsure of the test name, or the search finds nothing, call list_lab_tests and ask which test they mean.
 - After showing results, offer the options: download as PDF, Excel, Word or CSV, or share on WhatsApp. When they pick a format, call offer_download. When they want WhatsApp, ask for the number if they haven't given it, then call offer_whatsapp_share. Never say a message was sent — the user confirms with the Send button.
 - To take the user to a screen, call open_screen.
@@ -300,6 +322,57 @@ const TOOLS = [
     },
   },
   {
+    name: 'patient_details',
+    description:
+      'Everything about one discharged patient: mobile / WhatsApp number, age, gender, address, city, district, relation, email, diagnosis, admission and discharge date-time, length of stay, doctor, ward, bed, patient type, reports, WhatsApp status, out-of-range lab values. Shows a details card.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'IP number, UHID or name' },
+        date: { type: 'string', description: 'Optional discharge date YYYY-MM-DD (if they had several stays)' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'patient_journey',
+    description: "A patient's journey as a timeline / flowchart: admission, lab test days (with out-of-range values), discharge, reports made, WhatsApp sent / delivered / read, staff actions.",
+    parameters: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'IP number, UHID or name' }, date: { type: 'string', description: 'Optional discharge date YYYY-MM-DD' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'compare_patients',
+    description:
+      "Compare two patients side by side (a and b), or one patient's lab values on two dates (only a, plus a_date / b_date; default first vs last lab day). Lab values matched test by test with the change, plus demographics for two patients.",
+    parameters: {
+      type: 'object',
+      properties: {
+        a: { type: 'string', description: 'IP number, UHID or name' },
+        b: { type: 'string', description: 'Second patient (leave empty to compare one patient over time)' },
+        a_date: { type: 'string', description: 'Optional lab result date for a, YYYY-MM-DD' },
+        b_date: { type: 'string', description: 'Optional lab result date for b, YYYY-MM-DD' },
+      },
+      required: ['a'],
+    },
+  },
+  {
+    name: 'export_results',
+    description: 'Make one downloadable file from numbered results of this chat (#1, #2 …): pdf, xlsx (Excel) or csv. Empty results = all of them.',
+    parameters: {
+      type: 'object',
+      properties: {
+        results: { type: 'array', items: { type: 'integer' }, description: 'Result numbers, e.g. [1, 2]; empty for all' },
+        format: { type: 'string', enum: ['pdf', 'xlsx', 'csv'] },
+        title: { type: 'string', description: 'Optional file title' },
+        include_answers: { type: 'boolean', description: 'Also include each question and the answer' },
+      },
+      required: ['format'],
+    },
+  },
+  {
     name: 'lab_report_lookup',
     description:
       "Find a patient's lab report straight in the EMR lab by UHID or IP number — including OP (out-patient) patients who aren't in the discharge data. Makes the lab report PDF and shows it with open / download / WhatsApp options. Default range: the last 30 days.",
@@ -390,6 +463,21 @@ const patientFacts = (r) => ({
   dischargeDate: r.date,
   hasLabReport: r.dateCount !== undefined,
   hasDischargeSummary: Boolean(r.hasSummary && !r.summaryDataMissing),
+  ...(SHARE
+    ? {
+        name: r.name,
+        uhid: r.regNo,
+        age: r.age,
+        gender: r.gender,
+        mobile: r.mobile,
+        department: r.department,
+        doctor: r.doctor,
+        ward: r.ward,
+        admitted: r.admissionDate,
+        discharged: r.dischargeDate,
+        dischargeType: r.dischargeType,
+      }
+    : {}),
 });
 
 async function findPatientRecord(ipNo, date) {
@@ -615,6 +703,10 @@ const handlers = {
     if (!hasCriteria(query)) return { forModel: { error: 'Give at least a test name, result value or patient' } };
     const search = await searchLabResults(query);
     const forModel = { total: search.total, patients: search.patients, matchedTests: search.matchedTests.slice(0, 12) };
+    if (SHARE && search.total) {
+      forModel.rows = search.rows.slice(0, 80).map((r) => `${r.name} ${r.ipNo} | ${r.test} = ${r.value} (${r.range || 'no range'}) ${r.status || ''} | ${r.resultDate}`);
+      if (search.total > 80) forModel.note = `first 80 of ${search.total} rows`;
+    }
     if (!search.total) {
       forModel.coverage = await labResultsCoverage();
       if (query.test) forModel.similarTests = (await listLabTests(query.test.split(/\s+/).pop(), 10)).map((t) => (t.section ? `${t.section} › ${t.test}` : t.test));
@@ -762,6 +854,58 @@ const handlers = {
         total: report.rows.length,
       },
     };
+  },
+
+  async patient_details({ id, date }) {
+    const d = await patientDetails(id, DATE_RE.test(date || '') ? date : undefined);
+    if (!d.found) return { forModel: { found: false, hint: 'Not in the discharge data — for an OP patient, use lab_report_lookup with the UHID.' } };
+    return {
+      forModel: SHARE ? { ...detailsForModel(d), record: undefined } : { found: true, ipNo: d.record.ipNo, dischargeDate: d.record.date, shownOnScreen: true },
+      block: { type: 'patientDetails', title: `${d.record.name} · ${d.record.ipNo}`, ...d },
+    };
+  },
+
+  async patient_journey({ id, date }) {
+    const j = await patientJourney(id, DATE_RE.test(date || '') ? date : undefined);
+    if (!j.found) return { forModel: { found: false, hint: 'Not in the discharge data.' } };
+    return {
+      forModel: SHARE
+        ? { patient: `${j.record.name} (${j.record.ipNo})`, steps: j.steps.map((st) => `${istTime(st.at)} · ${st.lane} · ${st.title}${st.detail ? ` — ${st.detail}` : ''}`) }
+        : { steps: j.steps.length, shownOnScreen: true },
+      block: { type: 'journey', title: `Journey · ${j.record.name} (${j.record.ipNo})`, ...j },
+    };
+  },
+
+  async compare_patients({ a, b, a_date, b_date }) {
+    const r = await comparePatients({ a, b, dateA: a_date, dateB: b_date });
+    if (!r.found) return { forModel: { found: false, notFound: r.missing } };
+    const both = r.labs.filter((l) => l.a && l.b);
+    return {
+      forModel: SHARE
+        ? {
+            a: r.labelA,
+            b: r.labelB,
+            demographics: r.demographics,
+            summary: r.summary,
+            labs: both.slice(0, 80).map((l) => `${l.test}: ${l.a.value}${l.a.flag && l.a.flag !== 'normal' ? ` ${l.a.flag}` : ''} → ${l.b.value}${l.b.flag && l.b.flag !== 'normal' ? ` ${l.b.flag}` : ''}${l.diff !== null ? ` (${l.diff > 0 ? '+' : ''}${l.diff})` : ''} [${l.range}]`),
+            labDays: r.days,
+          }
+        : { summary: r.summary, shownOnScreen: true },
+      block: { type: 'compare', title: `Compare · ${r.labelA} vs ${r.labelB}`, ...r },
+    };
+  },
+
+  async export_results({ results, format, title, include_answers }, context) {
+    if (!context.chatId) return { forModel: { error: 'This chat has no saved results yet.' } };
+    const numbers = Array.isArray(results) ? results.map(Number).filter(Number.isInteger) : [];
+    const file = await buildChatExport({
+      chatId: context.chatId,
+      numbers,
+      format: ['pdf', 'xlsx', 'csv'].includes(format) ? format : 'pdf',
+      title: title ? String(title).slice(0, 80) : undefined,
+      withAnswers: Boolean(include_answers),
+    });
+    return { forModel: { ready: true, file: file.filename, results: file.results }, block: { type: 'chatExport', ...file } };
   },
 
   async lab_report_lookup({ id, from, to }) {
@@ -1068,7 +1212,8 @@ async function ruleBasedAnswer(messages, ctx) {
 
   // WhatsApp share with a number
   const phone = /(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}\b/.exec(text)?.[0];
-  if (!statusQuestion && /whats\s*app|share|send/i.test(text) && (ctx.lastLabQuery || ctx.lastPatient || /\bip\s*\d/i.test(text))) {
+  // Only an explicit "send / share / forward" — "give me the WhatsApp number of IP…" is a question.
+  if (!statusQuestion && /\b(send|share|forward)\b/i.test(text) && (ctx.lastLabQuery || ctx.lastPatient || /\bip\s*\d/i.test(text))) {
     const ipNo = /\bip\s*0?\d{6,}\b/i.exec(text)?.[0]?.replace(/\s+/g, '').toUpperCase();
     const target = ipNo || (!ctx.lastLabQuery && ctx.lastPatient) ? 'patient' : 'lab_results';
     const r = await run('offer_whatsapp_share', { target, to_number: phone, ip_no: ipNo });
@@ -1087,6 +1232,89 @@ async function ruleBasedAnswer(messages, ctx) {
   // A specific patient by IP number or UHID
   const ip = /\bip\s*0?\d{6,}\b/i.exec(text)?.[0]?.replace(/\s+/g, '').toUpperCase();
   const aboutWhatsApp = /whats\s*app|wati|message|tick|deliver|\bread\b|\bsent\b|sending|429|quota|usage limit|webhook/i.test(text);
+  const pid = ip || /\b(?:uhid|reg(?:istration)?\s*(?:no|number)?|op)\D{0,4}(\d{5,})/i.exec(text)?.[1] || /\b(\d{6,9})\b/.exec(text)?.[1] || null;
+
+  // A file of earlier results: "all results in one pdf", "#1 and #2 as csv", "first two in excel"
+  const fileFormat = /\bpdf\b/i.test(text) ? 'pdf' : /\b(excel|xlsx|xls)\b/i.test(text) ? 'xlsx' : /\bcsv\b/i.test(text) ? 'csv' : null;
+  if (fileFormat && ctx.results?.length && /#\s*\d|\ball\b|result|everything|above|these|those|combine|group|single|first|last|both/i.test(text)) {
+    let numbers = [...text.matchAll(/#\s*(\d+)/g)].map((m) => Number(m[1]));
+    const firstN = /\bfirst\s+(two|2|three|3|four|4)\b/i.exec(text);
+    if (!numbers.length && firstN) numbers = ctx.results.slice(0, { two: 2, three: 3, four: 4 }[firstN[1].toLowerCase()] || Number(firstN[1])).map((r) => r.n);
+    const asFormat = (w) => ({ excel: 'xlsx', xls: 'xlsx', xlsx: 'xlsx' })[w.toLowerCase()] || w.toLowerCase();
+    const formats = [...new Set([...text.matchAll(/\b(pdf|excel|xlsx|xls|csv)\b/gi)].map((m) => asFormat(m[1])))];
+    const withAnswers = /answer|question|chat/i.test(text);
+    const label = (f) => (f === 'xlsx' ? 'Excel' : f.toUpperCase());
+    try {
+      // "#1 and #2 in a PDF and the rest in a CSV" — two files.
+      if (formats.length >= 2 && numbers.length && /\b(rest|remaining|others?|other results)\b/i.test(text)) {
+        const rest = ctx.results.map((r) => r.n).filter((n) => !numbers.includes(n));
+        const a = await run('export_results', { results: numbers, format: formats[0], include_answers: withAnswers });
+        const parts = [`${label(formats[0])} with ${a.results.map((n) => `#${n}`).join(', ')}`];
+        if (rest.length) {
+          const b = await run('export_results', { results: rest, format: formats[1], include_answers: withAnswers });
+          parts.push(`${label(formats[1])} with ${b.results.map((n) => `#${n}`).join(', ')}`);
+        }
+        return { reply: `Ready below: ${parts.join(' and ')}.`, blocks };
+      }
+      const r = await run('export_results', { results: numbers, format: fileFormat, include_answers: withAnswers });
+      return { reply: `Your ${label(fileFormat)} file with ${r.results.map((n) => `#${n}`).join(', ')} is ready below.`, blocks };
+    } catch (error) {
+      if (error instanceof NoAccessError) throw error;
+      return { reply: error.message, blocks };
+    }
+  }
+
+  // Journey / flowchart of one patient
+  if (pid && /journey|flow\s*chart|timeline|what happened/i.test(text)) {
+    const r = await run('patient_journey', { id: pid });
+    return { reply: r.found === false ? `${pid} isn't in the discharge data.` : `Here is the journey of ${pid}, step by step.`, blocks };
+  }
+
+  // Compare two patients, or one patient over time
+  if (/compare|versus|\bvs\b|difference|changed/i.test(text)) {
+    const ids = [...text.matchAll(/\bip\s*0?\d{6,}\b|\b\d{6,9}\b/gi)].map((m) => m[0].replace(/\s+/g, '').toUpperCase());
+    if (ids.length) {
+      const r = await run('compare_patients', { a: ids[0], b: ids[1] });
+      if (r.found === false) return { reply: `I couldn't find ${r.notFound} in the discharge data.`, blocks };
+      const sum = r.summary;
+      return {
+        reply: `Compared ${sum.testsCompared} lab tests — ${sum.changed} changed; out of range: ${sum.abnormalA} in the first, ${sum.abnormalB} in the second. The side-by-side table is below.`,
+        blocks,
+      };
+    }
+  }
+
+  // Details of one patient: "WhatsApp number of IP…", "discharge time", "age", "address"
+  const DETAIL_WORDS = [
+    [/whats\s*app\s*(no|number)/i, 'WhatsApp No'],
+    [/mobile|phone|contact|\bnumber\b/i, 'Mobile'],
+    [/\bage\b/i, 'Age'],
+    [/gender|\bsex\b/i, 'Gender'],
+    [/address/i, 'ADDRESS'],
+    [/city|town|district|state|village|area/i, 'City'],
+    [/discharg\w*\s*(time|date|at|on)|when.*discharg/i, 'Discharged'],
+    [/admi(t|ssion)/i, 'Admitted'],
+    [/length of stay|how long|\bstay\b|duration/i, 'Length of stay'],
+    [/diagnos/i, 'IP_Diagnosis'],
+    [/doctor|consultant/i, 'Doctor'],
+    [/\bward\b|\bbed\b/i, 'Ward'],
+    [/email/i, 'EMAIL'],
+    [/relation|father|husband|mother|wife|guardian/i, 'RELATION NAME'],
+  ];
+  const asked = DETAIL_WORDS.filter(([re]) => re.test(text)).map(([, label]) => label);
+  if (pid && (asked.length || /details|about|info/i.test(text)) && !/lab\s*report|summary\s*pdf|\bpdf\b/i.test(text)) {
+    const r = await run('patient_details', { id: pid });
+    if (r.found === false) return { reply: `${pid} isn't in the discharge data${ctx.allowedTools?.has('lab_report_lookup') ? ' — for an OP patient ask for their lab report by UHID' : ''}.`, blocks };
+    if (r.fields && asked.length) {
+      const pick = (label) => r.fields.find((f) => f.label === label || (label === 'City' && ['City', 'District', 'State', 'AREA / VILLAGE'].includes(f.label)));
+      const answers = [...new Set(asked)].map((label) => {
+        const f = label === 'Ward' ? r.fields.filter((x) => ['Ward', 'Bed'].includes(x.label)) : [pick(label)].filter(Boolean);
+        return f.length ? f.map((x) => `${x.label}: ${x.value}`).join(', ') : `${label}: not recorded`;
+      });
+      return { reply: `${pid} — ${answers.join(' · ')}. All details are below.`, blocks };
+    }
+    return { reply: `Details of ${pid} are below.`, blocks };
+  }
 
   const summarise = (t) =>
     `${t.patients} patient${t.patients === 1 ? '' : 's'}, ${t.messages} message${t.messages === 1 ? '' : 's'} — ${t.read} read, ${t.delivered} delivered, ${t.sent} sent${t.pending ? `, ${t.pending} pending` : ''}, ${t.failed} failed`;
@@ -1247,10 +1475,57 @@ function sanitiseContext(context = {}) {
   return ctx;
 }
 
-export async function runAssistant({ messages, context = {}, user = null, access = FULL_PERMISSIONS }) {
+/**
+ * When the AI service is busy after the tools already ran: say what they found
+ * in a sentence per result, instead of a bare "here it is".
+ */
+function describeBlocks(blocks) {
+  const lines = blocks.map((b) => {
+    const tag = b.n ? `#${b.n} ` : '';
+    switch (b.type) {
+      case 'patientDetails': {
+        const f = (label) => b.fields.find((x) => x.label === label)?.value;
+        return `${tag}${b.title}: ${[f('Age') && `age ${f('Age')}`, f('Mobile') && `mobile ${f('Mobile')}`, f('Discharged') && `discharged ${f('Discharged')}`, f('Length of stay') && `stay ${f('Length of stay')}`].filter(Boolean).join(', ')}.`;
+      }
+      case 'journey': {
+        const first = b.steps[0];
+        const last = b.steps[b.steps.length - 1];
+        const labDays = b.steps.filter((st) => st.lane === 'lab').length;
+        return `${tag}${b.title}: ${b.steps.length} steps — ${first ? `${first.title} ${formatIstShort(first.at)}` : ''}${labDays ? `, ${labDays} lab day${labDays === 1 ? '' : 's'}` : ''}${last && last !== first ? `, last: ${last.title} ${formatIstShort(last.at)}` : ''}.`;
+      }
+      case 'compare':
+        return `${tag}${b.title}: ${b.summary.testsCompared} tests in both, ${b.summary.changed} changed; out of range ${b.summary.abnormalA} vs ${b.summary.abnormalB}.`;
+      case 'chatExport':
+        return `Your file ${b.filename} (${b.results.map((n) => `#${n}`).join(', ')}) is ready.`;
+      case 'dischargeReport':
+        return `${tag}${b.title}: ${b.totals.patients} patients.`;
+      case 'whatsappReport':
+        return `${tag}${b.title}: ${b.totals.patients} patients, ${b.totals.messages} messages, ${b.totals.read} read, ${b.totals.failed} failed.`;
+      default:
+        return b.title ? `${tag}${b.title}.` : '';
+    }
+  });
+  const text = lines.filter(Boolean).join('\n');
+  return text ? `${text}\nDetails are below.` : 'Here is what I found.';
+}
+
+const formatIstShort = (at) =>
+  at ? new Date(at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+
+export async function runAssistant({ messages, context = {}, user = null, access = FULL_PERMISSIONS, chatId = null }) {
   const ctx = sanitiseContext(context);
   ctx.user = user;
   ctx.access = access;
+  ctx.chatId = /^[a-z0-9]{6,40}$/i.test(String(chatId || '')) ? String(chatId) : null;
+  ctx.results = await listResults(ctx.chatId).catch(() => []);
+  const question = String([...messages].reverse().find((m) => m.role === 'user')?.content || '').slice(0, 500);
+  // Each result gets its number (#1, #2 …) as it's made, so a file can include it in the same answer.
+  const number = (block) => numberResult({ chatId: ctx.chatId, user, question, block }).catch(() => block);
+  const finish = async (result) => {
+    if (result.fallback) result.blocks = await Promise.all((result.blocks || []).map((b) => (b.n ? b : number(b))));
+    saveReply({ chatId: ctx.chatId, user, question, reply: result.reply }).catch(() => {});
+    return result;
+  };
   ctx.allowedTools = new Set(TOOLS.filter((t) => TOOL_ACCESS[t.name]?.(access)).map((t) => t.name));
   const toolDefs = TOOLS.filter((t) => ctx.allowedTools.has(t.name));
 
@@ -1267,9 +1542,9 @@ export async function runAssistant({ messages, context = {}, user = null, access
     if (!message) {
       // No AI model answered. If tools already ran this turn, show what they
       // found; otherwise answer the question with the rule-based matcher.
-      if (blocks.length) return { reply: 'Here is what I found.', blocks, fallback: true };
+      if (blocks.length) return finish({ reply: describeBlocks(blocks), blocks });
       try {
-        return { ...(await ruleBasedAnswer(messages, ctx)), fallback: true };
+        return finish({ ...(await ruleBasedAnswer(messages, ctx)), fallback: true });
       } catch (error) {
         if (error instanceof NoAccessError) {
           return { reply: "Your account doesn't have access to that — ask the super admin if you need it.", blocks: [], fallback: true };
@@ -1279,7 +1554,7 @@ export async function runAssistant({ messages, context = {}, user = null, access
     }
     const calls = message.tool_calls || [];
     if (!calls.length) {
-      return { reply: String(message.content || '').trim() || 'Done.', blocks };
+      return finish({ reply: String(message.content || '').trim() || 'Done.', blocks });
     }
     convo.push({ role: 'assistant', content: message.content || '', tool_calls: calls });
     for (const call of calls) {
@@ -1299,7 +1574,10 @@ export async function runAssistant({ messages, context = {}, user = null, access
         outcome = { forModel: { error: error.message } };
       }
       if (outcome.block) {
+        outcome.block = await number(outcome.block);
+        if (outcome.block.n && outcome.forModel && typeof outcome.forModel === 'object') outcome.forModel.resultNumber = outcome.block.n;
         blocks.push(outcome.block);
+        if (outcome.block.n) ctx.results = [...(ctx.results || []), { n: outcome.block.n, title: outcome.block.title || outcome.block.type }];
         // Later tool calls in this same turn ("…and download it as Excel") see the new results.
         if (outcome.block.type === 'labResults') ctx.lastLabQuery = outcome.block.query;
         if (outcome.block.type === 'testDraft') ctx.testDraft = { message: outcome.block.message };
@@ -1317,5 +1595,5 @@ export async function runAssistant({ messages, context = {}, user = null, access
       convo.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(outcome.forModel) });
     }
   }
-  return { reply: 'That took too many steps — please ask in a simpler way.', blocks };
+  return finish({ reply: 'That took too many steps — please ask in a simpler way.', blocks });
 }

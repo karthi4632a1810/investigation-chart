@@ -89,6 +89,7 @@ const RULES = [
   ['GET', /^\/api\/assistant\/lookup\/[^/]+\/[^/]+\.pdf$/, all(ai('ask'), screen('search', 'read'))],
   ['POST', /^\/api\/assistant\/lookup\/[^/]+\/[^/]+\/whatsapp$/, all(ai('act'), screen('search', 'read'))],
   ['POST', /^\/api\/assistant\/message\/[^/]+\/status$/, ai('act')],
+  ['GET', /^\/api\/assistant\/export\/[^/]+\/[^/]+\.(pdf|xlsx|csv)$/, ai('ask')],
 
   [null, /^\/api\/users(\/|$)/, superAdmin],
   // Every signed-in browser reports its own screens / clicks / idle time; reading the log needs access.

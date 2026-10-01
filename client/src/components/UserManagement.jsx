@@ -134,7 +134,7 @@ const EMPTY_USER = {
   permissions: null,
 };
 
-function UserEditor({ model, user, onClose, onSaved }) {
+function UserEditor({ model, user, onClose, onSaved, onResetPassword }) {
   const isNew = !user;
   const viewer = model.presets.find((p) => p.id === 'viewer');
   const [form, setForm] = useState(() =>
@@ -285,6 +285,26 @@ function UserEditor({ model, user, onClose, onSaved }) {
               <Switch checked={form.active} onChange={(v) => setForm((f) => ({ ...f, active: v }))} label="Account active" />
             </div>
           </section>
+
+          {!isNew && (
+            <section className="um-section">
+              <h4>
+                <KeyIcon size={15} /> Password
+              </h4>
+              <div className="um-row-toggle">
+                <div>
+                  <b>Forgot their password?</b>
+                  <span>
+                    Passwords are stored encrypted — nobody, including you, can see them. Set a new temporary one; they choose their own at the next
+                    sign-in.
+                  </span>
+                </div>
+                <button type="button" className="um-chip-btn" onClick={() => onResetPassword(user)}>
+                  Reset password
+                </button>
+              </div>
+            </section>
+          )}
 
           {/* 2. Role preset */}
           <section className="um-section">
@@ -803,8 +823,13 @@ export default function UserManagement() {
                   <button type="button" className="um-action" onClick={() => setEditing({ user: u })} title="Edit profile and access">
                     <EditIcon size={14} /> <span>Edit</span>
                   </button>
-                  <button type="button" className="um-action" onClick={() => setPasswordFor(u)} title="Set a new password">
-                    <KeyIcon size={14} />
+                  <button
+                    type="button"
+                    className="um-action"
+                    onClick={() => setPasswordFor(u)}
+                    title="Forgot their password? Set a new one — nobody can see the old one"
+                  >
+                    <KeyIcon size={14} /> <span>Reset password</span>
                   </button>
                   <button
                     type="button"
@@ -870,6 +895,7 @@ export default function UserManagement() {
         <UserEditor
           model={data.model}
           user={editing.user}
+          onResetPassword={(u) => setPasswordFor(u)}
           onClose={() => setEditing(null)}
           onSaved={(saved, created) => {
             setEditing(null);

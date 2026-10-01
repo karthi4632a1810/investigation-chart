@@ -106,6 +106,8 @@ const RULES = [
     screen: 'ai',
     details: { ok, to: short(body.sentTo, 20), message: short(req.body?.message, 200), error: ok ? undefined : short(body.error, 200) },
   })],
+  ['GET', new RegExp(`^/api/assistant/export/${SEG}/${SEG}\\.(pdf|xlsx|csv)$`), 'export', ({ req, m, ok }) =>
+    ok ? { screen: 'ai', details: { what: `Ask AI results (${short(req.query.name, 60)})`, format: m[1] } } : null],
   ['GET', new RegExp(`^/api/assistant/lookup/${SEG}/${SEG}\\.pdf$`), 'lab_lookup_open', ({ req, ok }) => (ok ? { screen: 'ai', details: { name: short(req.query.name, 60) } } : null)],
   ['POST', new RegExp(`^/api/assistant/lookup/${SEG}/${SEG}/whatsapp$`), 'whatsapp_share', ({ req, body, ok }) => ({
     screen: 'ai',
