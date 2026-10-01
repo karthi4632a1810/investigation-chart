@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   checkWhatsAppNumber,
   defaultDateOnly,
@@ -319,8 +320,12 @@ function SendConfirmDialog({ patient, live, defaultNumber, documents, onCancel, 
     }
   }
 
-  return (
-    <div className="um-modal-backdrop" onMouseDown={() => !busy && onCancel()}>
+  // Rendered on <body>, not inside the card: the card lifts on hover (a CSS
+  // transform) and is a size container, and either makes a position: fixed
+  // popup sit inside the card — it then jumped between the card and the
+  // screen as the mouse moved (the flicker). Clicks stay out of the card too.
+  return createPortal(
+    <div className="um-modal-backdrop" onMouseDown={() => !busy && onCancel()} onClick={(e) => e.stopPropagation()}>
       <form className="um-modal wa-send" onMouseDown={(e) => e.stopPropagation()} onSubmit={submit} aria-label="Send on WhatsApp">
         <h3>
           <WhatsAppIcon size={18} /> Send on WhatsApp
@@ -374,7 +379,8 @@ function SendConfirmDialog({ patient, live, defaultNumber, documents, onCancel, 
           </button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
