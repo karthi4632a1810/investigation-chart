@@ -389,10 +389,16 @@ function SendConfirmDialog({ patient, live, defaultNumber, documents, onCancel, 
 }
 
 /** Self-contained so each row tracks its own send state independently. */
-function SendWhatsAppButton({ date, ipNo, name, onToast, patient, waSettings, access = FULL_ACCESS }) {
+function SendWhatsAppButton({ date, ipNo, name, onToast, patient, waSettings, access = FULL_ACCESS, onPopup }) {
   const [status, setStatus] = useState('idle'); // idle | sending | sent | error
   const [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false);
+  // Tell the list a popup is open (it holds the live refresh until it closes).
+  useEffect(() => {
+    if (!confirming) return undefined;
+    onPopup?.(true);
+    return () => onPopup?.(false);
+  }, [confirming, onPopup]);
   const live = Boolean(waSettings?.liveEnabled);
   const defaultNumber = live ? patient?.mobile || '' : waSettings?.fixedNumber || '';
   const documents = [
@@ -492,7 +498,7 @@ function NoWhatsAppBadge() {
   );
 }
 
-function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS, waSettings }) {
+function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS, waSettings, onPopup }) {
   if (!patients.length) return null;
 
   return (
@@ -634,6 +640,7 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                         patient={p}
                         waSettings={waSettings}
                         access={access}
+                        onPopup={onPopup}
                       />
                     )}
                     {p.dateCount === undefined && !p.hasSummary && <span className="text-muted">—</span>}
@@ -673,7 +680,7 @@ function summaryApprover(p) {
   return p.summaryApprovedBy || p.doctor || 'Treating Consultant';
 }
 
-function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS, waSettings }) {
+function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS, waSettings, onPopup }) {
   if (!patients.length) return null;
 
   return (
@@ -819,7 +826,7 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                   </span>
                 )}
                 {access.reports.showWhatsApp && hasSendableDocument(p, access) && (
-                  <SendWhatsAppButton date={p.date} ipNo={p.ipNo} name={p.name} onToast={onToast} patient={p} waSettings={waSettings} access={access} />
+                  <SendWhatsAppButton date={p.date} ipNo={p.ipNo} name={p.name} onToast={onToast} patient={p} waSettings={waSettings} access={access} onPopup={onPopup} />
                 )}
               </div>
             </footer>
@@ -1145,6 +1152,11 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
   const [filterText, setFilterText] = useState('');
   // Numbers that failed as "not on WhatsApp" — tagged next to the patient's mobile.
   const [noWhatsApp, setNoWhatsApp] = useState(() => new Set());
+  // How many WhatsApp popups are open — the live refresh waits while any is.
+  const popupsOpen = useRef(0);
+  const onPopup = useCallback((open) => {
+    popupsOpen.current = Math.max(0, popupsOpen.current + (open ? 1 : -1));
+  }, []);
   // Test / Live and "confirm the number before sending" for the WhatsApp buttons.
   const [waSettings, setWaSettings] = useState(null);
   useEffect(() => {
@@ -1213,31 +1225,38 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
       .catch(() => {});
   }, [lastRefreshedAt]);
 
-  const loadByDate = useCallback((forDate) => {
-    setLoading(true);
-    setError('');
+  // `quiet` (the 20-second live refresh): swap the data in place — no spinner,
+  // the list stays mounted, so an open WhatsApp popup, the page you're on, the
+  // scroll position and each button's "sent" tick all survive the refresh.
+  const loadByDate = useCallback((forDate, { quiet = false } = {}) => {
+    if (!quiet) {
+      setLoading(true);
+      setError('');
+    }
     fetchReportsForDate(forDate)
       .then((rows) => {
         setPatients(rows);
         setLastRefreshedAt(Date.now());
-        setCurrentPage(1);
+        if (!quiet) setCurrentPage(1);
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch((err) => !quiet && setError(err.message))
+      .finally(() => !quiet && setLoading(false));
   }, []);
 
-  const runSearch = useCallback(() => {
-    setLoading(true);
-    setError('');
+  const runSearch = useCallback(({ quiet = false } = {}) => {
+    if (!quiet) {
+      setLoading(true);
+      setError('');
+    }
     setSearchActive(true);
     searchReports(filtersRef.current)
       .then((rows) => {
         setPatients(rows);
         setLastRefreshedAt(Date.now());
-        setCurrentPage(1);
+        if (!quiet) setCurrentPage(1);
       })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .catch((err) => !quiet && setError(err.message))
+      .finally(() => !quiet && setLoading(false));
   }, []);
 
   function refreshCurrentView() {
@@ -1255,11 +1274,13 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
     if (mode === 'date') loadByDate(date);
   }, [mode, date, loadByDate]);
 
-  // Live auto-refresh: keep whatever's on screen current without manual reload.
+  // Live auto-refresh: keep whatever's on screen current without manual reload —
+  // quietly, and not at all while a WhatsApp popup is open or the tab is hidden.
   useEffect(() => {
     const id = setInterval(() => {
-      if (mode === 'date') loadByDate(date);
-      else if (searchActive) runSearch();
+      if (popupsOpen.current > 0 || document.hidden) return;
+      if (mode === 'date') loadByDate(date, { quiet: true });
+      else if (searchActive) runSearch({ quiet: true });
     }, LIVE_REFRESH_MS);
     return () => clearInterval(id);
   }, [mode, date, searchActive, loadByDate, runSearch]);
@@ -1741,6 +1762,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
                   noWhatsApp={noWhatsApp}
                   access={access}
                   waSettings={waSettings}
+                  onPopup={onPopup}
                 />
               ) : (
                 <>
@@ -1754,6 +1776,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
                       noWhatsApp={noWhatsApp}
                       access={access}
                       waSettings={waSettings}
+                      onPopup={onPopup}
                     />
                   </div>
                   <div className="responsive-cards-view">
@@ -1766,6 +1789,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
                       noWhatsApp={noWhatsApp}
                       access={access}
                       waSettings={waSettings}
+                      onPopup={onPopup}
                     />
                   </div>
                 </>
