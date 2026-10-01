@@ -295,6 +295,53 @@ export default function WatiSettings({ readOnly = false }) {
               </p>
             )}
           </form>
+
+          <section className="wati-panel">
+            <div className="wati-panel-head">
+              <div>
+                <h3>Before sending</h3>
+                <p>For the WhatsApp button on a patient's card.</p>
+              </div>
+              <SavedTick show={savedField === 'confirm'} />
+            </div>
+            <label className="wati-toggle-row">
+              <span>
+                <b>Confirm the number first</b>
+                <small>
+                  Shows a popup with the number — {live ? "the patient's mobile (Live)" : 'the test number (Test mode)'} — which staff can check or change, then
+                  Send.
+                </small>
+              </span>
+              <input
+                type="checkbox"
+                className="wati-switch"
+                checked={settings.confirmBeforeSend !== false}
+                onChange={(e) => persist('confirm', { confirmBeforeSend: e.target.checked })}
+              />
+            </label>
+          </section>
+
+          <section className="wati-panel">
+            <div className="wati-panel-head">
+              <div>
+                <h3>
+                  <label htmlFor="wati-lab-template">Template for Ask AI lab reports</label>
+                </h3>
+                <p>Used when Ask AI sends a lab report it found in the EMR (OP patients too).</p>
+              </div>
+              <SavedTick show={savedField === 'template'} />
+            </div>
+            <select
+              id="wati-lab-template"
+              className="wati-select"
+              value={settings.labReportTemplate || 'mapims_lab_rpt'}
+              onChange={(e) => persist('template', { labReportTemplate: e.target.value })}
+            >
+              <option value="mapims_lab_rpt">mapims_lab_rpt — "Your laboratory report is ready"</option>
+              <option value="investigation_report">investigation_report — "Your investigation report is ready"</option>
+              <option value="investigation">investigation — same as discharge reports, with the extra line</option>
+            </select>
+          </section>
         </fieldset>
 
         <aside className="wati-preview" aria-label="Message preview">

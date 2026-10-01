@@ -62,7 +62,7 @@ Screens: Lab Search, Discharge Reports, Lab Finder, WATI Settings, Monitor (What
 - "No lab data" (grey, dashed): the EMR has no lab orders for this stay — not an error; it's checked once and not re-checked.
 - Summary (green): opens the discharge summary PDF.
 - "No Summary" (red): the EMR returned a discharge summary with no patient data, so it isn't shown or sent. Fix it in the EMR; the next check picks it up.
-- WhatsApp (round green button): sends the lab report and the discharge summary as two messages. In Test mode they go to the test number, in Live mode to the patient. Hover to see what it will do; after a failure the hover text says why ("Failed: … — click to retry"). A filled green icon means sent.`,
+- WhatsApp (round green button): sends the lab report and the discharge summary as two messages. In Test mode they go to the test number, in Live mode to the patient. With "Confirm the number first" on (WATI Settings, on by default) a popup shows that number first — check or change it (it warns if it's e.g. only 9 digits), then Send. Hover to see what it will do; after a failure the hover text says why ("Failed: … — click to retry"). A filled green icon means sent.`,
   },
   {
     id: 'lab-report-pdf',
@@ -97,6 +97,8 @@ Screens: Lab Search, Discharge Reports, Lab Finder, WATI Settings, Monitor (What
 - Test number: receives every manual send in Test mode.
 - Extra message line: optional text after "Attached: Lab Report" / "Attached: Discharge Summary". In Live mode every patient reads it — a red warning shows then; clear test notes.
 - Message preview: shows the WhatsApp message as the patient sees it, and the template name.
+- Before sending → Confirm the number first: the patient-card WhatsApp button shows the number in a popup to check or edit before sending.
+- Template for Ask AI lab reports: mapims_lab_rpt ("Your laboratory report is ready"), investigation_report, or investigation — used when Ask AI sends a lab report it found in the EMR.
 Each document is its own message (WhatsApp allows one file per template message). A summary with no patient data is never sent.`,
   },
   {
@@ -219,7 +221,13 @@ Changes apply from the person's next click. Every rule is checked by the server 
     id: 'my-profile',
     title: 'My profile and password',
     keywords: 'my profile password change forgot locked sign out account hours my access',
-    text: `Click your name at the top right: it shows your access and access hours. Change password asks for the current one and signs you out on other devices. Forgot it, or locked after five wrong tries? Ask the super admin to set a new one. The super admin's own password is set in the server .env (APP_PASSWORD).`,
+    text: `Click your name at the top right: it shows your access and access hours. Change password asks for the current one and signs you out on other devices. Passwords are stored encrypted — nobody, not even the super admin, can see them. Forgot it, or locked after five wrong tries? Ask the super admin to reset it: they set a temporary password, and when you sign in with it you choose your own before anything else, so only you know it. The super admin's own password is set in the server .env (APP_PASSWORD).`,
+  },
+  {
+    id: 'op-lookup',
+    title: 'Lab reports for OP patients / UHIDs not in the discharge list (Ask AI)',
+    keywords: 'op out patient outpatient uhid not found lab report emr fetch find search any patient whatsapp send number pdf download',
+    text: `The portal is built around discharged IP patients; OP patients never appear in Discharge Reports, Lab Finder or the Monitor's patient lists. In Ask AI only, you can get any patient's lab report straight from the EMR lab: ask e.g. "find UHID 6159338" — if it isn't a discharged patient, Ask AI searches the EMR lab (last 30 days; say "last 6 months" or dates for more) and makes the lab report PDF. Then Open, Download, or WhatsApp: give the number (it warns if it's e.g. only 9 digits), press Send, and the card shows whether it was sent, delivered but not read, read, or that the number isn't on WhatsApp ("Check with WATI" asks for the latest). It's sent with the template chosen in WATI Settings (Template for Ask AI lab reports). Needs Lab Search access; sending needs Ask AI "Ask + send".`,
   },
   {
     id: 'test-message',

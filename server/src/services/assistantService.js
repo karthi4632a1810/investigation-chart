@@ -27,6 +27,8 @@ import { watiUsage } from './watiBudget.js';
 import { getWatiSettings } from './watiSettingsService.js';
 import { failureCategory, getPollState, retryQueueFacts, whatsappReportData, whatsappSummary } from './whatsappLogService.js';
 import { dischargeReport } from './dischargeReportQuery.js';
+import { cleanLookupId, lookupLabReport } from './labLookupService.js';
+import { checkWhatsAppNumber } from './watiService.js';
 import { cleanTestMessage, cleanTestNumber, formatNumber, sendTestWhatsApp } from './whatsappTestService.js';
 import { FULL_PERMISSIONS } from './userService.js';
 
@@ -104,6 +106,8 @@ const TOOL_ACCESS = {
   offer_download: (a) => canRead(a, 'labFinder') || canRead(a, 'reports'),
   offer_whatsapp_share: (a) => a.ai === 'act',
   send_test_whatsapp: (a) => a.ai === 'act',
+  lab_report_lookup: (a) => a.ai !== 'none' && canRead(a, 'search'),
+  offer_lookup_whatsapp: (a) => a.ai === 'act' && canRead(a, 'search'),
 };
 const SCREEN_OF = { discharge_reports: 'reports', lab_finder: 'labFinder', lab_search: 'search', wati_settings: 'wati', whatsapp_monitor: 'monitor' };
 const NO_ACCESS = "This user's account has no access to that. Tell them to ask the super admin if they need it.";
@@ -135,6 +139,9 @@ function describeContext(context) {
     const parts = [q.test && `test "${q.test}"`, q.value && `result "${q.value}"`, q.status && `flag ${q.status}`, q.from && `from ${q.from}`, q.to && `to ${q.to}`].filter(Boolean);
     lines.push(`- The latest lab results list on screen: ${parts.join(', ') || 'a lab search'}. "That list", "these results" etc. mean this — use target "lab_results".`);
   }
+  if (context.lastLookup?.lookupId) {
+    lines.push(`- A lab report was just looked up for ${context.lastLookup.id}. "Send it", "that report" mean this — use offer_lookup_whatsapp once you have a number.`);
+  }
   if (context.testDraft?.message) {
     lines.push(`- A test WhatsApp message is being prepared: "${context.testDraft.message}" — the number is still needed.`);
   }
@@ -159,6 +166,7 @@ ${describeContext(context)}
 Rules:
 - Use the tools for anything about patients, reports or lab results. Never invent names, IP numbers, values or counts.
 - When the user asks for a specific patient's report, lab report or discharge summary (by IP number, UHID or name), call find_patient — it shows their reports with download and WhatsApp options. Don't send them to Lab Search for that.
+- If find_patient finds nothing for a UHID or IP number (often an OP / out-patient, who isn't in the discharge data), call lab_report_lookup with that number to search the EMR lab directly (last 30 days unless they give dates). OP patients exist only here in the chat — never say they'll appear in Discharge Reports. Once found, offer: open or download the PDF, or send it on WhatsApp. For WhatsApp ask "Which WhatsApp number should I send it to?", then call offer_lookup_whatsapp; if it says the number is wrong (e.g. only 9 digits), tell them exactly that and ask for the correct number. They press Send on the card, which then shows whether it was sent, not on WhatsApp, delivered or read.
 - Tool results are shown to the user on screen; you only get counts. Don't repeat patient details — say briefly what was found and that it's shown below.
 - For lab questions use search_lab_results. Qualitative results (negative, positive, nil, trace, reactive) go in "value"; "high"/"low"/"abnormal" go in "status"; numbers in "min"/"max". If you're unsure of the test name, or the search finds nothing, call list_lab_tests and ask which test they mean.
 - After showing results, offer the options: download as PDF, Excel, Word or CSV, or share on WhatsApp. When they pick a format, call offer_download. When they want WhatsApp, ask for the number if they haven't given it, then call offer_whatsapp_share. Never say a message was sent — the user confirms with the Send button.
@@ -289,6 +297,30 @@ const TOOLS = [
         whatsapp: { type: 'string', enum: ['read', 'delivered', 'sent', 'failed', 'none', 'nowa'], description: 'none = not sent; nowa = not on WhatsApp' },
         search: { type: 'string', description: 'Patient name, IP number, UHID or mobile' },
       },
+    },
+  },
+  {
+    name: 'lab_report_lookup',
+    description:
+      "Find a patient's lab report straight in the EMR lab by UHID or IP number — including OP (out-patient) patients who aren't in the discharge data. Makes the lab report PDF and shows it with open / download / WhatsApp options. Default range: the last 30 days.",
+    parameters: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'UHID (digits, e.g. 6159338) or IP number (e.g. IP07028148)' },
+        from: { type: 'string', description: 'Optional start date YYYY-MM-DD' },
+        to: { type: 'string', description: 'Optional end date YYYY-MM-DD' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'offer_lookup_whatsapp',
+    description:
+      'Prepare sending the lab report just looked up (lab_report_lookup) on WhatsApp to the number the user gave. Checks the number first; shows a card the user confirms with Send.',
+    parameters: {
+      type: 'object',
+      properties: { to_number: { type: 'string', description: 'WhatsApp number the user gave' } },
+      required: ['to_number'],
     },
   },
   {
@@ -732,6 +764,42 @@ const handlers = {
     };
   },
 
+  async lab_report_lookup({ id, from, to }) {
+    const clean = cleanLookupId(id);
+    if (!/^(IP)?\d{4,12}$/.test(clean)) return { forModel: { error: 'Ask for a UHID (digits) or an IP number' } };
+    const r = await lookupLabReport({ id: clean, from: DATE_RE.test(from || '') ? from : undefined, to: DATE_RE.test(to || '') ? to : undefined });
+    const range = r.from === r.to ? dmy(r.from) : `${dmy(r.from)} to ${dmy(r.to)}`;
+    if (!r.found) {
+      return {
+        forModel: { found: false, searched: clean, range, hint: 'Nothing in the EMR lab for this number in that range — offer a wider range (up to a year) or check the number.' },
+        block: { type: 'labLookup', found: false, id: clean, range },
+      };
+    }
+    return {
+      forModel: {
+        found: true,
+        patientType: r.patient.type,
+        range,
+        testDays: r.dates,
+        results: r.tests,
+        next: 'The PDF is on screen with Open, Download and WhatsApp. To send on WhatsApp, ask for the number, then call offer_lookup_whatsapp.',
+      },
+      block: { type: 'labLookup', found: true, ...r, range },
+    };
+  },
+
+  async offer_lookup_whatsapp({ to_number }, context) {
+    const lookup = context.lastLookup;
+    if (!lookup) return { forModel: { error: 'Look the lab report up first (lab_report_lookup).' } };
+    const checked = checkWhatsAppNumber(to_number);
+    if (!checked.ok) return { forModel: { error: `${checked.error}. Ask the user for the correct number.` } };
+    const d = checked.digits;
+    return {
+      forModel: { readyForConfirmation: true, to: `+${d}` },
+      block: { type: 'lookupShare', lookup, toNumber: d, display: /^91\d{10}$/.test(d) ? `+91 ${d.slice(2, 7)} ${d.slice(7)}` : `+${d}` },
+    };
+  },
+
   async send_test_whatsapp({ message, to_number, confirm }, context) {
     const text = cleanTestMessage(message) || context.testDraft?.message || '';
     const number = cleanTestNumber(to_number) || (text && context.pendingTest?.message === text ? context.pendingTest.toNumber : '');
@@ -991,6 +1059,13 @@ async function ruleBasedAnswer(messages, ctx) {
   // "Why isn't WhatsApp sending?" is a status question, not a request to send.
   const statusQuestion = /\b(why|not|isn'?t|failed|fail|failing|status|quota|limit|429|tick|ticks|delivered|read|working|stuck|pending|refus)/i.test(text);
 
+  // A lab report looked up in the EMR, then a number: prepare the WhatsApp card.
+  const anyNumber = /(?:\+|=)?\s*\d[\d\s-]{7,15}\d/.exec(text)?.[0];
+  if (ctx.lastLookup && anyNumber && !/\bip\s*\d|uhid/i.test(text) && !statusQuestion) {
+    const r = await run('offer_lookup_whatsapp', { to_number: anyNumber });
+    return { reply: r.error ? r.error.replace('. Ask the user for the correct number.', '.') : `Check the number ${r.to}, then press Send.`, blocks };
+  }
+
   // WhatsApp share with a number
   const phone = /(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}\b/.exec(text)?.[0];
   if (!statusQuestion && /whats\s*app|share|send/i.test(text) && (ctx.lastLabQuery || ctx.lastPatient || /\bip\s*\d/i.test(text))) {
@@ -1081,10 +1156,24 @@ async function ruleBasedAnswer(messages, ctx) {
       blocks,
     };
   }
-  const uhid = /\b(?:uhid|reg(?:istration)?\s*(?:no|number)?)\D{0,4}(\d{5,})/i.exec(text)?.[1];
+  const uhid =
+    /\b(?:uhid|reg(?:istration)?\s*(?:no|number)?|op)\D{0,4}(\d{5,})/i.exec(text)?.[1] ||
+    (/\b(find|lab|report|search|look|check|result)/i.test(text) ? /\b(\d{6,9})\b/.exec(text)?.[1] : undefined);
   if (ip || uhid) {
     const r = await run('find_patient', { query: ip || uhid });
-    return { reply: r.count ? `${busyNote} Found ${r.count} match${r.count === 1 ? '' : 'es'} — shown below.` : `${busyNote} No discharged patient found for ${ip || uhid}.`, blocks };
+    if (r.count) return { reply: `${busyNote} Found ${r.count} match${r.count === 1 ? '' : 'es'} — shown below.`, blocks };
+    // Not a discharged patient (e.g. OP) — look in the EMR lab directly, if allowed.
+    if (ctx.allowedTools?.has('lab_report_lookup')) {
+      const range = dateRange(text);
+      const l = await run('lab_report_lookup', { id: ip || uhid, from: range.from, to: range.to });
+      return {
+        reply: l.found
+          ? `${ip || uhid} isn't in the discharge list, so I checked the EMR lab directly: found ${l.results} results over ${l.testDays} day${l.testDays === 1 ? '' : 's'} (${l.range}). Open or download the PDF below, or tell me a WhatsApp number to send it to.`
+          : `${ip || uhid} isn't in the discharge list, and the EMR lab has nothing for it between ${l.range}. Try a wider range (e.g. "last 6 months") or check the number.`,
+        blocks,
+      };
+    }
+    return { reply: `${busyNote} No discharged patient found for ${ip || uhid}.`, blocks };
   }
 
   // Discharges on a date
@@ -1137,6 +1226,10 @@ async function ruleBasedAnswer(messages, ctx) {
 
 function sanitiseContext(context = {}) {
   const ctx = {};
+  const l = context.lastLookup;
+  if (l && /^\d{4}-\d{2}-\d{2}$/.test(String(l.day || '')) && /^[a-f0-9]{12}$/.test(String(l.lookupId || ''))) {
+    ctx.lastLookup = { day: l.day, lookupId: l.lookupId, id: cleanLookupId(l.id).slice(0, 20), name: String(l.name || '').slice(0, 80) };
+  }
   if (SCREEN_LABELS[context.view]) ctx.view = context.view;
   const draft = cleanTestMessage(context.testDraft?.message);
   if (draft) ctx.testDraft = { message: draft };
@@ -1210,6 +1303,10 @@ export async function runAssistant({ messages, context = {}, user = null, access
         // Later tool calls in this same turn ("…and download it as Excel") see the new results.
         if (outcome.block.type === 'labResults') ctx.lastLabQuery = outcome.block.query;
         if (outcome.block.type === 'testDraft') ctx.testDraft = { message: outcome.block.message };
+        if (outcome.block.type === 'labLookup' && outcome.block.found) {
+          const b = outcome.block;
+          ctx.lastLookup = { day: b.day, lookupId: b.lookupId, id: b.id, name: b.patient?.name || '' };
+        }
         if (outcome.block.type === 'testMessage' && outcome.block.status === 'ready') {
           ctx.pendingTest = { message: outcome.block.message, toNumber: outcome.block.toNumber };
         }

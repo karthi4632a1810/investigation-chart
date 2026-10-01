@@ -20,6 +20,7 @@ import AssistantPanel from './components/AssistantPanel';
 import AdminDashboard from './components/admin/AdminDashboard';
 import UserManagement from './components/UserManagement';
 import ProfileMenu from './components/ProfileMenu';
+import SetPasswordScreen from './components/SetPasswordScreen';
 import { accessFor, canOpen, firstOpenView } from './utils/access';
 import {
   FilePdfIcon,
@@ -126,6 +127,8 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState('');
+  // The password just typed, kept only while a temporary one must be replaced.
+  const [tempPassword, setTempPassword] = useState('');
 
   useEffect(() => {
     fetchHospitalConfig()
@@ -177,6 +180,7 @@ export default function App() {
       const data = await login({ username, password });
       if (data.ok && data.user) {
         sessionStorage.setItem('investigation-auth', JSON.stringify(data.user));
+        setTempPassword(data.user.mustChangePassword ? password : '');
         setMe(data.user);
         setPassword('');
         if (!canOpen(data.user, view)) setView(firstOpenView(data.user) || 'reports');
@@ -250,6 +254,24 @@ export default function App() {
         onUsernameChange={setUsername}
         onPasswordChange={setPassword}
         onSubmit={handleLogin}
+      />
+    );
+  }
+
+  if (me?.mustChangePassword) {
+    return (
+      <SetPasswordScreen
+        me={me}
+        tempPassword={tempPassword}
+        onLogout={handleLogout}
+        onDone={async () => {
+          setTempPassword('');
+          const { user } = await checkSession();
+          if (user) {
+            sessionStorage.setItem('investigation-auth', JSON.stringify(user));
+            setMe(user);
+          }
+        }}
       />
     );
   }

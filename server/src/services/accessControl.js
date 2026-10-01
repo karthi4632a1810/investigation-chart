@@ -85,6 +85,10 @@ const RULES = [
 
   ['POST', /^\/api\/assistant$/, ai('ask')],
   ['POST', /^\/api\/assistant\/test-whatsapp$/, ai('act')],
+  // Lab reports looked up straight in the EMR (OP too) — same data as Lab Search.
+  ['GET', /^\/api\/assistant\/lookup\/[^/]+\/[^/]+\.pdf$/, all(ai('ask'), screen('search', 'read'))],
+  ['POST', /^\/api\/assistant\/lookup\/[^/]+\/[^/]+\/whatsapp$/, all(ai('act'), screen('search', 'read'))],
+  ['POST', /^\/api\/assistant\/message\/[^/]+\/status$/, ai('act')],
 
   [null, /^\/api\/users(\/|$)/, superAdmin],
   [null, /^\/api\/me(\/|$)/, loggedIn],

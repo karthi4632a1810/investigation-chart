@@ -84,6 +84,10 @@ export async function logSendStart(entry) {
     department: entry.department || '',
     toNumber: digitsOnly(entry.toNumber),
     liveMode: Boolean(entry.liveMode),
+    // Staff changed the number in the confirm popup before sending.
+    numberEdited: Boolean(entry.numberEdited),
+    // A UHID (Ask AI lab lookups have no IP number).
+    uhid: entry.uhid || null,
     template: entry.template || '',
     status: 'pending',
     history: [{ status: 'pending', at: now, source: 'app', note: 'Send started' }],
@@ -401,6 +405,64 @@ export async function pollWhatsAppStatuses({ force = false } = {}) {
     pollRunning = false;
   }
   return getPollState();
+}
+
+// ---- One message, on demand (Ask AI's "Check status") ------------------------
+
+const lastSingleCheck = new Map();
+
+/** A message's current state, short — for a chat card. */
+export function messageState(doc) {
+  if (!doc) return null;
+  return {
+    id: String(doc._id),
+    status: doc.status,
+    notOnWhatsApp: Boolean(doc.notOnWhatsApp),
+    error: doc.status === 'failed' ? doc.failedDetail || doc.error || null : null,
+    reason: doc.status === 'failed' ? failureCategory(doc) : null,
+    toNumber: doc.toNumber,
+    sentAt: doc.acceptedAt || doc.createdAt,
+    deliveredAt: doc.deliveredAt || null,
+    readAt: doc.readAt || null,
+    lastCheckedAt: doc.lastCheckedAt || doc.lastWebhookAt || null,
+  };
+}
+
+/**
+ * Asks WATI for this message's number once (at most every 30 s per message,
+ * not while WATI is refusing calls) and updates its status. Webhooks make
+ * this unnecessary — then it just returns the stored state.
+ */
+export async function checkMessageStatus(id, { ask = true } = {}) {
+  if (!ObjectId.isValid(id)) return null;
+  const c = await collection();
+  const doc = await c.findOne({ _id: new ObjectId(id) });
+  if (!doc) return null;
+  const open = ['sent', 'delivered'].includes(doc.status);
+  const recent = Date.now() - (lastSingleCheck.get(id) || 0) < 30_000;
+  if (ask && open && !recent && !watiPausedUntil() && config.wati.endpoint && config.wati.accessToken) {
+    lastSingleCheck.set(id, Date.now());
+    try {
+      const items = await fetchWatiMessages(doc.toNumber);
+      const claimed = new Set((await c.distinct('watiMessageId', { toNumber: doc.toNumber, watiMessageId: { $ne: null }, _id: { $ne: doc._id } })) || []);
+      const item = doc.watiMessageId ? items.find((m) => m.id === doc.watiMessageId) : matchWatiItem(doc, items, claimed);
+      if (item) {
+        const status = WATI_STATUS[String(item.statusString || '').toUpperCase()];
+        const extra = { watiMessageId: item.id, watiStatus: item.statusString || null, lastCheckedAt: new Date() };
+        if (status === 'failed') {
+          extra.error = String(item.failedDetail || 'WATI reported the message as failed').slice(0, 500);
+          extra.failedDetail = extra.error;
+          extra.notOnWhatsApp = isNotOnWhatsApp(item.failedDetail);
+        }
+        await applyStatus(c, doc, status, { note: `WATI: ${item.statusString}`, extra });
+      } else {
+        await c.updateOne({ _id: doc._id }, { $set: { lastCheckedAt: new Date() } });
+      }
+    } catch {
+      // WATI unreachable / refusing — keep the stored state
+    }
+  }
+  return messageState(await c.findOne({ _id: doc._id }));
 }
 
 // ---- WATI webhooks ----------------------------------------------------------

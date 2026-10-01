@@ -239,7 +239,7 @@ function renderPatientCard(meta, { regNo, ipNo, bloodGroup, physicianName, repor
   });
 }
 
-export function buildInvestigationChartHtml({ hospital, regNo, ipNo, chart, physicianName }) {
+export function buildInvestigationChartHtml({ hospital, regNo, ipNo, chart, physicianName, subtitle = 'Laboratory investigation chart · admission to discharge' }) {
   const { chartDates, chartValues, patientMeta, template } = chart;
   const pages = chunkArray(chartDates, 4);
   const bloodGroup = findLatestFieldValue(template, chartValues, chartDates, /blood\s*group/i);
@@ -247,7 +247,7 @@ export function buildInvestigationChartHtml({ hospital, regNo, ipNo, chart, phys
     chartDates.length > 1 ? `${chartDates[0]} – ${chartDates[chartDates.length - 1]}` : chartDates[0] || '';
   const letterhead = letterheadHtml(hospital, {
     title: 'Diagnostics Summary',
-    subtitle: 'Laboratory investigation chart · admission to discharge',
+    subtitle,
     meta: `Generated ${formatGeneratedDate()}`,
   });
   const patientCard = renderPatientCard(patientMeta, { regNo, ipNo, bloodGroup, physicianName, reportPeriod });

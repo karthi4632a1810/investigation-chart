@@ -130,6 +130,7 @@ const EMPTY_USER = {
   email: '',
   password: '',
   active: true,
+  mustChangePassword: true,
   permissions: null,
 };
 
@@ -187,7 +188,9 @@ function UserEditor({ model, user, onClose, onSaved }) {
         active: form.active,
         permissions: p,
       };
-      const saved = isNew ? await createUser({ ...payload, username: form.username.trim().toLowerCase(), password: form.password }) : await updateUser(user.username, payload);
+      const saved = isNew
+        ? await createUser({ ...payload, username: form.username.trim().toLowerCase(), password: form.password, mustChangePassword: form.mustChangePassword })
+        : await updateUser(user.username, payload);
       onSaved(saved, isNew ? { password: form.password } : null);
     } catch (err) {
       setError(err.message);
@@ -266,7 +269,11 @@ function UserEditor({ model, user, onClose, onSaved }) {
                       Generate
                     </button>
                   </div>
-                  <small>Give this to the person; they can change it from their profile.</small>
+                  <small>Give this to the person to sign in the first time.</small>
+                  <label className="um-inline-check">
+                    <input type="checkbox" checked={form.mustChangePassword} onChange={(e) => setForm((f) => ({ ...f, mustChangePassword: e.target.checked }))} />
+                    <span>Make them choose their own password at first sign-in (then only they know it)</span>
+                  </label>
                 </label>
               )}
             </div>
@@ -483,6 +490,7 @@ function UserEditor({ model, user, onClose, onSaved }) {
 
 function PasswordDialog({ user, onClose, onDone }) {
   const [password, setPassword] = useState(generatePassword);
+  const [mustChange, setMustChange] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   async function save(e) {
@@ -490,7 +498,7 @@ function PasswordDialog({ user, onClose, onDone }) {
     setBusy(true);
     setError('');
     try {
-      await resetUserPassword(user.username, password);
+      await resetUserPassword(user.username, password, mustChange);
       onDone(password);
     } catch (err) {
       setError(err.message);
@@ -505,7 +513,7 @@ function PasswordDialog({ user, onClose, onDone }) {
           <KeyIcon size={18} /> Reset password
         </h3>
         <p>
-          New password for <b>{user.name}</b>. They'll be signed out on every device.
+          Set a new password for <b>{user.name}</b> — e.g. if they forgot theirs. Passwords are stored encrypted, so nobody can see the old one. They'll be signed out on every device.
         </p>
         <div className="um-password">
           <input value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
@@ -513,6 +521,10 @@ function PasswordDialog({ user, onClose, onDone }) {
             Generate
           </button>
         </div>
+        <label className="um-inline-check">
+          <input type="checkbox" checked={mustChange} onChange={(e) => setMustChange(e.target.checked)} />
+          <span>Make them choose a new password when they sign in (recommended — then only they know it)</span>
+        </label>
         {error && <div className="um-error">{error}</div>}
         <div className="um-modal-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>
@@ -775,6 +787,11 @@ export default function UserManagement() {
                     <LockIcon size={12} /> Locked (wrong passwords)
                   </span>
                 )}
+                {u.mustChangePassword && (
+                  <span className="is-pending">
+                    <KeyIcon size={12} /> Will set own password at next sign-in
+                  </span>
+                )}
               </div>
             </div>
             <div className="um-user-actions">
@@ -857,7 +874,11 @@ export default function UserManagement() {
           onSaved={(saved, created) => {
             setEditing(null);
             load();
-            if (created) flash(`${saved.name} can now sign in as “${saved.username}” with this password:`, created.password);
+            if (created)
+              flash(
+                `${saved.name} can sign in as “${saved.username}” with this password${saved.mustChangePassword ? ' — they\'ll then choose their own' : ''}:`,
+                created.password,
+              );
             else flash(`${saved.name}'s access is saved — it applies from their next click`);
           }}
         />

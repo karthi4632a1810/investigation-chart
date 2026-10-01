@@ -266,6 +266,9 @@ export function publicUser(user) {
     email: user.email || '',
     isSuperAdmin: Boolean(user.isSuperAdmin),
     active: user.active !== false,
+    // Set by the super admin's create / reset: the person must choose their
+    // own password before using the portal, so only they know it.
+    mustChangePassword: Boolean(user.mustChangePassword),
     permissions,
     scheduleText: describeSchedule(permissions.schedule),
     allowedNow: scheduleAllows(permissions.schedule),
@@ -377,6 +380,7 @@ export async function createUser(input = {}, by) {
     active: input.active !== false,
     permissions: normalizePermissions(input.permissions),
     passwordHash: await hashPassword(input.password),
+    mustChangePassword: input.mustChangePassword !== false,
     tokenVersion: 0,
     loginCount: 0,
     failedLogins: 0,
@@ -404,8 +408,11 @@ export async function updateUser(username, input = {}, by) {
   return publicUser(await c.findOne({ _id: key }));
 }
 
-/** Sets a new password and signs the user out everywhere. */
-export async function setPassword(username, password, by) {
+/**
+ * Sets a new password and signs the user out everywhere. A reset by the super
+ * admin (mustChange) makes them choose their own at the next sign-in.
+ */
+export async function setPassword(username, password, by, { mustChange = false } = {}) {
   const key = normalizeUsername(username);
   if (key === SUPER()) throw httpError('The super admin password is set in the server .env (APP_PASSWORD)');
   checkPasswordRules(password);
@@ -413,7 +420,15 @@ export async function setPassword(username, password, by) {
   const res = await c.updateOne(
     { _id: key },
     {
-      $set: { passwordHash: await hashPassword(password), passwordChangedAt: new Date(), updatedAt: new Date(), updatedBy: by || null, lockedUntil: null, failedLogins: 0 },
+      $set: {
+        passwordHash: await hashPassword(password),
+        passwordChangedAt: new Date(),
+        mustChangePassword: Boolean(mustChange),
+        updatedAt: new Date(),
+        updatedBy: by || null,
+        lockedUntil: null,
+        failedLogins: 0,
+      },
       $inc: { tokenVersion: 1 },
     },
   );
@@ -426,7 +441,8 @@ export async function changeOwnPassword(username, current, next) {
   if (key === SUPER()) throw httpError('The super admin password is set in the server .env (APP_PASSWORD)');
   const user = await (await collection()).findOne({ _id: key });
   if (!user || !(await verifyPassword(current, user.passwordHash))) throw httpError('Your current password is wrong', 403);
-  await setPassword(key, next, key);
+  if (String(current) === String(next)) throw httpError('Choose a new password — not the one you were given');
+  await setPassword(key, next, key, { mustChange: false });
   return (await (await collection()).findOne({ _id: key })).tokenVersion || 0;
 }
 

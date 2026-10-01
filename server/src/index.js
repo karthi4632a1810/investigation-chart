@@ -35,10 +35,12 @@ import {
 } from './services/userService.js';
 import { hasCriteria, labResultsCoverage, listLabTests, normaliseQuery, searchLabResults } from './services/labResultsService.js';
 import { buildExport, EXPORT_FORMATS, exportFileName, shareLabResultsOnWhatsApp } from './services/labExportService.js';
-import { toWatiNumber } from './services/watiService.js';
+import { checkWhatsAppNumber, toWatiNumber } from './services/watiService.js';
 import { runAssistant } from './services/assistantService.js';
 import { buildDischargeExport, DISCHARGE_EXPORT_FORMATS } from './services/dischargeReportQuery.js';
 import { sendTestWhatsApp } from './services/whatsappTestService.js';
+import { lookupKey, sendLookupWhatsApp } from './services/labLookupService.js';
+import { checkMessageStatus } from './services/whatsappLogService.js';
 import {
   getPollState,
   getWhatsappMessage,
@@ -359,7 +361,14 @@ app.get('/api/detail/:orderid', async (req, res) => {
         return res.status(404).json({ ok: false, error: 'No lab report or discharge summary to send' });
       }
 
-      const toNumber = settings.liveEnabled ? record?.mobile : settings.fixedNumber;
+      // The confirm popup may send an edited number; otherwise the mode decides.
+      const defaultNumber = settings.liveEnabled ? record?.mobile : settings.fixedNumber;
+      let toNumber = defaultNumber;
+      if (req.body?.toNumber) {
+        const checked = checkWhatsAppNumber(req.body.toNumber);
+        if (!checked.ok) return res.status(400).json({ ok: false, error: checked.error });
+        toNumber = checked.digits;
+      }
       if (!toNumber) {
         return res.status(400).json({
           ok: false,
@@ -383,6 +392,7 @@ app.get('/api/detail/:orderid', async (req, res) => {
           patientName: record?.name || '',
           department: record?.department || '',
           liveMode: settings.liveEnabled,
+          numberEdited: Boolean(req.body?.toNumber) && toWatiNumber(req.body.toNumber) !== toWatiNumber(defaultNumber),
         },
       });
       if (result.failed.length) {
@@ -673,6 +683,53 @@ app.get('/api/detail/:orderid', async (req, res) => {
     }
   });
 
+  /**
+   * Ask AI lab lookups (labLookupService.js): the PDF found straight in the
+   * EMR (OP patients too), its WhatsApp send, and a sent message's status.
+   */
+  app.get('/api/assistant/lookup/:day/:id.pdf', async (req, res) => {
+    const key = lookupKey(req.params.day, req.params.id);
+    if (!key) return res.status(400).json({ ok: false, error: 'Invalid lab report link' });
+    try {
+      const pdf = await getPdfStream(key);
+      if (!pdf) return res.status(404).json({ ok: false, error: 'That lab report is no longer available — ask again' });
+      const name = String(req.query.name || 'Lab-Report.pdf').replace(/[^\w.-]+/g, '-');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Length', pdf.size);
+      res.setHeader('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${name}"`);
+      pdf.stream.on('error', () => res.destroy());
+      pdf.stream.pipe(res);
+    } catch (error) {
+      res.status(503).json({ ok: false, error: `Reports store unavailable: ${error.message}` });
+    }
+  });
+
+  app.post('/api/assistant/lookup/:day/:id/whatsapp', async (req, res) => {
+    try {
+      const sent = await sendLookupWhatsApp({
+        day: req.params.day,
+        lookupId: req.params.id,
+        toNumber: req.body?.toNumber,
+        name: req.body?.name,
+        id: req.body?.patientId,
+        triggeredBy: getSessionUser(req),
+      });
+      res.json({ ok: true, ...sent });
+    } catch (error) {
+      res.status(error.status || 502).json({ ok: false, error: error.message });
+    }
+  });
+
+  app.post('/api/assistant/message/:id/status', async (req, res) => {
+    try {
+      const state = await checkMessageStatus(req.params.id, { ask: Boolean(req.body?.check) });
+      if (!state) return res.status(404).json({ ok: false, error: 'Message not found' });
+      res.json({ ok: true, message: state });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   /** The Send button on an Ask AI test-message card. */
   app.post('/api/assistant/test-whatsapp', async (req, res) => {
     try {
@@ -701,7 +758,7 @@ app.get('/api/detail/:orderid', async (req, res) => {
   app.post(
     '/api/users/:username/password',
     userRoute(async (req) => {
-      await setPassword(req.params.username, req.body?.password, getSessionUser(req));
+      await setPassword(req.params.username, req.body?.password, getSessionUser(req), { mustChange: req.body?.mustChange !== false });
       return {};
     }),
   );

@@ -114,6 +114,9 @@ export async function requireSession(req, res, next) {
     if (!account) return res.status(401).json({ ok: false, error: 'Please log in again' });
     if (account.blocked) return res.status(401).json({ ok: false, code: 'outside_hours', error: account.blocked });
     req.user = account.user;
+    if (account.user.mustChangePassword && !['/api/me', '/api/me/password'].includes(req.path)) {
+      return res.status(403).json({ ok: false, code: 'must_change_password', error: 'Choose your own password first' });
+    }
     authorize(req, res, next);
   } catch (error) {
     res.status(503).json({ ok: false, error: `Sign-in check failed: ${error.message}` });

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  checkWhatsAppNumber,
   defaultDateOnly,
   fetchNotOnWhatsappNumbers,
+  fetchWatiSettings,
   fetchReportsForDate,
   fetchReportStatus,
   reportPdfUrl,
@@ -279,26 +281,137 @@ function ToastNotification({ toast, onDismiss }) {
   );
 }
 
+/** "+91 99624 60782" for a stored number (10 digits, 91…, or +91…). */
+function prettyNumber(raw) {
+  const d = String(raw || '').replace(/\D/g, '');
+  const local = d.length === 12 && d.startsWith('91') ? d.slice(2) : d.length === 10 ? d : '';
+  return local ? `+91 ${local.slice(0, 5)} ${local.slice(5)}` : raw ? `+${d}` : '';
+}
+
+/**
+ * WATI Settings → "Confirm the number before sending": the number the send
+ * would use — the test number in Test mode, the patient's mobile when Live —
+ * shown editable before anything goes out.
+ */
+function SendConfirmDialog({ patient, live, defaultNumber, documents, onCancel, onSend }) {
+  const [number, setNumber] = useState(() => prettyNumber(defaultNumber));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const check = checkWhatsAppNumber(number);
+  const edited = String(number).replace(/\D/g, '').slice(-10) !== String(defaultNumber || '').replace(/\D/g, '').slice(-10);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === 'Escape' && !busy && onCancel();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [busy, onCancel]);
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!check.ok) return;
+    setBusy(true);
+    setError('');
+    try {
+      await onSend(check.digits);
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="um-modal-backdrop" onMouseDown={() => !busy && onCancel()}>
+      <form className="um-modal wa-send" onMouseDown={(e) => e.stopPropagation()} onSubmit={submit} aria-label="Send on WhatsApp">
+        <h3>
+          <WhatsAppIcon size={18} /> Send on WhatsApp
+        </h3>
+        <div className="wa-send-patient">
+          <b>{patient.name}</b>
+          <span>
+            {patient.ipNo}
+            {patient.department ? ` · ${patient.department}` : ''}
+          </span>
+        </div>
+        <span className={`wa-send-mode ${live ? 'is-live' : 'is-test'}`}>
+          {live ? "Live mode — the patient's mobile" : 'Test mode — the test number'}
+        </span>
+        <label className="wa-send-field">
+          <span>WhatsApp number</span>
+          <input
+            value={number}
+            onChange={(e) => {
+              setNumber(e.target.value);
+              setError('');
+            }}
+            inputMode="tel"
+            placeholder="+91 98765 43210"
+            autoFocus
+            aria-invalid={!check.ok}
+          />
+        </label>
+        {!check.ok && number && <div className="wa-send-error">{check.error}</div>}
+        {!defaultNumber && <div className="wa-send-error">{live ? 'No mobile number on file for this patient — type one.' : 'No test number set — type one.'}</div>}
+        {edited && check.ok && defaultNumber && (
+          <button type="button" className="ai-link wa-send-reset" onClick={() => setNumber(prettyNumber(defaultNumber))}>
+            Use {prettyNumber(defaultNumber)} instead
+          </button>
+        )}
+        <div className="wa-send-docs">
+          {documents.map((d) => (
+            <span key={d}>
+              <FilePdfIcon size={13} /> {d}
+            </span>
+          ))}
+        </div>
+        <p className="wa-send-note">Each report goes as its own WhatsApp message.</p>
+        {error && <div className="wa-send-error is-block">{error}</div>}
+        <div className="um-modal-actions">
+          <button type="button" className="btn btn-secondary" onClick={onCancel} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-primary wa-send-btn" disabled={busy || !check.ok}>
+            {busy ? 'Sending…' : 'Send'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 /** Self-contained so each row tracks its own send state independently. */
-function SendWhatsAppButton({ date, ipNo, name, onToast }) {
+function SendWhatsAppButton({ date, ipNo, name, onToast, patient, waSettings, access = FULL_ACCESS }) {
   const [status, setStatus] = useState('idle'); // idle | sending | sent | error
   const [error, setError] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const live = Boolean(waSettings?.liveEnabled);
+  const defaultNumber = live ? patient?.mobile || '' : waSettings?.fixedNumber || '';
+  const documents = [
+    access.showLab && patient?.dateCount !== undefined && 'Lab Report',
+    access.showSummary && patient?.hasSummary && !patient?.summaryDataMissing && 'Discharge Summary',
+  ].filter(Boolean);
 
-  async function handleClick(e) {
-    e?.preventDefault?.();
-    e?.stopPropagation?.();
-    if (status === 'sending') return;
+  async function send(toNumber) {
     setStatus('sending');
     setError('');
     try {
-      const result = await sendReportWhatsApp(date, ipNo);
+      const result = await sendReportWhatsApp(date, ipNo, toNumber);
       setStatus('sent');
+      setConfirming(false);
       const docs = result.sent.map((d) => d.label).join(' + ');
-      if (onToast) onToast(`WhatsApp sent to ${result.sentTo}: ${docs}`);
+      if (onToast) onToast(`WhatsApp sent to ${prettyNumber(result.sentTo) || result.sentTo}: ${docs}`);
     } catch (err) {
       setStatus('error');
       setError(err.message);
+      throw err;
     }
+  }
+
+  function handleClick(e) {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    if (status === 'sending') return;
+    if (waSettings?.confirmBeforeSend && patient) setConfirming(true);
+    else send().catch(() => {});
   }
 
   if (status === 'sent') {
@@ -317,16 +430,28 @@ function SendWhatsAppButton({ date, ipNo, name, onToast }) {
         : `Send lab report + discharge summary to ${name} via WhatsApp`;
 
   return (
-    <button
-      type="button"
-      className="btn btn-send-whatsapp btn-icon-only"
-      onClick={handleClick}
-      disabled={status === 'sending'}
-      title={label}
-      aria-label={label}
-    >
-      <WhatsAppIcon size={15} />
-    </button>
+    <>
+      <button
+        type="button"
+        className="btn btn-send-whatsapp btn-icon-only"
+        onClick={handleClick}
+        disabled={status === 'sending'}
+        title={label}
+        aria-label={label}
+      >
+        <WhatsAppIcon size={15} />
+      </button>
+      {confirming && (
+        <SendConfirmDialog
+          patient={patient}
+          live={live}
+          defaultNumber={defaultNumber}
+          documents={documents}
+          onCancel={() => setConfirming(false)}
+          onSend={send}
+        />
+      )}
+    </>
   );
 }
 
@@ -351,7 +476,7 @@ function NoWhatsAppBadge() {
   );
 }
 
-function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS }) {
+function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS, waSettings }) {
   if (!patients.length) return null;
 
   return (
@@ -490,6 +615,9 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                         ipNo={p.ipNo}
                         name={p.name}
                         onToast={onToast}
+                        patient={p}
+                        waSettings={waSettings}
+                        access={access}
                       />
                     )}
                     {p.dateCount === undefined && !p.hasSummary && <span className="text-muted">—</span>}
@@ -529,7 +657,7 @@ function summaryApprover(p) {
   return p.summaryApprovedBy || p.doctor || 'Treating Consultant';
 }
 
-function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS }) {
+function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS, waSettings }) {
   if (!patients.length) return null;
 
   return (
@@ -675,7 +803,7 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                   </span>
                 )}
                 {access.reports.showWhatsApp && hasSendableDocument(p, access) && (
-                  <SendWhatsAppButton date={p.date} ipNo={p.ipNo} name={p.name} onToast={onToast} />
+                  <SendWhatsAppButton date={p.date} ipNo={p.ipNo} name={p.name} onToast={onToast} patient={p} waSettings={waSettings} access={access} />
                 )}
               </div>
             </footer>
@@ -1001,6 +1129,13 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
   const [filterText, setFilterText] = useState('');
   // Numbers that failed as "not on WhatsApp" — tagged next to the patient's mobile.
   const [noWhatsApp, setNoWhatsApp] = useState(() => new Set());
+  // Test / Live and "confirm the number before sending" for the WhatsApp buttons.
+  const [waSettings, setWaSettings] = useState(null);
+  useEffect(() => {
+    fetchWatiSettings()
+      .then(setWaSettings)
+      .catch(() => {});
+  }, []);
 
   // The AI assistant can open this screen at a date, with the list filtered.
   useEffect(() => {
@@ -1571,6 +1706,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
                   onToast={showToast}
                   noWhatsApp={noWhatsApp}
                   access={access}
+                  waSettings={waSettings}
                 />
               ) : (
                 <>
@@ -1583,6 +1719,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
                       onToast={showToast}
                       noWhatsApp={noWhatsApp}
                       access={access}
+                      waSettings={waSettings}
                     />
                   </div>
                   <div className="responsive-cards-view">
@@ -1594,6 +1731,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
                       onToast={showToast}
                       noWhatsApp={noWhatsApp}
                       access={access}
+                      waSettings={waSettings}
                     />
                   </div>
                 </>

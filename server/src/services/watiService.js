@@ -28,6 +28,51 @@ export function toWatiNumber(raw) {
 }
 
 /**
+ * Checks a WhatsApp number someone typed. Returns { ok, digits } or
+ * { ok: false, error } with a message to show them — e.g. a 9-digit number
+ * asks for the full 10-digit mobile.
+ */
+export function checkWhatsAppNumber(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return { ok: false, error: 'Enter the WhatsApp number' };
+  let local = digits;
+  if (local.length === 12 && local.startsWith('91')) local = local.slice(2);
+  else if (local.length === 11 && local.startsWith('0')) local = local.slice(1);
+  if (local.length < 10) {
+    return { ok: false, error: `That number has only ${local.length} digit${local.length === 1 ? '' : 's'} — please enter the full 10-digit mobile number` };
+  }
+  if (local.length === 10) {
+    if (!/^[6-9]/.test(local)) return { ok: false, error: 'Indian mobile numbers start with 6, 7, 8 or 9 — please check the number' };
+    return { ok: true, digits: `91${local}` };
+  }
+  if (digits.length >= 11 && digits.length <= 15 && !digits.startsWith('91')) return { ok: true, digits }; // another country
+  return { ok: false, error: `That number has ${digits.length} digits — please check it (10-digit mobile, with or without +91)` };
+}
+
+/**
+ * Approved WATI templates with a per-message PDF header, and how each one's
+ * parameters are filled (checked against GET /api/v1/getMessageTemplates).
+ *  - investigation: {{1}} name, {{2}} extra line, {{3}} PDF — the reports' default
+ *  - investigation_report: {{1}} name, {{3}} PDF
+ *  - mapims_lab_rpt: {{1}} name, {{attachmentLink}} PDF — "Your laboratory report is ready"
+ */
+export const DOCUMENT_TEMPLATES = {
+  investigation: (name, note, url) => [
+    { name: '1', value: name },
+    { name: '2', value: note || ' ' },
+    { name: '3', value: url },
+  ],
+  investigation_report: (name, _note, url) => [
+    { name: '1', value: name },
+    { name: '3', value: url },
+  ],
+  mapims_lab_rpt: (name, _note, url) => [
+    { name: '1', value: name },
+    { name: 'attachmentLink', value: url },
+  ],
+};
+
+/**
  * The template's {{2}} line. Each document goes out as its own message (a
  * WhatsApp template carries at most one document header), so the line names
  * which document this one is, followed by the optional extra text from WATI
@@ -44,7 +89,7 @@ export function documentLine(label, extra) {
  *     patientName, department, liveMode }. Every send with it is recorded as
  *   pending → sent / failed, and later delivered / read.
  */
-export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pdfUrl, log }) {
+export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pdfUrl, log, template }) {
   if (!config.wati.endpoint || !config.wati.accessToken) {
     throw new Error('WATI is not configured — set API_ENDPOINT and WATI_ACCESS_TOKEN in server/.env');
   }
@@ -53,21 +98,26 @@ export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pd
 
   const digits = toWatiNumber(toNumber);
 
+  // Another approved document template (Ask AI lab lookups), or the default.
+  const templateName = template && DOCUMENT_TEMPLATES[template] ? template : config.wati.templateId;
+  const parameters = template && DOCUMENT_TEMPLATES[template]
+    ? DOCUMENT_TEMPLATES[template](name || 'Patient', note, pdfUrl)
+    : [
+        { name: '1', value: name || 'Patient' },
+        { name: '2', value: note || '' },
+        { name: '3', value: pdfUrl },
+      ];
   const payload = {
-    template_name: config.wati.templateId,
-    broadcast_name: `investigation_${digits}_${Date.now()}`,
-    parameters: [
-      { name: '1', value: name || 'Patient' },
-      { name: '2', value: note || '' },
-      { name: '3', value: pdfUrl },
-    ],
+    template_name: templateName,
+    broadcast_name: `${templateName}_${digits}_${Date.now()}`,
+    parameters,
   };
 
   // A retry (log.existingId) reuses the failed record; anything else starts a new one.
   const logId = log?.existingId
     ? await logRetryStart(log.existingId, log).catch(() => null)
     : log
-      ? await logSendStart({ ...log, toNumber: digits, template: config.wati.templateId, patientName: log.patientName ?? name }).catch(() => null)
+      ? await logSendStart({ ...log, toNumber: digits, template: templateName, patientName: log.patientName ?? name }).catch(() => null)
       : null;
 
   try {
@@ -80,7 +130,8 @@ export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pd
     }
     const data = await postTemplate(digits, payload);
     await logSendResult(logId, { ok: true, response: data }).catch(() => {});
-    return data;
+    // logId: the WhatsApp Monitor record, so the caller can follow its ticks.
+    return { ...data, logId };
   } catch (error) {
     await logSendResult(logId, { ok: false, error: error.message }).catch(() => {});
     throw error;

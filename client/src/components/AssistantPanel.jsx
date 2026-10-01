@@ -1,7 +1,18 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { EXPORT_LABELS, askAssistant, downloadDischargeExport, downloadLabResults, downloadWhatsappExport, sendTestWhatsApp } from '../api/client';
+import {
+  EXPORT_LABELS,
+  askAssistant,
+  checkWhatsAppNumber,
+  downloadDischargeExport,
+  downloadLabResults,
+  downloadWhatsappExport,
+  fetchMessageStatus,
+  lookupPdfUrl,
+  sendLookupWhatsApp,
+  sendTestWhatsApp,
+} from '../api/client';
 import ExportShareBar from './ExportShareBar';
-import { CheckIcon, CloseIcon, RotateCcwIcon, SendIcon, SparklesIcon, WhatsAppIcon } from './Icons';
+import { CheckIcon, CloseIcon, ExternalLinkIcon, FilePdfIcon, RotateCcwIcon, SendIcon, SparklesIcon, WhatsAppIcon } from './Icons';
 
 const SUGGESTIONS = [
   "Show today's discharges",
@@ -383,6 +394,182 @@ function DischargeReportBlock({ block, onNavigate }) {
   );
 }
 
+// ---- Lab reports looked up in the EMR (OP patients too) ------------------------
+
+const STATE_TEXT = {
+  pending: 'Sending…',
+  sent: 'Sent ✓ — WhatsApp hasn\'t confirmed delivery yet',
+  delivered: 'Delivered ✓✓ — not read yet',
+  read: 'Read ✓✓ — the patient opened it',
+};
+
+/** Follows a sent message: delivered / read / failed. Free re-reads; "Check with WATI" asks WATI once. */
+function MessageStatus({ id }) {
+  const [state, setState] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const [note, setNote] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    let tries = 0;
+    const read = () => fetchMessageStatus(id, false).then((m) => alive && setState(m)).catch(() => {});
+    read();
+    const timer = setInterval(() => {
+      tries += 1;
+      if (tries > 20) clearInterval(timer); // ~5 minutes
+      read();
+    }, 15_000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [id]);
+
+  async function check() {
+    setChecking(true);
+    setNote('');
+    try {
+      const m = await fetchMessageStatus(id, true);
+      setState(m);
+      if (m.status === 'sent') setNote('WATI has no delivery tick yet — the phone may be off or offline.');
+    } catch (err) {
+      setNote(err.message);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  if (!state) return <div className="ai-test-status">Sent — checking status…</div>;
+  const failed = state.status === 'failed';
+  const text = failed
+    ? state.notOnWhatsApp
+      ? 'This number is not on WhatsApp — please check the number and try another.'
+      : `Not delivered: ${state.reason || 'WATI reported a failure'}${state.error ? ` (${state.error})` : ''}`
+    : STATE_TEXT[state.status] || state.status;
+  return (
+    <div className={`ai-test-status ${failed ? 'is-error' : state.status === 'read' ? 'is-ok' : ''}`} role="status">
+      {state.status === 'read' && <CheckIcon size={13} />} {text}
+      {!failed && state.status !== 'read' && (
+        <button type="button" className="ai-link" onClick={check} disabled={checking}>
+          {checking ? 'Checking…' : 'Check with WATI'}
+        </button>
+      )}
+      {note && <span className="ai-report-note">{note}</span>}
+    </div>
+  );
+}
+
+/** Number box + Send for a looked-up lab report, then its delivery status. */
+function LookupSender({ lookup, initialNumber = '', onSent }) {
+  const [number, setNumber] = useState(initialNumber);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [sent, setSent] = useState(null);
+  const check = checkWhatsAppNumber(number);
+
+  async function send(e) {
+    e.preventDefault();
+    if (!check.ok) return;
+    setBusy(true);
+    setError('');
+    try {
+      const r = await sendLookupWhatsApp(lookup, check.digits);
+      setSent(r);
+      onSent?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (sent) {
+    return (
+      <div className="ai-lookup-sent">
+        <div className="ai-test-status is-ok">
+          <WhatsAppIcon size={13} /> Sent to {sent.sentTo} with the “{sent.template}” template.
+        </div>
+        {sent.messageId && <MessageStatus id={sent.messageId} />}
+        <button type="button" className="ai-link" onClick={() => setSent(null)}>
+          Send to another number
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form className="xs-share" onSubmit={send}>
+      <label className="xs-share-label" htmlFor={`lk-${lookup.lookupId}`}>
+        Send this lab report on WhatsApp to
+      </label>
+      <div className="xs-share-row">
+        <input id={`lk-${lookup.lookupId}`} type="tel" inputMode="tel" placeholder="WhatsApp number, e.g. 99624 60782" value={number} onChange={(e) => setNumber(e.target.value)} autoFocus />
+        <button type="submit" className="xs-send" disabled={busy || !check.ok}>
+          {busy ? 'Sending…' : 'Send'}
+        </button>
+      </div>
+      {number && !check.ok && <div className="xs-note is-error">{check.error}</div>}
+      {error && <div className="xs-note is-error">{error}</div>}
+    </form>
+  );
+}
+
+function LabLookupBlock({ block, canSend }) {
+  const [sharing, setSharing] = useState(false);
+  if (!block.found) {
+    return (
+      <div className="ai-block ai-block-empty">
+        No lab results in the EMR for <b>{block.id}</b> between {block.range}.
+      </div>
+    );
+  }
+  const p = block.patient;
+  return (
+    <div className="ai-block ai-lookup">
+      <div className="ai-block-title">
+        <FilePdfIcon size={14} /> Lab report · {p.name || block.id}
+      </div>
+      <div className="ai-patient-meta">
+        {p.uhid && <span>UHID {p.uhid}</span>}
+        {p.ipNo && <span>{p.ipNo}</span>}
+        <span className={`ai-pt-type is-${p.type.toLowerCase()}`}>{p.type === 'OP' ? 'OP patient' : 'IP patient'}</span>
+        {(p.age || p.sex) && <span>{[p.age, p.sex].filter(Boolean).join(' / ')}</span>}
+        {p.unit && <span>{p.unit}</span>}
+      </div>
+      <div className="ai-tests">
+        {block.tests} results · {block.dates} day{block.dates === 1 ? '' : 's'} ({block.firstDate}
+        {block.dates > 1 ? ` – ${block.lastDate}` : ''}) · searched {block.range}
+      </div>
+      <div className="xs-options">
+        <a className="xs-chip is-pdf" href={lookupPdfUrl(block)} target="_blank" rel="noreferrer">
+          <ExternalLinkIcon size={13} /> Open PDF
+        </a>
+        <a className="xs-chip is-pdf" href={lookupPdfUrl(block, true)}>
+          <FilePdfIcon size={13} /> Download PDF
+        </a>
+        {canSend && (
+          <button type="button" className={`xs-chip is-whatsapp ${sharing ? 'is-active' : ''}`} onClick={() => setSharing((v) => !v)}>
+            <WhatsAppIcon size={13} /> WhatsApp
+          </button>
+        )}
+      </div>
+      {sharing && canSend && <LookupSender lookup={block} />}
+      {p.type === 'OP' && <div className="ai-report-note">OP patients appear only here in Ask AI — not in Discharge Reports.</div>}
+    </div>
+  );
+}
+
+function LookupShareBlock({ block }) {
+  return (
+    <div className="ai-block">
+      <div className="ai-block-title">
+        <WhatsAppIcon size={14} /> Lab report of {block.lookup.name || block.lookup.id}
+      </div>
+      <LookupSender lookup={{ ...block.lookup, patient: { name: block.lookup.name } }} initialNumber={block.display} />
+    </div>
+  );
+}
+
 /** A test WhatsApp message waiting for Send — or its result when "yes" sent it. */
 function TestMessageBlock({ block, onDone }) {
   const [state, setState] = useState(block.status); // ready | sending | sent | failed | cancelled
@@ -445,7 +632,10 @@ function TestMessageBlock({ block, onDone }) {
 }
 
 function Blocks({ blocks, onNavigate, onTestDone }) {
+  const bar = useContext(BarAccess);
   return blocks.map((b, i) => {
+    if (b.type === 'labLookup') return <LabLookupBlock key={i} block={b} canSend={bar.allowShare} />;
+    if (b.type === 'lookupShare') return <LookupShareBlock key={i} block={b} />;
     if (b.type === 'testMessage') return <TestMessageBlock key={i} block={b} onDone={onTestDone} />;
     if (b.type === 'testDraft') return null;
     if (b.type === 'status') return <StatusBlock key={i} block={b} onNavigate={onNavigate} />;
@@ -511,6 +701,7 @@ export default function AssistantPanel({ onNavigate, view, access }) {
             delete next.pendingTest;
           }
         }
+        if (b.type === 'labLookup' && b.found) next.lastLookup = { day: b.day, lookupId: b.lookupId, id: b.id, name: b.patient?.name || '' };
         if (b.type === 'testMessage') {
           delete next.testDraft;
           if (b.status === 'ready') next.pendingTest = { message: b.message, toNumber: b.toNumber };

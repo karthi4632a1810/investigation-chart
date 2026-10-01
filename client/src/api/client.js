@@ -116,9 +116,12 @@ export function reportSummaryPdfUrl(date, ipNo) {
   return `${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/summary-pdf`;
 }
 
-export async function sendReportWhatsApp(date, ipNo) {
+/** `toNumber` (optional): the number confirmed / edited in the send popup. */
+export async function sendReportWhatsApp(date, ipNo, toNumber) {
   const res = await apiFetch(`${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/send-whatsapp`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(toNumber ? { toNumber } : {}),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Failed to send WhatsApp message');
@@ -349,8 +352,8 @@ export function updateUser(username, patch) {
   return sendJson('PUT', `${API_BASE}/users/${encodeURIComponent(username)}`, patch).then((d) => d.user);
 }
 
-export function resetUserPassword(username, password) {
-  return sendJson('POST', `${API_BASE}/users/${encodeURIComponent(username)}/password`, { password });
+export function resetUserPassword(username, password, mustChange = true) {
+  return sendJson('POST', `${API_BASE}/users/${encodeURIComponent(username)}/password`, { password, mustChange });
 }
 
 export function signOutUserEverywhere(username) {
@@ -364,4 +367,40 @@ export function deleteUser(username) {
 /** The signed-in user's own password. */
 export function changeMyPassword(current, password) {
   return sendJson('POST', `${API_BASE}/me/password`, { current, password });
+}
+
+// ---- Ask AI lab lookups (EMR, OP too) ----------------------------------------
+
+export function lookupPdfUrl(lookup, download = false) {
+  const name = encodeURIComponent(lookup.fileName || 'Lab-Report.pdf');
+  return `${API_BASE}/assistant/lookup/${lookup.day}/${lookup.lookupId}.pdf?name=${name}${download ? '&download=1' : ''}`;
+}
+
+export function sendLookupWhatsApp(lookup, toNumber) {
+  return sendJson('POST', `${API_BASE}/assistant/lookup/${lookup.day}/${lookup.lookupId}/whatsapp`, {
+    toNumber,
+    name: lookup.patient?.name || '',
+    patientId: lookup.id,
+  });
+}
+
+/** A sent message's state; `check` asks WATI once (otherwise just the stored state). */
+export function fetchMessageStatus(id, check = false) {
+  return sendJson('POST', `${API_BASE}/assistant/message/${encodeURIComponent(id)}/status`, { check }).then((d) => d.message);
+}
+
+/** Same checks as the server (watiService.js checkWhatsAppNumber), for instant feedback. */
+export function checkWhatsAppNumber(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return { ok: false, error: 'Enter the WhatsApp number' };
+  let local = digits;
+  if (local.length === 12 && local.startsWith('91')) local = local.slice(2);
+  else if (local.length === 11 && local.startsWith('0')) local = local.slice(1);
+  if (local.length < 10) return { ok: false, error: `That number has only ${local.length} digit${local.length === 1 ? '' : 's'} — enter the full 10-digit mobile number` };
+  if (local.length === 10) {
+    if (!/^[6-9]/.test(local)) return { ok: false, error: 'Indian mobile numbers start with 6, 7, 8 or 9 — please check the number' };
+    return { ok: true, digits: `91${local}` };
+  }
+  if (digits.length >= 11 && digits.length <= 15 && !digits.startsWith('91')) return { ok: true, digits };
+  return { ok: false, error: `That number has ${digits.length} digits — please check it` };
 }
