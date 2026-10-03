@@ -7,8 +7,10 @@
  * route can't be left open by accident.
  */
 import { FULL_PERMISSIONS, normalizePermissions } from './userService.js';
+import { applyGlobalSwitches } from './appSettingsService.js';
 
-const perms = (user) => (user.isSuperAdmin ? null : normalizePermissions(user.permissions));
+// Staff: their own permissions with the global switches (Master Settings) on top.
+const perms = (user) => (user.isSuperAdmin ? null : applyGlobalSwitches(normalizePermissions(user.permissions)));
 
 // Rule helpers: each returns (user) => true | 'reason'
 const screen = (id, level) => (user) => {
@@ -16,16 +18,19 @@ const screen = (id, level) => (user) => {
   if (!p) return true;
   const have = p.screens[id];
   if (level === 'read' ? have !== 'none' : have === 'write') return true;
+  if (p.readOnlyMode && have === 'read') return 'the portal is in read-only mode for maintenance';
   return have === 'none' ? `no access to ${label(id)}` : `${label(id)} is read-only for you`;
 };
 const ai = (level) => (user) => {
   const p = perms(user);
   if (!p || (level === 'ask' ? p.ai !== 'none' : p.ai === 'act')) return true;
+  if (p.readOnlyMode && level === 'act') return 'the portal is in read-only mode for maintenance';
   return level === 'ask' ? 'Ask AI is turned off for you' : 'Ask AI can only answer questions for you, not send';
 };
 const whatsappButton = (user) => {
   const p = perms(user);
-  return !p || p.whatsappButton ? true : 'sending on WhatsApp is turned off for you';
+  if (!p || p.whatsappButton) return true;
+  return p.readOnlyMode ? 'the portal is in read-only mode for maintenance' : 'sending on WhatsApp is turned off for you';
 };
 const reportKind = (kind) => (user) => {
   const p = perms(user);
@@ -33,6 +38,10 @@ const reportKind = (kind) => (user) => {
   return kind === 'lab' ? 'lab reports are hidden for you' : 'discharge summaries are hidden for you';
 };
 const superAdmin = (user) => (user.isSuperAdmin ? true : 'only the super admin can do this');
+const downloads = (user) => {
+  const p = perms(user);
+  return !p || p.exports !== false ? true : p.readOnlyMode ? 'downloads are paused (read-only mode)' : 'downloads are turned off for everyone';
+};
 const loggedIn = () => true;
 const all = (...rules) => (user) => {
   for (const r of rules) {
@@ -75,25 +84,30 @@ const RULES = [
   ['GET', /^\/api\/lab-results\/(tests|coverage)$/, screen('labFinder', 'read')],
   ['POST', /^\/api\/lab-results\/search$/, screen('labFinder', 'read')],
   // Also one patient's lab values (Ask AI's patient downloads).
-  ['POST', /^\/api\/lab-results\/export$/, anyOf(screen('labFinder', 'read'), all(screen('reports', 'read'), reportKind('lab')))],
+  ['POST', /^\/api\/lab-results\/export$/, all(downloads, anyOf(screen('labFinder', 'read'), all(screen('reports', 'read'), reportKind('lab'))))],
   ['POST', /^\/api\/lab-results\/share$/, anyOf(screen('labFinder', 'write'), all(ai('act'), screen('labFinder', 'read')))],
 
+  ['GET', /^\/api\/admin\/whatsapp\/export$/, all(downloads, screen('monitor', 'read'))],
   ['GET', /^\/api\/admin\/whatsapp\//, screen('monitor', 'read')],
   ['POST', /^\/api\/admin\/whatsapp\//, screen('monitor', 'write')],
   ['GET', /^\/api\/whatsapp\/not-on-whatsapp$/, screen('reports', 'read')],
-  ['GET', /^\/api\/discharges\/export$/, screen('reports', 'read')],
+  ['GET', /^\/api\/discharges\/export$/, all(downloads, screen('reports', 'read'))],
 
   ['POST', /^\/api\/assistant$/, ai('ask')],
   ['POST', /^\/api\/assistant\/test-whatsapp$/, ai('act')],
   // Lab reports looked up straight in the EMR (OP too) — same data as Lab Search.
   ['GET', /^\/api\/assistant\/lookup\/[^/]+\/[^/]+\.pdf$/, all(ai('ask'), screen('search', 'read'))],
   ['POST', /^\/api\/assistant\/lookup\/[^/]+\/[^/]+\/whatsapp$/, all(ai('act'), screen('search', 'read'))],
+  ['GET', /^\/api\/assistant\/lookup\/[^/]+\/[^/]+\.pdf$/, all(ai('ask'), screen('search', 'read'))],
   ['POST', /^\/api\/assistant\/message\/[^/]+\/status$/, ai('act')],
-  ['GET', /^\/api\/assistant\/export\/[^/]+\/[^/]+\.(pdf|xlsx|csv)$/, ai('ask')],
+  ['GET', /^\/api\/assistant\/export\/[^/]+\/[^/]+\.(pdf|xlsx|csv)$/, all(downloads, ai('ask'))],
+  // Master Settings — super admin only (also covered by the default rule).
+  [null, /^\/api\/settings(\/|$)/, superAdmin],
 
   [null, /^\/api\/users(\/|$)/, superAdmin],
   // Every signed-in browser reports its own screens / clicks / idle time; reading the log needs access.
   ['POST', /^\/api\/audit\/events$/, loggedIn],
+  ['GET', /^\/api\/audit\/export$/, all(downloads, screen('audit', 'read'))],
   [null, /^\/api\/audit\//, screen('audit', 'read')],
   [null, /^\/api\/me(\/|$)/, loggedIn],
 ];

@@ -5,6 +5,7 @@
  * → discharge → reports → WhatsApp → staff actions), and comparisons of two
  * patients or two dates of one patient's lab values.
  */
+import { searchPatients } from './patientSearchService.js';
 import { getMongoCollection } from './mongo.js';
 import { emrDetails, fetchDischargeList } from './dischargeReportService.js';
 
@@ -33,13 +34,8 @@ function stayLength(admitted, discharged) {
 export async function findRecord(id, date) {
   const q = String(id || '').trim();
   if (!q) return null;
-  const c = await getMongoCollection('discharge_reports');
-  let filter;
-  if (/^ip\s*\d+$/i.test(q)) filter = { ipNo: { $regex: `^${esc(q.replace(/\s+/g, ''))}$`, $options: 'i' } };
-  else if (/^\d{4,}$/.test(q)) filter = { $or: [{ regNo: q }, { ipNo: { $regex: `${esc(q)}$` } }] };
-  else filter = { name: { $regex: esc(q), $options: 'i' } };
-  if (DATE_RE.test(date || '')) filter = { ...filter, date };
-  const docs = await c.find(filter, { projection: { _id: 0, reqNos: 0 } }).sort({ date: -1 }).limit(5).toArray();
+  // Any value (IP, UHID, mobile, name …) — patientSearchService.js; best match first.
+  const docs = (await searchPatients(q, { date: DATE_RE.test(date || '') ? date : undefined, limit: 5 })).map(({ reqNos, match, ...d }) => d);
   return docs.length ? { record: docs[0], others: docs.slice(1) } : null;
 }
 

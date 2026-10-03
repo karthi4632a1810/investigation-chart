@@ -35,7 +35,7 @@ export async function login({ username, password }) {
 export async function checkSession() {
   const res = await fetch(`${API_BASE}/session`);
   const data = await res.json().catch(() => ({}));
-  if (res.ok) return { user: data.user };
+  if (res.ok) return { user: data.user, app: data.app || null };
   return { user: null, reason: data.code === 'outside_hours' ? data.error : '' };
 }
 
@@ -363,6 +363,16 @@ export function signOutUserEverywhere(username) {
 
 export function deleteUser(username) {
   return sendJson('DELETE', `${API_BASE}/users/${encodeURIComponent(username)}`);
+}
+
+/** Master Settings (super admin): every setting with its value, default and history, plus live numbers. */
+export function fetchMasterSettings() {
+  return sendJson('GET', `${API_BASE}/settings`);
+}
+
+/** `values`: { key: value } — null puts a setting back to its default. */
+export function saveMasterSettings(values) {
+  return sendJson('PUT', `${API_BASE}/settings`, { values });
 }
 
 /** The signed-in user's own password. */

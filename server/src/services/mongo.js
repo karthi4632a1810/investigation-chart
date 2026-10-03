@@ -27,3 +27,8 @@ export async function getMongoCollection(name) {
   const client = await getClient();
   return client.db(MONGO_DB).collection(name);
 }
+
+/** The database itself, for commands (e.g. changing a TTL index — auditService.js). */
+export async function getMongoDb() {
+  return (await getClient()).db(MONGO_DB);
+}

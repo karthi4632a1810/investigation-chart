@@ -142,7 +142,7 @@ function EventRow({ e, onUser, onSession }) {
   );
 }
 
-export default function AuditLog() {
+export default function AuditLog({ canExport = true }) {
   const [preset, setPreset] = useState('today');
   const [custom, setCustom] = useState(() => presetRange('7d'));
   const [user, setUser] = useState('');
@@ -254,12 +254,16 @@ export default function AuditLog() {
           <button type="button" className="al-hero-btn" onClick={() => load()} disabled={loading}>
             <RefreshIcon size={15} spinning={loading} /> Refresh
           </button>
-          <button type="button" className="al-hero-btn" onClick={() => download('xlsx')} disabled={Boolean(downloading)}>
-            {downloading === 'xlsx' ? 'Preparing…' : 'Excel'}
-          </button>
-          <button type="button" className="al-hero-btn" onClick={() => download('csv')} disabled={Boolean(downloading)}>
-            {downloading === 'csv' ? 'Preparing…' : 'CSV'}
-          </button>
+          {canExport && (
+            <>
+              <button type="button" className="al-hero-btn" onClick={() => download('xlsx')} disabled={Boolean(downloading)}>
+                {downloading === 'xlsx' ? 'Preparing…' : 'Excel'}
+              </button>
+              <button type="button" className="al-hero-btn" onClick={() => download('csv')} disabled={Boolean(downloading)}>
+                {downloading === 'csv' ? 'Preparing…' : 'CSV'}
+              </button>
+            </>
+          )}
         </div>
       </header>
 

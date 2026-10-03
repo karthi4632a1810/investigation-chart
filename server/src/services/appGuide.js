@@ -6,29 +6,39 @@
  * every prompt. Keep it in step with the UI when screens change.
  */
 
+import { setting } from './appSettingsService.js';
+
+// Timings the super admin can change in Master Settings — read when asked.
+const S = (key) => setting(key);
+
 export const GUIDE = [
   {
     id: 'overview',
     title: 'What the portal does',
     keywords: 'overview about purpose portal app application what is this diagnostics summary emr how it works flow',
-    text: `The Diagnostics Summary Portal (Adhiparasakthi Hospitals) turns EMR data into two PDFs for every discharged patient and can send them on WhatsApp:
-1. Every 15 minutes (:00, :15, :30, :45) the server checks the EMR (emr.mapims.edu.in) for today's discharges.
+    get text() {
+      return `The Diagnostics Summary Portal (Adhiparasakthi Hospitals) turns EMR data into two PDFs for every discharged patient and can send them on WhatsApp:
+1. Every ${S('discharge.checkMinutes')} minutes, on the clock, the server checks the EMR (emr.mapims.edu.in) for today's discharges${S('discharge.autoCheck') ? '' : ' — automatic checks are paused right now in Master Settings'}.
 2. For each new patient it builds the Lab Report (all lab results of the stay, as a "Diagnostics Summary" PDF) and fetches the Discharge Summary.
 3. PDFs are stored in MinIO, the patient list in MongoDB.
 4. In Live mode both PDFs go to the patient's WhatsApp through WATI automatically; in Test mode nothing is sent automatically and manual sends go to the test number.
-Screens: Lab Search, Discharge Reports, Lab Finder, WATI Settings, Monitor (WhatsApp Monitor) and, for the super admin, Users. Each person sees only the screens and features their account allows (see "Users and access").`,
+Screens: Lab Search, Discharge Reports, Lab Finder, WATI Settings, Monitor (WhatsApp Monitor), Audit Log and, for the super admin, Users and Settings (Master Settings). Each person sees only the screens and features their account allows (see "Users and access").`;
+    },
   },
   {
     id: 'login',
     title: 'Login screen',
     keywords: 'login sign in password username lock screen logout session expired log out forgot reset',
-    text: `The portal opens on a full-screen lock screen: clock, hospital name, and the Staff sign in card (username + password, eye icon shows the password). A session lasts 12 hours; after that, or after Logout (top right), you sign in again. "Please log in again" means the session expired.`,
+    get text() {
+      const idle = S('auth.idleSignOutMinutes');
+      return `The portal opens on a full-screen lock screen: clock, hospital name, and the Staff sign in card (username + password, eye icon shows the password). A session lasts ${S('auth.sessionHours')} hours; after that, or after Logout (top right), you sign in again. "Please log in again" means the session expired.${idle ? ` With no mouse or keyboard activity for ${idle} minutes you're signed out (a one-minute warning shows first).` : ''}`;
+    },
   },
   {
     id: 'navigation',
     title: 'Header, tabs and the profile menu',
     keywords: 'header tabs navigation menu top bar missing tab hidden lab finder monitor ask ai profile avatar name logout sign out where',
-    text: `Top bar: hospital name on the left; the tabs this account may open (Lab Search, Discharge Reports, Lab Finder, WATI Settings, Monitor, and Users for the super admin); on the right the profile button (initials + name). A tab or the Ask AI button that's missing means the account doesn't include it — the super admin can add it. The profile button shows your access, your access hours, Change password and Sign out. /admin opens the WhatsApp Monitor and /users the user list directly.`,
+    text: `Top bar: hospital name on the left; the tabs this account may open (Lab Search, Discharge Reports, Lab Finder, WATI Settings, Monitor, Audit Log, and Users and Settings for the super admin); on the right the profile button (initials + name). A tab or the Ask AI button that's missing means the account doesn't include it — the super admin can add it, or it is switched off for everyone in Master Settings. A coloured bar at the top of the page is an announcement from the super admin; a grey dashed "Read-only mode" bar means the portal is under maintenance (view only). The profile button shows your access, your access hours, Change password and Sign out. /admin opens the WhatsApp Monitor and /users the user list directly.`,
   },
   {
     id: 'discharge-reports',
@@ -38,8 +48,8 @@ Screens: Lab Search, Discharge Reports, Lab Finder, WATI Settings, Monitor (What
 - Date bar: Prev / Next day (keys [ and ], or arrow keys), Today (key T), or pick a date. "Check Now" runs the EMR check immediately; otherwise it runs every 15 minutes (countdown shown).
 - Stat chips after a check: found (discharges seen), generated (new lab reports), ready (already made), no lab data, failed, summaries, summary issues (will retry next check).
 - Category chips: All Patients, 📋 Lab Ready, 📄 Summary Ready, ⏳ No Lab Data, 🏢 Corporate.
-- Filter box: type a name, IP number, UHID, doctor or ward (Escape clears).
-- Cards / Table switch (top right of the list). Advanced Search searches across dates by IP number, UHID, name, doctor, department, ward, patient type, mobile, created by and discharge date period.`,
+- Filter box: type anything — name (any part, any order), IP number, UHID, mobile number in any format (+91 89396 05869, or its last digits), lab Req No, doctor, ward, town (Escape clears). If nobody on that date matches, "Search all dates" looks across every date.
+- Cards / Table switch (top right of the list). Advanced Search has a "Search anything" box (every date, best match first) plus fields for IP number, UHID, name, doctor, department, ward, patient type, mobile, created by and discharge date period.`,
   },
   {
     id: 'patient-card',
@@ -123,7 +133,7 @@ Each document is its own message (WhatsApp allows one file per template message)
     id: 'auto-send',
     title: 'When WhatsApp messages are sent',
     keywords: 'automatic auto send when trigger manual click share retry live test flow two messages order',
-    text: `- Automatic (Live mode only): as soon as each PDF is made in the 15-minute check, it's sent to the patient — lab report first, then the discharge summary.
+    text: `- Automatic (Live mode only, and "Send automatically in Live mode" on in Master Settings): as soon as each PDF is made in the regular EMR check, it's sent to the patient — lab report first, then the discharge summary.
 - Manual click: the round WhatsApp button on a card (Test mode → test number; Live → patient).
 - Share: from Lab Finder / Ask AI, to a number you type.
 - Retry: automatic re-sends, or the Retry button in the Monitor.
@@ -132,12 +142,22 @@ Every send is logged in the WhatsApp Monitor with who triggered it.`,
   {
     id: 'retries',
     title: 'Automatic retries',
-    keywords: 'retry retries retrying again automatic when will it retry failed resend button how often',
-    text: `Failed lab reports and summaries are re-sent automatically:
-- Network / WATI busy: after 2 min, 15 min, then 1 hour (4 tries in all).
-- WATI usage limit (429): every hour, and once WATI's pause ends, for about a day — nothing is lost.
-- Not on WhatsApp, invalid number or template problems are not retried — they need a person.
-Any failed report can be re-sent by hand: Monitor → open the message → Retry now. Lab Finder result lists aren't stored, so share them again from Lab Finder.`,
+    keywords: 'retry retries retrying again automatic when will it retry failed resend button how often not on whatsapp wrong tag 6 hours 3 days',
+    get text() {
+      const h = S('retry.everyHours');
+      const d = S('retry.forDays');
+      const q = S('retry.quickMinutes');
+      const perDay = Math.round((24 / h) * 10) / 10;
+      if (!S('retry.enabled')) {
+        return `Automatic retries are switched off in Master Settings — failed reports wait for someone to press Retry: Monitor → open the message → Retry now. The super admin can switch them back on (Settings → Automatic retries).`;
+      }
+      return `Failed lab reports and summaries are re-sent automatically, light on WATI's quota (the super admin sets all of this in Settings → Automatic retries):
+- Failed to send (network, WATI busy): ${q ? `one quick retry after ${q} minutes, then ` : ''}every ${h} hours for ${d} days (${perDay} a day, about ${Math.ceil((d * 24) / h)} tries).
+- Not on WhatsApp: ${S('retry.notOnWhatsApp') ? `also retried — every ${h} hours for ${d} days — because the tag is sometimes wrong: the phone may be off or its data off for days, or WhatsApp not updated. If it goes through, it shows as sent / delivered / read.` : 'not retried automatically (switched off in Master Settings); use Retry in the Monitor.'}
+- WATI usage limit (429): every hour, and once WATI's pause ends.
+- Template or setup errors aren't retried — they need a person.
+At most one try per phone number per round, and at most ${S('retry.dailyCap')} automatic tries a day. Any failed report can be re-sent by hand any time: Monitor → open the message → Retry now. The Monitor shows "Failed to send" and "Not on WhatsApp" separately.`;
+    },
   },
   {
     id: 'wati-quota',
@@ -214,15 +234,15 @@ To send sooner: ask WATI support to reset or raise the limit (more quota needs t
 - WhatsApp button on patient cards: on or off (needs Discharge Reports View & send).
 - Reports shown: Both, Lab report only, or Discharge summary only — also limits what they can send.
 - Access hours: days and a from–to time (India time; overnight works). Outside them they can't sign in and an open session ends.
-- On the list: the switch disables an account; the key sets a new password; the arrow signs them out on every device; the bin deletes. Five wrong passwords lock an account for 15 minutes (the lock icon unlocks it).
-Changes apply from the person's next click. Every rule is checked by the server too, not just hidden.`,
+- On the list: the switch disables an account; the key sets a new password; the arrow signs them out on every device; the bin deletes. Too many wrong passwords lock an account for a while (Master Settings → Sign-in & security; the lock icon unlocks it).
+Changes apply from the person's next click. Every rule is checked by the server too, not just hidden. Master Settings switches (e.g. the WhatsApp button or Ask AI off for everyone, read-only mode) sit above each person's own access.`,
   },
   {
     id: 'audit-log',
     title: 'Audit Log',
     keywords: 'audit log activity who did what when track tracking sign in sign out login logout session idle inactive tab away time clicks cancelled popup ai chats history department user report',
     text: `The Audit Log (tab "Audit Log"; super admin, or anyone given access) records who did what and when: sign-ins (and failed ones), sign-outs and session length, every screen opened, discharge dates viewed, filters used, IDs copied, PDFs opened, each WhatsApp click — and whether the popup was sent (to which number, edited or not) or cancelled — retries, exports, settings and user changes, and every Ask AI question with its answer. Each session shows active time, idle time (no mouse or keyboard for 5+ minutes) and time away from the tab.
-Views: Timeline (click a row for details, a person to see only them, "Show this session"), People, Departments, Sessions (online now, signed out or closed without signing out) and AI chats (full conversations). Filter by dates, person, department, type and text; "Show tab switches & idle" adds those events. Download as Excel or CSV. Records are kept for a year (AUDIT_RETENTION_DAYS). Opening or downloading the audit log is itself logged.`,
+Views: Timeline (click a row for details, a person to see only them, "Show this session"), People, Departments, Sessions (online now, signed out or closed without signing out) and AI chats (full conversations). Filter by dates, person, department, type and text; "Show tab switches & idle" adds those events. Download as Excel or CSV. How long records are kept, and whether tab switches and idle time are recorded, is set in Master Settings → Audit log (default a year). Opening or downloading the audit log is itself logged; so is every Master Settings change.`,
   },
   {
     id: 'my-profile',
@@ -234,7 +254,7 @@ Views: Timeline (click a row for details, a person to see only them, "Show this 
     id: 'op-lookup',
     title: 'Lab reports for OP patients / UHIDs not in the discharge list (Ask AI)',
     keywords: 'op out patient outpatient uhid not found lab report emr fetch find search any patient whatsapp send number pdf download',
-    text: `The portal is built around discharged IP patients; OP patients never appear in Discharge Reports, Lab Finder or the Monitor's patient lists. In Ask AI only, you can get any patient's lab report straight from the EMR lab: ask e.g. "find UHID 6159338" — if it isn't a discharged patient, Ask AI searches the EMR lab (last 30 days; say "last 6 months" or dates for more) and makes the lab report PDF. Then Open, Download, or WhatsApp: give the number (it warns if it's e.g. only 9 digits), press Send, and the card shows whether it was sent, delivered but not read, read, or that the number isn't on WhatsApp ("Check with WATI" asks for the latest). It's sent with the template chosen in WATI Settings (Template for Ask AI lab reports). Needs Lab Search access; sending needs Ask AI "Ask + send".`,
+    text: `The portal is built around discharged IP patients; OP patients never appear in Discharge Reports, Lab Finder or the Monitor's patient lists. In Ask AI only, you can get any patient's lab report straight from the EMR lab: ask e.g. "find UHID 6159338" — if it isn't a discharged patient, Ask AI searches the EMR lab (the last few weeks by default — Master Settings → Ask AI; say "last 6 months" or dates for more) and makes the lab report PDF. Then Open, Download, or WhatsApp: give the number (it warns if it's e.g. only 9 digits), press Send, and the card shows whether it was sent, delivered but not read, read, or that the number isn't on WhatsApp ("Check with WATI" asks for the latest). It's sent with the template chosen in WATI Settings (Template for Ask AI lab reports). Needs Lab Search access; sending needs Ask AI "Ask + send".`,
   },
   {
     id: 'test-message',
@@ -254,19 +274,36 @@ Times are India time; "8 pm to 8 am" means overnight from the evening before.`,
   {
     id: 'ai-patient-answers',
     title: 'Ask AI: patient details, journey, compare, files',
-    keywords: 'details whatsapp number mobile age address discharge time format journey flowchart timeline compare comparison two patients two reports change pdf csv excel group results combine file number #1 #2',
-    text: `Ask AI answers with the patient's own data:
+    keywords: 'find search patient by phone mobile number who has belongs details whatsapp number mobile age address discharge time format journey flowchart timeline compare comparison two patients two reports change pdf csv excel group results combine file number #1 #2',
+    text: `Ask AI answers with the patient's own data. Find a patient by anything — "find the patient with phone 89396 05869", "who is from Tindivanam", "gugan priyan", a UHID, IP number or lab Req No; it searches every discharge date, best match first, and says what matched:
 - Details: "WhatsApp number and discharge time of IP07028684 in 12-hour format", "age and address of UHID 6176487" — mobile, age, gender, address, city, relation, email, diagnosis, admission / discharge date and time, length of stay, doctor, ward, bed, reports, WhatsApp status, out-of-range lab values (from the EMR discharge list).
 - Journey: "patient journey of IP…" — a flowchart from admission, lab test days and discharge to reports made, WhatsApp sent / delivered / read and staff actions.
 - Compare: "compare IP… and IP…" (two patients side by side) or "compare the lab reports of IP… first vs last day" — every test with both values and the change.
 - Files: every table or card in a chat is numbered #1, #2 …; ask "put #1 and #2 in one PDF and #3 in a CSV", "everything in one PDF", "first two in Excel" (add "with answers" to include the questions and replies).
-Patient details are sent to the AI service to answer (AI_SHARE_PATIENT_DATA; ABHA ID and religion never are).`,
+Patient details are sent to the AI service to answer (Master Settings → Ask AI → "Let the AI service read patient details"; ABHA ID and religion never are).`,
   },
   {
     id: 'exports',
     title: 'Downloads and exports',
     keywords: 'download export excel xlsx pdf word docx csv json file format',
-    text: `Lab Finder and Ask AI results download as PDF, Excel (.xlsx), Word (.docx) or CSV; a single patient's PDFs open from the Lab Report / Summary buttons. The WhatsApp Monitor exports messages or patients as Excel, PDF, CSV or JSON for the selected dates and filters.`,
+    text: `Lab Finder and Ask AI results download as PDF, Excel (.xlsx), Word (.docx) or CSV; a single patient's PDFs open from the Lab Report / Summary buttons. The WhatsApp Monitor exports messages or patients as Excel, PDF, CSV or JSON for the selected dates and filters. If the download buttons are missing, downloads are switched off for everyone in Master Settings (or read-only mode is on).`,
+  },
+  {
+    id: 'master-settings',
+    title: 'Master Settings (super admin)',
+    keywords: 'master settings setting configure configuration control options switch toggle global everyone hide whatsapp button icon disable feature retry hours days interval timing announcement banner notice maintenance read only lock idle sign out session password length audit retention refresh',
+    text: `Settings tab (gear icon, /settings) — super admin only. Every switch and timing of the portal in one place; changes apply to everyone as soon as you save, and open screens update within a minute.
+- At a glance: WhatsApp mode, retries, the discharge check and the portal state; click one to jump to its section.
+- Features for everyone: switch off for all staff at once, above their own access — WhatsApp button on patient cards, Ask AI, Ask AI sending, Ask AI EMR lookup (OP), Lab Search, Lab Finder, downloads & exports. Each shows how many staff have it. The super admin always keeps everything.
+- WhatsApp sending: send automatically in Live mode (off = Live mode only for the WhatsApp button), how many days the PDF link works. Live / Test mode, test number and templates stay on WATI Settings.
+- Automatic retries: on/off, also retry "Not on WhatsApp", retry every N hours, for N days, quick first retry, daily cap — with a timeline showing every try (e.g. every 6 hours for 3 days = 12 tries, 4 a day).
+- WATI API usage: status checks for ticks on/off and per day, with today's usage meters.
+- Discharge automation: check the EMR automatically (pause), how often (5–60 min), and how often Discharge Reports refreshes.
+- Sign-in & security: session length, sign out after no activity (shared computers), wrong-password lockout and minutes, shortest password.
+- Ask AI: let the AI read patient details, how far back the EMR lookup searches.
+- Audit log: keep records for N days, record tab switches and idle time.
+- Announcement & maintenance: a message at the top of every screen (blue / amber / red, preview shown) and read-only mode (staff can view only; no sending, retries, downloads or changes; automatic sending pauses).
+How to use: change values (they're marked "Unsaved"), then Review & save — the review lists each change from → to with what it will do. Discard drops them; "Reset to default" per setting or per section; search finds a setting; "Changed from default" shows only what's been changed. Change history lists who changed what and when (also in the Audit Log).`,
   },
   {
     id: 'it-admin',

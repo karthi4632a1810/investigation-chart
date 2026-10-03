@@ -18,6 +18,8 @@
  * without needing a separate backfill step.
  */
 import { config } from '../config.js';
+import { setting } from './appSettingsService.js';
+import { searchPatients } from './patientSearchService.js';
 import { generatePatientPdf } from './investigationPdfService.js';
 import { generateDischargeSummaryPdf } from './dischargeSummaryService.js';
 import { pdfExists, reportObjectKey, reportSummaryObjectKey, getPdfPresignedUrl } from './storageService.js';
@@ -34,7 +36,8 @@ const REPORTS_COLLECTION = 'discharge_reports';
 // checked thoroughly, so the scheduler stops re-checking a patient who will never
 // have data instead of re-querying the EMR for them forever.
 const NO_DATA_COLLECTION = 'discharge_no_data';
-const CHECK_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes, aligned to the wall clock — see startDischargeScheduler
+// Master Settings → Discharge automation: every N minutes (default 15), on the clock.
+const checkIntervalMs = () => setting('discharge.checkMinutes') * 60 * 1000;
 let schedulerStarted = false;
 let checkInProgress = false;
 
@@ -46,7 +49,7 @@ let lastSummary = null;
 let nextCheckAt = null;
 
 export function getSchedulerStatus() {
-  return { checkInProgress, lastCheckStartedAt, lastCheckFinishedAt, lastSummary, nextCheckAt };
+  return { checkInProgress, lastCheckStartedAt, lastCheckFinishedAt, lastSummary, nextCheckAt, paused: !setting('discharge.autoCheck'), everyMinutes: setting('discharge.checkMinutes') };
 }
 
 function mmddyyyy(date) {
@@ -234,8 +237,17 @@ export async function searchReports(filters = {}) {
     if (filters.toDate) query.date.$lte = filters.toDate;
   }
 
-  const collection = await getMongoCollection(REPORTS_COLLECTION);
   const limit = Math.min(Math.max(parseInt(filters.limit ?? '200', 10) || 200, 1), 500);
+
+  // "Search anything": one box for name, IP, UHID, mobile in any format, Req No,
+  // doctor, ward, address … — best match first (patientSearchService.js).
+  if (filters.any?.trim()) {
+    const { date, ...extra } = query;
+    const docs = await searchPatients(filters.any, { from: date?.$gte, to: date?.$lte, limit, extra });
+    return docs.map(({ _id, match, ...rest }) => ({ ...rest, matchedOn: match.on }));
+  }
+
+  const collection = await getMongoCollection(REPORTS_COLLECTION);
   const docs = await collection.find(query).sort({ date: -1, generatedAt: -1 }).limit(limit).toArray();
   return docs.map(({ _id, ...rest }) => rest);
 }
@@ -470,7 +482,8 @@ async function processDischargeDate(dateFolder, mdy) {
         try {
           const watiSettings = await getWatiSettings();
           const mobile = row['MOBILE'];
-          if (watiSettings.liveEnabled && mobile) {
+          // Master Settings: automatic sending on, and not in read-only mode.
+          if (watiSettings.liveEnabled && mobile && setting('whatsapp.autoSend') && !setting('maintenance.readOnly')) {
             const sendResult = await sendReportsWhatsApp({
               dateFolder,
               ipNo,
@@ -571,7 +584,8 @@ export async function runBackfillForDate(dateStr) {
  * of 15 minutes, so a UTC :00/:15/:30/:45 boundary is always the same in IST.
  */
 function msUntilNextAlignedTick(intervalMs) {
-  const remainder = Date.now() % intervalMs;
+  // On India-time boundaries (:00, :15 … and whole hours in IST).
+  const remainder = (Date.now() + 330 * 60_000) % intervalMs;
   return remainder === 0 ? intervalMs : intervalMs - remainder;
 }
 
@@ -589,16 +603,19 @@ export function startDischargeScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
 
+  // The interval and the on/off switch are read every tick (Master Settings).
   function scheduleNextTick() {
-    const delay = msUntilNextAlignedTick(CHECK_INTERVAL_MS);
+    const delay = msUntilNextAlignedTick(checkIntervalMs());
     nextCheckAt = new Date(Date.now() + delay).toISOString();
     setTimeout(() => {
-      runDischargeCheck().catch((error) => console.error('[discharge] scheduled check failed:', error.message));
+      if (setting('discharge.autoCheck')) {
+        runDischargeCheck().catch((error) => console.error('[discharge] scheduled check failed:', error.message));
+      }
       scheduleNextTick();
     }, delay);
   }
 
-  console.log('[discharge] scheduler starting — checking now, then every 15 minutes on the clock (:00/:15/:30/:45)');
+  console.log(`[discharge] scheduler starting — checking now, then every ${setting('discharge.checkMinutes')} minutes on the clock`);
   runDischargeCheck().catch((error) => console.error('[discharge] initial check failed:', error.message));
   scheduleNextTick();
 }

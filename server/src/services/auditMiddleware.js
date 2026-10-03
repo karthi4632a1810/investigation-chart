@@ -91,6 +91,8 @@ const RULES = [
     ok ? { screen: 'ai', details: { what: 'discharge report', format: short(req.query.format, 6), query: summarise(req.query) } } : null],
 
   ['POST', /^\/api\/wati\/settings$/, 'settings_change', ({ req, ok }) => (ok ? { screen: 'wati', details: { changes: describeSettings(req.body) } } : null)],
+  ['PUT', /^\/api\/settings$/, 'settings_change', ({ body, ok }) =>
+    ok && body.changes?.length ? { screen: 'settings', details: { changes: short(body.changes.map((c) => `${c.label}: ${c.from} → ${c.to}`).join(', '), 1500) } } : null],
 
   ['POST', /^\/api\/assistant$/, 'ai_question', ({ req, body }) => ({
     screen: 'ai',

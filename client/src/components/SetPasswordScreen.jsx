@@ -8,6 +8,7 @@ import { EyeIcon, EyeOffIcon, LockIcon, LogoutIcon } from './Icons';
  * The server allows nothing else until they do.
  */
 export default function SetPasswordScreen({ me, tempPassword, onDone, onLogout }) {
+  const minLength = me?.minPasswordLength || 8;
   const [current, setCurrent] = useState(tempPassword || '');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -18,7 +19,7 @@ export default function SetPasswordScreen({ me, tempPassword, onDone, onLogout }
   async function submit(e) {
     e.preventDefault();
     setError('');
-    if (password.length < 8) return setError('Use at least 8 characters');
+    if (password.length < minLength) return setError(`Use at least ${minLength} characters`);
     if (password !== confirm) return setError("The two passwords don't match");
     setBusy(true);
     try {
@@ -54,7 +55,7 @@ export default function SetPasswordScreen({ me, tempPassword, onDone, onLogout }
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="new-password"
-              minLength={8}
+              minLength={minLength}
               required
               autoFocus={Boolean(tempPassword)}
             />
@@ -62,11 +63,11 @@ export default function SetPasswordScreen({ me, tempPassword, onDone, onLogout }
               {show ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
             </button>
           </div>
-          <small>At least 8 characters.</small>
+          <small>At least {minLength} characters.</small>
         </label>
         <label className="pw-field">
           <span>New password again</span>
-          <input type={show ? 'text' : 'password'} value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" minLength={8} required />
+          <input type={show ? 'text' : 'password'} value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" minLength={minLength} required />
         </label>
         {error && <div className="pw-error" role="alert">{error}</div>}
         <button type="submit" className="btn btn-primary pw-submit" disabled={busy}>

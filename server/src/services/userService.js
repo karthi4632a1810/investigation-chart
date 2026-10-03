@@ -17,13 +17,15 @@ import crypto from 'crypto';
 import { promisify } from 'util';
 import { config } from '../config.js';
 import { getMongoCollection } from './mongo.js';
+import { applyGlobalSwitches, setting } from './appSettingsService.js';
 
 const scrypt = promisify(crypto.scrypt);
 const COLLECTION = 'users';
-const MAX_FAILED_LOGINS = 5;
-const LOCK_MINUTES = 15;
+// Master Settings → Sign-in & security (defaults 5 tries, 15 minutes, 8 characters).
+const maxFailedLogins = () => setting('auth.maxFailedLogins');
+const lockMinutes = () => setting('auth.lockMinutes');
 const CACHE_MS = 5_000;
-export const MIN_PASSWORD_LENGTH = 8;
+export const minPasswordLength = () => setting('auth.minPasswordLength');
 
 // ---- Permission model ------------------------------------------------------
 
@@ -203,8 +205,8 @@ async function verifyPassword(password, stored) {
 }
 
 function checkPasswordRules(password) {
-  if (String(password || '').length < MIN_PASSWORD_LENGTH) {
-    throw Object.assign(new Error(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`), { status: 400 });
+  if (String(password || '').length < minPasswordLength()) {
+    throw Object.assign(new Error(`Password must be at least ${minPasswordLength()} characters`), { status: 400 });
   }
 }
 
@@ -259,6 +261,10 @@ export function publicUser(user) {
   if (!user) return null;
   const permissions = user.isSuperAdmin ? FULL_PERMISSIONS : normalizePermissions(user.permissions);
   return {
+    // What they can do right now: their permissions with the global switches
+    // (Master Settings) applied. `permissions` stays their own, for editing.
+    minPasswordLength: minPasswordLength(),
+    effective: user.isSuperAdmin ? { ...FULL_PERMISSIONS, exports: true, opLookup: true } : applyGlobalSwitches(permissions),
     username: user.username,
     name: user.name || user.username,
     designation: user.designation || '',
@@ -331,13 +337,13 @@ export async function authenticate(username, password, ip) {
   }
   if (!(await verifyPassword(password, user.passwordHash))) {
     const failed = (user.failedLogins || 0) + 1;
-    const lock = failed >= MAX_FAILED_LOGINS;
+    const lock = failed >= maxFailedLogins();
     await c.updateOne(
       { _id: key },
-      { $set: { failedLogins: lock ? 0 : failed, ...(lock ? { lockedUntil: new Date(Date.now() + LOCK_MINUTES * 60_000) } : {}) } },
+      { $set: { failedLogins: lock ? 0 : failed, ...(lock ? { lockedUntil: new Date(Date.now() + lockMinutes() * 60_000) } : {}) } },
     );
     forget(key);
-    if (lock) throw new LoginError(`Too many wrong passwords — the account is locked for ${LOCK_MINUTES} minutes`, 'locked', 423);
+    if (lock) throw new LoginError(`Too many wrong passwords — the account is locked for ${lockMinutes()} minutes`, 'locked', 423);
     throw new LoginError('Invalid username or password', 'invalid');
   }
   if (user.active === false) throw new LoginError('This account is disabled — ask the super admin', 'disabled', 403);
@@ -466,5 +472,5 @@ export async function deleteUser(username) {
 
 /** For the user editor: screens, presets, choices. */
 export function accessModel() {
-  return { screens: SCREENS, presets: PRESETS, aiLevels: AI_LEVELS, documentChoices: DOCUMENT_CHOICES, days: DAY_NAMES, minPasswordLength: MIN_PASSWORD_LENGTH };
+  return { screens: SCREENS, presets: PRESETS, aiLevels: AI_LEVELS, documentChoices: DOCUMENT_CHOICES, days: DAY_NAMES, minPasswordLength: minPasswordLength() };
 }

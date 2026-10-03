@@ -13,11 +13,13 @@
  */
 import crypto from 'crypto';
 import ExcelJS from 'exceljs';
-import { getMongoCollection } from './mongo.js';
+import { getMongoCollection, getMongoDb } from './mongo.js';
+import { onSettingsChange, setting } from './appSettingsService.js';
 
 const EVENTS = 'audit_events';
 const SESSIONS = 'audit_sessions';
-const RETENTION_DAYS = Math.max(30, Number(process.env.AUDIT_RETENTION_DAYS) || 365);
+// Master Settings → Audit log (default AUDIT_RETENTION_DAYS, else 365).
+const retentionSeconds = () => setting('audit.retentionDays') * 86400;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TZ = 'Asia/Kolkata';
 
@@ -65,13 +67,13 @@ export const ACTIONS = {
 };
 export const CATEGORIES = ['auth', 'screen', 'presence', 'report', 'whatsapp', 'export', 'ai', 'settings', 'users', 'audit'];
 
-const SCREEN_NAMES = { search: 'Lab Search', reports: 'Discharge Reports', labFinder: 'Lab Finder', wati: 'WATI Settings', admin: 'WhatsApp Monitor', users: 'Users', audit: 'Audit Log' };
+const SCREEN_NAMES = { search: 'Lab Search', reports: 'Discharge Reports', labFinder: 'Lab Finder', wati: 'WATI Settings', admin: 'WhatsApp Monitor', users: 'Users', audit: 'Audit Log', settings: 'Master Settings' };
 
 let ready = null;
 async function events() {
   const c = await getMongoCollection(EVENTS);
   ready ||= Promise.all([
-    c.createIndex({ at: 1 }, { expireAfterSeconds: RETENTION_DAYS * 86400 }),
+    c.createIndex({ at: 1 }, { expireAfterSeconds: retentionSeconds() }).catch(() => applyRetention()),
     c.createIndex({ user: 1, at: -1 }),
     c.createIndex({ department: 1, at: -1 }),
     c.createIndex({ sessionId: 1, at: 1 }),
@@ -81,6 +83,18 @@ async function events() {
   return c;
 }
 const sessions = () => getMongoCollection(SESSIONS);
+
+/** Points the audit TTL index at the current "keep for" setting (no rebuild needed). */
+export async function applyRetention() {
+  const seconds = retentionSeconds();
+  for (const name of [EVENTS, SESSIONS]) {
+    const c = await getMongoCollection(name);
+    const idx = (await c.indexes().catch(() => [])).find((i) => i.expireAfterSeconds !== undefined);
+    if (!idx || idx.expireAfterSeconds === seconds) continue;
+    await (await getMongoDb()).command({ collMod: name, index: { keyPattern: idx.key, expireAfterSeconds: seconds } });
+  }
+}
+onSettingsChange((changes) => (changes.some((c) => c.key === 'audit.retentionDays') ? applyRetention() : null));
 
 // ---- Who / where ------------------------------------------------------------------
 
@@ -278,6 +292,7 @@ export async function recordClientEvents(req, body = {}) {
   const list = Array.isArray(body.events) ? body.events.slice(0, 50) : [];
   for (const e of list) {
     if (!ACTIONS[e?.action]?.client) continue;
+    if (ACTIONS[e.action].cat === 'presence' && !setting('audit.trackPresence')) continue;
     const at = new Date(e.at);
     await logAudit(ctx, {
       action: e.action,
@@ -290,7 +305,9 @@ export async function recordClientEvents(req, body = {}) {
     });
   }
   const hb = body.heartbeat;
-  if (req.sessionId && hb && /^[a-z0-9]{4,20}$/i.test(String(hb.tabId || ''))) {
+  if (req.sessionId && hb && !setting('audit.trackPresence')) {
+    touchSession(req.sessionId); // still "last seen", without the time split
+  } else if (req.sessionId && hb && /^[a-z0-9]{4,20}$/i.test(String(hb.tabId || ''))) {
     const num = (v) => Math.max(0, Math.min(Number(v) || 0, 30 * 86400_000));
     await (await sessions()).updateOne(
       { _id: req.sessionId },

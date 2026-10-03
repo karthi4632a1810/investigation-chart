@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { track } from '../utils/audit';
+import { patientMatcher } from '../utils/patientMatch';
 import {
   checkWhatsAppNumber,
   defaultDateOnly,
@@ -37,9 +38,10 @@ import {
 } from './Icons';
 import Pagination from './Pagination';
 
-const LIVE_REFRESH_MS = 20_000;
+const LIVE_REFRESH_MS = 20_000; // default; Master Settings → refreshMs
 
 const EMPTY_FILTERS = {
+  any: '', // "Search anything" — name, IP, UHID, mobile in any format, address … (server: patientSearchService.js)
   ipNo: '',
   regNo: '',
   reqNo: '',
@@ -143,6 +145,9 @@ function AutomationStatus({ status, onRunNow, running, canRun = true }) {
           <div className="automation-headline">
             {checking ? (
               <span className="automation-checking-text">Syncing with hospital discharges now…</span>
+            ) : status.paused ? (
+              // Master Settings → Discharge automation switched off.
+              <span>Automatic checks are paused{canRun ? ' — Check Now still works' : ''}</span>
             ) : msToNext !== null ? (
               <>
                 Next automatic check in <span className="automation-timer-pill">{formatCountdown(msToNext)}</span>
@@ -891,6 +896,24 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
           onSearch();
         }}
       >
+        {/* Search anything — the quickest way to find one patient */}
+        <div className="filter-card-section">
+          <div className="enhanced-field search-anything-field">
+            <label htmlFor="filter-any">Search anything</label>
+            <div className="field-input-box">
+              <input
+                id="filter-any"
+                value={filters.any || ''}
+                onChange={set('any')}
+                placeholder="Name, IP, UHID, mobile (any format), Req No, doctor, ward, address or town"
+                className="filter-control"
+                autoComplete="off"
+              />
+            </div>
+            <small className="search-anything-hint">Searches every date (or the window below), best match first. Combine with any filter below.</small>
+          </div>
+        </div>
+
         {/* Section 1: Patient & Contact Identifiers */}
         <div className="filter-card-section">
           <div className="section-title-tag">
@@ -1131,7 +1154,7 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
   );
 }
 
-export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
+export default function DischargeReports({ navRequest, access = FULL_ACCESS, refreshMs = LIVE_REFRESH_MS }) {
   const [mode, setMode] = useState('date'); // 'date' | 'search'
   const [date, setDate] = useState(defaultDateOnly());
   const [filters, setFilters] = useState(EMPTY_FILTERS);
@@ -1281,9 +1304,9 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
       if (popupsOpen.current > 0 || document.hidden) return;
       if (mode === 'date') loadByDate(date, { quiet: true });
       else if (searchActive) runSearch({ quiet: true });
-    }, LIVE_REFRESH_MS);
+    }, refreshMs);
     return () => clearInterval(id);
-  }, [mode, date, searchActive, loadByDate, runSearch]);
+  }, [mode, date, searchActive, loadByDate, runSearch, refreshMs]);
 
   useEffect(() => {
     refreshStatus();
@@ -1358,6 +1381,19 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
     if (nextMode === 'search') setSearchActive(false);
   }
 
+  // Nothing on this date matches the filter box — look across every date instead.
+  function searchAllDates(text) {
+    const next = { ...EMPTY_FILTERS, any: text.trim() };
+    setFilters(next);
+    filtersRef.current = next;
+    setMode('search');
+    setFilterText('');
+    setCategoryFilter('all');
+    setCurrentPage(1);
+    track('filter_change', { screen: 'reports', details: { summary: `searched all dates for “${text.trim().slice(0, 60)}”` } });
+    runSearch();
+  }
+
   function handleClearFilters() {
     setFilters(EMPTY_FILTERS);
     setSearchActive(false);
@@ -1412,19 +1448,8 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
     }
 
     if (!filterText.trim()) return list;
-    const q = filterText.toLowerCase();
-    return list.filter((p) => {
-      return (
-        p.name?.toLowerCase().includes(q) ||
-        p.ipNo?.toLowerCase().includes(q) ||
-        p.regNo?.toLowerCase().includes(q) ||
-        p.doctor?.toLowerCase().includes(q) ||
-        p.department?.toLowerCase().includes(q) ||
-        p.ward?.toLowerCase().includes(q) ||
-        p.mobile?.includes(q) ||
-        p.createdUser?.toLowerCase().includes(q)
-      );
-    });
+    // Any value: name (any order), IP, UHID, mobile in any format, Req No, doctor, ward, town …
+    return list.filter(patientMatcher(filterText));
   }, [patients, categoryFilter, filterText]);
 
   // Pagination calculation
@@ -1541,7 +1566,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
                 type="text"
                 value={filterText}
                 onChange={handleFilterTextChange}
-                placeholder="Filter by name, IP, doctor, ward… (Press /)"
+                placeholder="Search name, IP, UHID, mobile, doctor, ward, town… (Press /)"
                 className="filter-text-input"
               />
               {filterText && (
@@ -1737,17 +1762,24 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS }) {
                   {categoryFilter === 'all' ? 'all categories' : categoryFilter}
                 </strong>.
               </p>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => {
-                  setFilterText('');
-                  setCategoryFilter('all');
-                  setCurrentPage(1);
-                }}
-              >
-                Clear Filters
-              </button>
+              <div className="filter-empty-actions">
+                {mode === 'date' && filterText.trim() && (
+                  <button type="button" className="btn btn-primary" onClick={() => searchAllDates(filterText)}>
+                    <SearchIcon size={14} /> Search all dates for “{filterText.trim().slice(0, 30)}”
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setFilterText('');
+                    setCategoryFilter('all');
+                    setCurrentPage(1);
+                  }}
+                >
+                  Clear Filters
+                </button>
+              </div>
             </div>
           ) : (
             <>

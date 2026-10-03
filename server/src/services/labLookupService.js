@@ -16,10 +16,11 @@ import { whatsappFileName, whatsappPdfUrl } from './publicLinkService.js';
 import { pdfExists, uploadPdfFile } from './storageService.js';
 import { checkWhatsAppNumber, documentLine, sendInvestigationReportWhatsApp } from './watiService.js';
 import { getWatiSettings } from './watiSettingsService.js';
+import { setting } from './appSettingsService.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ID_RE = /^(IP)?\d{4,12}$/;
-const DEFAULT_DAYS = 30;
+const defaultDays = () => setting('ai.lookupDays'); // Master Settings → Ask AI
 const MAX_DAYS = 366;
 
 const httpError = (message, status = 400) => Object.assign(new Error(message), { status });
@@ -44,7 +45,7 @@ export async function lookupLabReport({ id, from, to }) {
   const clean = cleanLookupId(id);
   if (!ID_RE.test(clean)) throw httpError('Give a UHID (digits) or an IP number, e.g. 6159338 or IP07028148');
   const end = DATE_RE.test(to || '') ? to : istDay();
-  let start = DATE_RE.test(from || '') ? from : istDay(-(DEFAULT_DAYS - 1));
+  let start = DATE_RE.test(from || '') ? from : istDay(-(defaultDays() - 1));
   if (start > end) start = end;
   if (daysBetween(start, end) > MAX_DAYS) throw httpError('Pick a range of up to one year');
 

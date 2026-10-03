@@ -26,7 +26,7 @@ const SUGGESTIONS = [
   'Send a test WhatsApp message',
 ];
 
-const SCREEN_NAMES = { reports: 'Discharge Reports', labFinder: 'Lab Finder', search: 'Lab Search', wati: 'WATI Settings', admin: 'WhatsApp Monitor' };
+const SCREEN_NAMES = { reports: 'Discharge Reports', labFinder: 'Lab Finder', search: 'Lab Search', wati: 'WATI Settings', admin: 'WhatsApp Monitor', audit: 'Audit Log', users: 'Users', settings: 'Master Settings' };
 
 function formatIst(value) {
   if (!value) return '';
@@ -39,7 +39,7 @@ const FLAG = { high: 'High', low: 'Low', normal: 'Normal' };
 const newChatId = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 // The user's permissions for every download / share bar in the chat (utils/access.js).
-const BarAccess = createContext({ allowShare: true, showLab: true, showSummary: true });
+const BarAccess = createContext({ allowShare: true, allowDownload: true, showLab: true, showSummary: true });
 function Bar(props) {
   return <ExportShareBar {...useContext(BarAccess)} {...props} />;
 }
@@ -218,6 +218,7 @@ const FORMAT_SHORT = { xlsx: 'XLS', pdf: 'PDF', csv: 'CSV', json: 'JSON' };
 function ReportDownloads({ formats, download }) {
   const [busy, setBusy] = useState('');
   const [note, setNote] = useState('');
+  if (!useContext(BarAccess).allowDownload) return null;
   return (
     <div className="ai-report-dl">
       <span>Download</span>
@@ -559,6 +560,8 @@ function CompareBlock({ block }) {
 const KIND = { pdf: 'PDF', xlsx: 'Excel', csv: 'CSV' };
 
 function ChatExportBlock({ block }) {
+  const { allowDownload } = useContext(BarAccess);
+  if (!allowDownload) return <div className="ai-block ai-report-note">Downloads are turned off — ask the super admin.</div>;
   return (
     <div className="ai-block ai-file">
       <span className={`ai-file-icon is-${block.format}`}>{KIND[block.format]}</span>
@@ -880,6 +883,7 @@ function OneBlock({ b, onNavigate, onTestDone }) {
 export default function AssistantPanel({ onNavigate, view, access }) {
   const barAccess = {
     allowShare: !access || access.ai === 'act',
+    allowDownload: !access || access.exports !== false,
     showLab: access ? access.showLab : true,
     showSummary: access ? access.showSummary : true,
   };

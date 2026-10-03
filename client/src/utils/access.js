@@ -1,8 +1,11 @@
 /**
  * The signed-in user's permissions (server: userService.js), as simple flags
  * for the screens. The server enforces all of it; this only hides what a user
- * can't use.
+ * can't use. `me.effective` = their own permissions with the Master Settings
+ * switches applied (e.g. the WhatsApp button off for everyone, read-only mode).
  */
+
+const perms = (me) => me?.effective || me?.permissions || {};
 
 // App view id → permission screen id.
 export const VIEW_SCREEN = { search: 'search', reports: 'reports', labFinder: 'labFinder', wati: 'wati', admin: 'monitor', audit: 'audit' };
@@ -10,10 +13,10 @@ export const VIEW_ORDER = ['reports', 'search', 'labFinder', 'wati', 'admin', 'a
 
 export function canOpen(me, view) {
   if (!me) return false;
-  if (view === 'users') return Boolean(me.isSuperAdmin);
+  if (view === 'users' || view === 'settings') return Boolean(me.isSuperAdmin);
   if (me.isSuperAdmin) return true;
   const screen = VIEW_SCREEN[view];
-  return Boolean(screen) && me.permissions?.screens?.[screen] !== 'none';
+  return Boolean(screen) && perms(me).screens?.[screen] !== 'none';
 }
 
 export function firstOpenView(me) {
@@ -22,7 +25,7 @@ export function firstOpenView(me) {
 
 /** Flags each screen needs. */
 export function accessFor(me) {
-  const p = me?.permissions || {};
+  const p = perms(me);
   const s = p.screens || {};
   const documents = p.documents || 'both';
   return {
@@ -37,6 +40,9 @@ export function accessFor(me) {
     wati: { readOnly: s.wati !== 'write' },
     monitor: { readOnly: s.monitor !== 'write' },
     ai: p.ai || 'none',
+    // Master Settings: downloads for everyone; read-only (maintenance) mode.
+    exports: p.exports !== false,
+    readOnlyMode: Boolean(p.readOnlyMode),
   };
 }
 

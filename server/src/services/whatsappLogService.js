@@ -18,7 +18,8 @@
 import { ObjectId } from 'mongodb';
 import { config } from '../config.js';
 import { getMongoCollection } from './mongo.js';
-import { countWatiCall, noteWatiOk, noteWatiRateLimited, statusChecksLeftToday, STATUS_CHECKS_PER_DAY, watiPausedUntil } from './watiBudget.js';
+import { countWatiCall, noteWatiOk, noteWatiRateLimited, statusChecksLeftToday, statusChecksPerDay, watiPausedUntil } from './watiBudget.js';
+import { setting } from './appSettingsService.js';
 
 const COLLECTION = 'whatsapp_messages';
 const POLL_INTERVAL_MS = 60 * 1000;
@@ -32,7 +33,7 @@ const MAX_NUMBERS_PER_POLL = 3;
 const MAX_NUMBERS_FORCED = 10;
 const FORCE_COOLDOWN_MS = 5 * 60_000;
 const CHECK_AFTER_MIN = [30, 360, 1440];
-const POLL_ENABLED = !/^(off|false|0|no)$/i.test(String(process.env.WATI_STATUS_POLL || 'on'));
+const pollEnabled = () => setting('wati.statusPolling'); // Master Settings (default: WATI_STATUS_POLL)
 // Webhooks count as working if one arrived within this long.
 const WEBHOOK_ACTIVE_MS = 24 * 3600_000;
 const UA =
@@ -101,10 +102,23 @@ const NOT_ON_WHATSAPP = /not (a|on) whatsapp|not a valid whatsapp|invalid whatsa
 export const isNotOnWhatsApp = (text) => NOT_ON_WHATSAPP.test(String(text || ''));
 
 // Automatic retries for temporary failures: after 2 min, 15 min, then 1 hour.
-export const MAX_ATTEMPTS = 4;
-const RETRY_DELAYS_MS = [2 * 60_000, 15 * 60_000, 60 * 60_000];
+// Automatic retries — light on WATI's quota, patient enough for a phone that's
+// off for days: every few hours for a few days (Master Settings → Automatic retries;
+// defaults 6 hours for 3 days, from WHATSAPP_RETRY_HOURS / WHATSAPP_RETRY_DAYS)
+// days — 4 tries a day, 12 in all. For "not on WhatsApp" too, which is sometimes
+// wrong: WhatsApp's "undeliverable" (131026) is often temporary (phone off or
+// data off, old app, new terms not accepted), and staff saw manual retries go
+// through. Ordinary failures (network, WATI busy) get one quick retry after 15
+// minutes first. The retry worker also caps the calls per day (watiBudget.js).
+// All from Master Settings (appSettingsService.js), read when needed so a change applies at once.
+export const retryEveryMs = () => setting('retry.everyHours') * 3600_000;
+const quickRetryMs = () => setting('retry.quickMinutes') * 60_000;
+const retryWindowMs = () => setting('retry.forDays') * 86400_000;
+// First send + quick retry + the regular ones over the window.
+export const maxAttempts = () => Math.ceil((setting('retry.forDays') * 24) / setting('retry.everyHours')) + 2;
+export const retryPolicy = () => ({ hours: setting('retry.everyHours'), days: setting('retry.forDays'), quickMinutes: setting('retry.quickMinutes'), enabled: setting('retry.enabled'), notOnWhatsApp: setting('retry.notOnWhatsApp') });
 // Errors a resend can't fix — these wait for a person (Retry button) instead.
-const PERMANENT_ERROR = /not a whatsapp number|invalid|not valid|does not exist|blocked|template|not configured|required/i;
+const PERMANENT_ERROR = /template|not configured|required|blocked/i;
 // WATI's quota / rate limit: nothing is wrong with the message, so it's retried
 // hourly (or when the pause ends) for about a day instead of giving up after 4.
 export const RATE_LIMITED = /\b429\b|usage limit/i;
@@ -114,8 +128,12 @@ const RATE_LIMITED_RETRY_MS = 60 * 60_000;
 /** Only patient reports can be re-sent without a person — a results list isn't stored. */
 function canAutoRetry(doc, error) {
   if (!['lab', 'summary'].includes(doc?.document) || !doc.ipNo || !doc.dischargeDate) return false;
+  if (!setting('retry.enabled')) return false;
+  if (!setting('retry.notOnWhatsApp') && (isNotOnWhatsApp(error) || /undeliverable|131026/i.test(String(error || '')))) return false;
   if (RATE_LIMITED.test(String(error || ''))) return (doc.attempts || 1) < MAX_RATE_LIMITED_ATTEMPTS;
-  return !PERMANENT_ERROR.test(String(error || '')) && (doc.attempts || 1) < MAX_ATTEMPTS;
+  // Within the retry window (3 days from the first send), under the try limit.
+  const age = Date.now() - new Date(doc.createdAt || Date.now()).getTime();
+  return !PERMANENT_ERROR.test(String(error || '')) && (doc.attempts || 1) < maxAttempts() && age < retryWindowMs();
 }
 
 function retryTime(doc, error, now) {
@@ -123,7 +141,9 @@ function retryTime(doc, error, now) {
     const paused = watiPausedUntil();
     return new Date(Math.max(now.getTime() + RATE_LIMITED_RETRY_MS, paused ? paused.getTime() + 60_000 : 0));
   }
-  return new Date(now.getTime() + RETRY_DELAYS_MS[Math.min((doc.attempts || 1) - 1, RETRY_DELAYS_MS.length - 1)]);
+  // A plain failure gets one quick retry; after that (and for "not on WhatsApp") every 6 hours.
+  const quick = quickRetryMs() > 0 && (doc.attempts || 1) === 1 && !isNotOnWhatsApp(error) && !/undeliverable|131026/i.test(String(error || ''));
+  return new Date(now.getTime() + (quick ? quickRetryMs() : retryEveryMs()));
 }
 
 /** WATI accepted the message (or refused it). */
@@ -146,7 +166,7 @@ export async function logSendResult(id, { ok, error, response }) {
     if (!moved.matchedCount) await c.updateOne({ _id }, { $set: accepted });
     return;
   }
-  const doc = await c.findOne({ _id }, { projection: { document: 1, ipNo: 1, dischargeDate: 1, attempts: 1 } });
+  const doc = await c.findOne({ _id }, { projection: { document: 1, ipNo: 1, dischargeDate: 1, attempts: 1, createdAt: 1 } });
   const message = String(error || 'Send failed').slice(0, 500);
   const retry = canAutoRetry(doc, message);
   const nextRetryAt = retry ? retryTime(doc, message, now) : null;
@@ -202,7 +222,7 @@ export async function logRetryStart(id, { auto = false, triggeredBy } = {}) {
 }
 
 /** Failed messages whose automatic retry is due. */
-export async function dueRetries(limit = 10) {
+export async function dueRetries(limit = 30) {
   const c = await collection();
   return c
     .find({ status: 'failed', nextRetryAt: { $ne: null, $lte: new Date() } }, { projection: { _id: 1 } })
@@ -295,9 +315,9 @@ export function getPollState() {
   return {
     ...lastPoll,
     intervalSeconds: POLL_INTERVAL_MS / 1000,
-    enabled: POLL_ENABLED,
+    enabled: pollEnabled(),
     schedule: CHECK_AFTER_MIN,
-    dailyChecks: STATUS_CHECKS_PER_DAY,
+    dailyChecks: statusChecksPerDay(),
     pausedUntil: watiPausedUntil(),
     webhook: { active: webhookActive(), lastEventAt: lastWebhookAt, eventsSinceStart: webhookEventsSinceStart },
   };
@@ -329,10 +349,10 @@ export async function pollWhatsAppStatuses({ force = false } = {}) {
   if (force && Date.now() - lastForcedAt < FORCE_COOLDOWN_MS) {
     return skip(`Checked less than ${FORCE_COOLDOWN_MS / 60_000} minutes ago`);
   }
-  if (!force && !POLL_ENABLED) return skip('Status checks turned off (WATI_STATUS_POLL=off)');
+  if (!force && !pollEnabled()) return skip('Status checks turned off (Master Settings)');
   if (!force && webhookActive()) return skip('Webhooks deliver statuses');
   let budget = await statusChecksLeftToday().catch(() => 0);
-  if (budget <= 0) return skip(`Today's ${STATUS_CHECKS_PER_DAY} status checks are used up`);
+  if (budget <= 0) return skip(`Today's ${statusChecksPerDay()} status checks are used up`);
 
   pollRunning = true;
   if (force) lastForcedAt = Date.now();
@@ -388,8 +408,8 @@ export async function pollWhatsAppStatuses({ force = false } = {}) {
         if (status === 'failed') {
           extra.error = String(item.failedDetail || 'WATI reported the message as failed').slice(0, 500);
           extra.notOnWhatsApp = isNotOnWhatsApp(item.failedDetail);
-          extra.nextRetryAt = null;
-          extra.autoRetry = false;
+          extra.autoRetry = canAutoRetry(doc, extra.error);
+          extra.nextRetryAt = extra.autoRetry ? retryTime(doc, extra.error, new Date()) : null;
         }
         const changed = await applyStatus(c, doc, status, {
           note: status === 'failed' ? item.failedDetail || 'WATI reported failed' : `WATI: ${item.statusString}`,
@@ -544,8 +564,8 @@ export async function handleWatiWebhook(event) {
     extra.failedDetail = detail.slice(0, 500);
     extra.error = detail.slice(0, 500);
     extra.notOnWhatsApp = isNotOnWhatsApp(detail) || String(event.failedCode) === '131026';
-    extra.nextRetryAt = null;
-    extra.autoRetry = false;
+    extra.autoRetry = canAutoRetry(doc, detail);
+    extra.nextRetryAt = extra.autoRetry ? retryTime(doc, detail, new Date()) : null;
   }
   const changed = await applyStatus(c, doc, status, {
     at,
@@ -563,18 +583,23 @@ export async function handleWatiWebhook(event) {
  */
 export async function requeueRateLimitedSends() {
   const c = await collection();
-  const { modifiedCount } = await c.updateMany(
-    {
-      status: 'failed',
-      createdAt: { $gte: new Date(Date.now() - 2 * 86400_000) },
-      document: { $in: ['lab', 'summary'] },
-      ipNo: { $ne: null },
-      dischargeDate: { $ne: null },
-      nextRetryAt: null,
-      error: RATE_LIMITED,
-    },
-    { $set: { nextRetryAt: new Date(Date.now() + 2 * 60_000), autoRetry: true, rateLimited: true } },
-  );
+  const docs = await c
+    .find(
+      {
+        status: 'failed',
+        createdAt: { $gte: new Date(Date.now() - retryWindowMs()) },
+        document: { $in: ['lab', 'summary'] },
+        ipNo: { $ne: null },
+        dischargeDate: { $ne: null },
+        nextRetryAt: null,
+      },
+      { projection: { document: 1, ipNo: 1, dischargeDate: 1, attempts: 1, error: 1, failedDetail: 1, createdAt: 1 } },
+    )
+    .toArray();
+  // Not on WhatsApp / ordinary failures under the try limit, and WATI-limit refusals.
+  const ids = docs.filter((d) => canAutoRetry(d, d.failedDetail || d.error)).map((d) => d._id);
+  if (!ids.length) return 0;
+  const { modifiedCount } = await c.updateMany({ _id: { $in: ids } }, { $set: { nextRetryAt: new Date(Date.now() + 2 * 60_000), autoRetry: true } });
   return modifiedCount;
 }
 
@@ -650,7 +675,7 @@ export async function importWatiHistory(numbers) {
 export function startWhatsAppStatusPoller(numbersToImport = []) {
   loadWebhookState().catch(() => {});
   requeueRateLimitedSends()
-    .then((n) => n && console.log(`[whatsapp] ${n} report(s) refused by WATI's usage limit put back in the retry queue`))
+    .then((n) => n && console.log(`[whatsapp] ${n} failed / not-on-WhatsApp report(s) from the last ${setting('retry.forDays')} days put back in the retry queue`))
     .catch(() => {});
   backfillNotOnWhatsAppFlag()
     .then((n) => n && console.log(`[whatsapp] marked ${n} earlier failure(s) as "not on WhatsApp"`))
@@ -753,7 +778,10 @@ function buildFilter(q = {}) {
   if (statuses.length) {
     const plain = statuses.filter((s) => !SPECIAL_STATUS[s]);
     const either = [];
-    if (plain.length) either.push({ status: { $in: plain } });
+    // "failed" means failed to send — the "not on WhatsApp" ones are their own filter (nowa).
+    const others = plain.filter((st) => st !== 'failed');
+    if (others.length) either.push({ status: { $in: others } });
+    if (plain.includes('failed')) either.push({ status: 'failed', notOnWhatsApp: { $ne: true } });
     for (const s of statuses) if (SPECIAL_STATUS[s]) either.push(SPECIAL_STATUS[s]());
     and.push({ $or: either });
   }
@@ -802,6 +830,7 @@ export async function whatsappSummary(q = {}) {
             { $group: { _id: null, messages: { $sum: '$n' }, numbers: { $sum: 1 } } },
           ],
           byDocument: [{ $group: { _id: '$document', n: { $sum: 1 } } }],
+          retrying: [{ $match: { status: 'failed', nextRetryAt: { $ne: null } } }, { $count: 'n' }],
           byTrigger: [{ $group: { _id: '$trigger', n: { $sum: 1 } } }],
           series: [
             {
@@ -809,7 +838,8 @@ export async function whatsappSummary(q = {}) {
                 _id: {
                   // One day: by hour sent. Longer: by day (sent, or the report date).
                   bucket: hourly ? { $dateToString: { date: '$createdAt', format: '%H', timezone: TZ } } : dayOf(q.basis),
-                  status: '$status',
+                  // "Not on WhatsApp" is its own series, apart from other failures.
+                  status: { $cond: [{ $and: [{ $eq: ['$status', 'failed'] }, { $eq: ['$notOnWhatsApp', true] }] }, 'nowa', '$status'] },
                 },
                 n: { $sum: 1 },
               },
@@ -846,7 +876,7 @@ export async function whatsappSummary(q = {}) {
       if (buckets.length > 400) break;
     }
   } else buckets.push(...[...new Set(facets.series.map((r) => r._id.bucket))].sort());
-  const seriesMap = new Map(buckets.map((b) => [b, Object.fromEntries(STATUSES.map((s) => [s, 0]))]));
+  const seriesMap = new Map(buckets.map((b) => [b, Object.fromEntries([...STATUSES, 'nowa'].map((s) => [s, 0]))]));
   for (const r of facets.series) {
     const bucket = seriesMap.get(r._id.bucket);
     if (bucket && r._id.status in bucket) bucket[r._id.status] = r.n;
@@ -857,6 +887,10 @@ export async function whatsappSummary(q = {}) {
     total,
     counts,
     funnel: { triggered: total, sent: reachedWati, delivered, read: counts.read },
+    // Failed split in two: couldn't be sent, and the number isn't on WhatsApp (both retried every 15 min).
+    failedToSend: counts.failed - (facets.notOnWhatsApp[0]?.messages || 0),
+    retrying: facets.retrying[0]?.n || 0,
+    retryPolicy: retryPolicy(),
     rates: {
       delivered: reachedWati ? delivered / reachedWati : null,
       read: delivered ? counts.read / delivered : null,

@@ -14,10 +14,12 @@ import crypto from 'crypto';
 import { config } from '../config.js';
 import { authorize } from './accessControl.js';
 import { touchSession } from './auditService.js';
+import { setting } from './appSettingsService.js';
 import { describeSchedule, normalizePermissions, resolveSessionUser, scheduleAllows } from './userService.js';
 
 const COOKIE_NAME = 'inv_session';
-const SESSION_TTL_SECONDS = 12 * 60 * 60;
+// Master Settings → Sign-in & security (default 12 hours).
+const sessionSeconds = () => setting('auth.sessionHours') * 60 * 60;
 
 const signingKey =
   process.env.SESSION_SECRET ||
@@ -32,7 +34,7 @@ function sign(payload) {
 // `sid` is the audit session (auditService.js) — sign-in to sign-out.
 function createSessionToken(username, tokenVersion = 0, sid = null) {
   const payload = Buffer.from(
-    JSON.stringify({ u: username, v: tokenVersion, sid, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS }),
+    JSON.stringify({ u: username, v: tokenVersion, sid, exp: Math.floor(Date.now() / 1000) + sessionSeconds() }),
   ).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
@@ -93,7 +95,7 @@ function cookieAttributes(req, maxAge) {
 export function setSessionCookie(req, res, username, tokenVersion = 0, sid = null) {
   res.setHeader(
     'Set-Cookie',
-    `${COOKIE_NAME}=${encodeURIComponent(createSessionToken(username, tokenVersion, sid))}; ${cookieAttributes(req, SESSION_TTL_SECONDS)}`,
+    `${COOKIE_NAME}=${encodeURIComponent(createSessionToken(username, tokenVersion, sid))}; ${cookieAttributes(req, sessionSeconds())}`,
   );
 }
 

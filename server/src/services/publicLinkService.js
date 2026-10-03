@@ -15,6 +15,7 @@
 import crypto from 'crypto';
 import { config } from '../config.js';
 import { getPdfPresignedUrl } from './storageService.js';
+import { setting } from './appSettingsService.js';
 
 const signingKey =
   process.env.PUBLIC_LINK_SECRET ||
@@ -23,8 +24,9 @@ const signingKey =
 export const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
 // How long a WhatsApp PDF link keeps working (WhatsApp itself fetches it once, at
 // send time; this is for opening it later from WATI's inbox). MinIO links max out at 7 days.
-const LINK_DAYS = Math.min(7, Math.max(1, Number(process.env.WHATSAPP_LINK_DAYS) || 2));
-const LINK_SECONDS = LINK_DAYS * 86400;
+// Master Settings → WhatsApp sending (default: WHATSAPP_LINK_DAYS, 2 days).
+const linkDays = () => setting('whatsapp.linkDays');
+const linkSeconds = () => linkDays() * 86400;
 
 function sign(payload) {
   return crypto.createHmac('sha256', signingKey).update(payload).digest('base64url');
@@ -36,7 +38,7 @@ function safeEqual(a, b) {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 }
 
-export function makeDocToken(objectKey, ttlSeconds = LINK_SECONDS) {
+export function makeDocToken(objectKey, ttlSeconds = linkSeconds()) {
   const payload = Buffer.from(JSON.stringify({ k: objectKey, e: Math.floor(Date.now() / 1000) + ttlSeconds })).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
@@ -62,14 +64,14 @@ export function whatsappFileName(label, id) {
 /** The document link handed to WATI for one WhatsApp message. */
 export async function whatsappPdfUrl(objectKey, fileName) {
   // Without PUBLIC_BASE_URL: the MinIO link, as before (plain http until HTTPS is set up).
-  if (!PUBLIC_BASE_URL) return getPdfPresignedUrl(objectKey, LINK_SECONDS);
+  if (!PUBLIC_BASE_URL) return getPdfPresignedUrl(objectKey, linkSeconds());
   return `${PUBLIC_BASE_URL}/api/public/doc/${makeDocToken(objectKey)}/${encodeURIComponent(fileName || 'Report.pdf')}`;
 }
 
 export function whatsappLinkInfo() {
   return PUBLIC_BASE_URL
-    ? { mode: 'app', baseUrl: PUBLIC_BASE_URL, https: PUBLIC_BASE_URL.startsWith('https://'), days: LINK_DAYS }
-    : { mode: 'minio', baseUrl: null, https: false, days: LINK_DAYS };
+    ? { mode: 'app', baseUrl: PUBLIC_BASE_URL, https: PUBLIC_BASE_URL.startsWith('https://'), days: linkDays() }
+    : { mode: 'minio', baseUrl: null, https: false, days: linkDays() };
 }
 
 /** Secret part of the WATI webhook URL (set WATI_WEBHOOK_KEY to choose it). */

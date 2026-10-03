@@ -25,9 +25,11 @@ const STATUS = {
   delivered: { label: 'Delivered', color: 'var(--st-delivered)' },
   sent: { label: 'Sent', color: 'var(--st-sent)' },
   pending: { label: 'Pending', color: 'var(--st-pending)' },
-  failed: { label: 'Failed', color: 'var(--st-failed)' },
+  failed: { label: 'Failed to send', color: 'var(--st-failed)' },
+  // A kind of failure, kept apart: the number may not be on WhatsApp (retried anyway).
+  nowa: { label: 'Not on WhatsApp', color: 'var(--st-nowa)' },
 };
-const STATUS_ORDER = ['read', 'delivered', 'sent', 'pending', 'failed'];
+const STATUS_ORDER = ['read', 'delivered', 'sent', 'pending', 'failed', 'nowa'];
 const SERIES = STATUS_ORDER.map((key) => ({ key, ...STATUS[key] }));
 // Filter chips follow a message's life: pending → sent → delivered → read, or failed.
 const CHIP_ORDER = ['pending', 'sent', 'delivered', 'read', 'failed', 'nowa'];
@@ -216,7 +218,8 @@ function Timeline({ message }) {
 /** Plain-language meaning of a failure, shown above WATI's own wording. */
 function explainFailure(text) {
   const t = String(text || '');
-  if (/not a whatsapp number|not a valid whatsapp|invalid/i.test(t)) return 'The number is not on WhatsApp (or is mistyped). Check the patient\'s mobile number in the EMR.';
+  if (/not a whatsapp number|not a valid whatsapp|invalid|undeliverable|131026/i.test(t))
+    return 'WhatsApp says this number can\'t receive messages: it may not be on WhatsApp or be mistyped — or the phone may just be off, or its data off. It\'s retried automatically every 6 hours for 3 days; if it keeps failing, check the mobile number in the EMR.';
   if (/429|usage limit/i.test(t)) return 'WATI\'s API usage limit was reached, so WATI refused the message for now. It is retried automatically every hour until it goes through.';
   if (/timeout|aborted|network|fetch failed|ECONN|socket|503|502|busy/i.test(t)) return 'WATI or the network was briefly unavailable. This is retried automatically.';
   if (/undeliverable|re-?engage|24 ?hours|blocked/i.test(t)) return 'WhatsApp would not deliver it (the patient may have blocked the business number or be unreachable).';
@@ -313,9 +316,9 @@ function MessageDrawer({ id, onClose, onChanged, readOnly = false }) {
                 {(message.failedDetail || message.error) && <p className="wa-failure-raw">WATI: {message.failedDetail || message.error}</p>}
                 <p className="wa-failure-retry">
                   {message.nextRetryAt
-                    ? `Automatic retry ${message.attempts || 1} of 3 at ${formatTime(message.nextRetryAt, false)}.`
+                    ? `Retried automatically every 6 hours for 3 days${message.notOnWhatsApp ? ' (in case the "not on WhatsApp" tag is wrong — the phone may just be off)' : ''} — tried ${message.attempts || 1} time${(message.attempts || 1) === 1 ? '' : 's'}, next at ${formatTime(message.nextRetryAt)}.`
                     : (message.attempts || 1) > 1
-                      ? `Tried ${message.attempts} times — no more automatic retries.`
+                      ? `Tried ${message.attempts} times — no more automatic retries. Press Retry to try again.`
                       : 'Not retried automatically — fix the cause, then press Retry.'}
                 </p>
                 {!readOnly && ['lab', 'summary'].includes(message.document) && message.ipNo && (
@@ -580,8 +583,8 @@ function CoverageCard({ coverage, liveEnabled, range }) {
 }
 
 const ATTENTION = [
-  { key: 'fixable', filter: 'fixable', icon: 'failed', label: 'Failed — can be fixed', hint: 'Open each one to see why and press Retry' },
-  { key: 'nowa', filter: 'nowa', icon: 'nowa', label: 'Not on WhatsApp', hint: 'Check the mobile number in the EMR' },
+  { key: 'fixable', filter: 'fixable', icon: 'failed', label: 'Failed to send', hint: 'Retried automatically (every 6 h for 3 days) — or open one and press Retry' },
+  { key: 'nowa', filter: 'nowa', icon: 'nowa', label: 'Not on WhatsApp', hint: 'Retried every 6 h for 3 days in case the phone was off — check the mobile in the EMR' },
   { key: 'unread24', filter: 'unread24', icon: 'delivered', label: 'Delivered, unread for 24 h+', hint: 'Patient may need a call' },
   { key: 'stuck6', filter: 'stuck6', icon: 'sent', label: 'One tick for 6 h+', hint: 'Phone off or no internet' },
 ];
@@ -691,6 +694,9 @@ function WatiCard({ info, now, readOnly = false }) {
             <span>
               Today {fmt(usage?.today?.total)} ({fmt(usage?.today?.send)} sends · {fmt(usage?.today?.status)}/{fmt(usage?.statusChecksPerDay)} status checks)
             </span>
+            <span>
+              Automatic retries today: {fmt(usage?.today?.retry)}/{fmt(usage?.retriesPerDay)}
+            </span>
             <span>This month {fmt(usage?.month?.total)}{usage?.month?.rateLimited ? ` · ${fmt(usage.month.rateLimited)} refused (429)` : ''}</span>
             {paused && (
               <span className="wa-wati-warn">
@@ -769,7 +775,7 @@ function savedBasis() {
   }
 }
 
-export default function AdminDashboard({ readOnly = false, navRequest }) {
+export default function AdminDashboard({ readOnly = false, navRequest, canExport = true }) {
   const [preset, setPreset] = useState('yesterday');
   // "Dates by": the patient's report (discharge) date, or when the message was sent.
   const [basis, setBasis] = useState(savedBasis);
@@ -995,7 +1001,7 @@ export default function AdminDashboard({ readOnly = false, navRequest }) {
   const prevLabel = prev ? `vs ${prev.from === prev.to ? dmy(prev.from) : `${dmy(prev.from)} – ${dmy(prev.to)}`}` : '';
   const triggerRows = (insights?.byTrigger || [])
     .map((t) => ({ label: TRIGGER_LABEL[t.trigger] || t.trigger, ...t }))
-    .sort((a, b) => STATUS_ORDER.reduce((n, k) => n + b[k], 0) - STATUS_ORDER.reduce((n, k) => n + a[k], 0));
+    .sort((a, b) => STATUS_ORDER.reduce((n, k) => n + (b[k] || 0), 0) - STATUS_ORDER.reduce((n, k) => n + (a[k] || 0), 0));
   const departmentRows = (insights?.departments || []).map((d) => ({
     label: d.department,
     read: d.read,
@@ -1015,7 +1021,8 @@ export default function AdminDashboard({ readOnly = false, navRequest }) {
     { key: 'deliveredRate', label: 'Delivered (of sent)', color: 'var(--st-delivered)' },
     { key: 'readRate', label: 'Read (of delivered)', color: 'var(--st-read)' },
   ];
-  const HBAR_SERIES = SERIES.filter((x) => x.key !== 'pending');
+  // "Status by trigger" counts every failure together (one "Failed" bar).
+  const HBAR_SERIES = SERIES.filter((x) => !['pending', 'nowa'].includes(x.key)).map((x) => (x.key === 'failed' ? { ...x, label: 'Failed' } : x));
 
   return (
     <div className="wa-page">
@@ -1116,8 +1123,8 @@ export default function AdminDashboard({ readOnly = false, navRequest }) {
             {CHIP_ORDER.map((s) => (
                 <button key={s} type="button" className={`wa-chip ${statuses.includes(s) ? 'is-on' : ''}`} onClick={() => toggleStatus(s)} aria-pressed={statuses.includes(s)}>
                   <StatusIcon status={s} size={14} />
-                  {s === 'nowa' ? 'Not on WhatsApp' : STATUS[s].label}
-                  <span className="wa-chip-count">{s === 'nowa' ? summary?.notOnWhatsApp?.messages ?? 0 : counts[s] ?? 0}</span>
+                  {STATUS[s].label}
+                  <span className="wa-chip-count">{s === 'nowa' ? summary?.notOnWhatsApp?.messages ?? 0 : s === 'failed' ? summary?.failedToSend ?? 0 : counts[s] ?? 0}</span>
                 </button>
               ))}
             {statuses
@@ -1211,13 +1218,20 @@ export default function AdminDashboard({ readOnly = false, navRequest }) {
           />
           <StatTile label="Pending" icon={<StatusIcon status="pending" size={15} />} value={counts.pending} sub="Waiting for WATI" tone={counts.pending ? 'warning' : undefined} />
           <StatTile
-            label="Failed"
+            label="Failed to send"
             icon={<StatusIcon status="failed" size={15} />}
-            value={counts.failed}
-            sub={`${pct(summary?.rates?.failed)} of all${summary?.notOnWhatsApp?.numbers ? ` · ${summary.notOnWhatsApp.numbers} number${summary.notOnWhatsApp.numbers === 1 ? '' : 's'} not on WhatsApp` : ''}`}
-            tone={counts.failed ? 'critical' : undefined}
+            value={summary?.failedToSend}
+            sub={`${summary?.retrying ? `${summary.retrying} retrying · ` : ''}every ${summary?.retryPolicy?.hours || 6} h for ${summary?.retryPolicy?.days || 3} days`}
+            tone={summary?.failedToSend ? 'critical' : undefined}
             trend={trendOf(['failed'])}
-            delta={prev && <Delta current={counts.failed} previous={prev.failed} upIsGood={false} label={prevLabel} />}
+          />
+          <StatTile
+            label="Not on WhatsApp"
+            icon={<StatusIcon status="nowa" size={15} />}
+            value={summary?.notOnWhatsApp?.messages}
+            sub={`${summary?.notOnWhatsApp?.numbers || 0} number${summary?.notOnWhatsApp?.numbers === 1 ? '' : 's'} · retried every ${summary?.retryPolicy?.hours || 6} h for ${summary?.retryPolicy?.days || 3} days`}
+            tone={summary?.notOnWhatsApp?.messages ? 'critical' : undefined}
+            trend={trendOf(['nowa'])}
           />
         </div>
 
@@ -1562,22 +1576,24 @@ export default function AdminDashboard({ readOnly = false, navRequest }) {
                   Messages
                 </button>
               </div>
-              <div className="wa-exports" role="group" aria-label="Export">
-                <span>Export</span>
-                {EXPORTS.map((x) => (
-                  <button
-                    key={x.format}
-                    type="button"
-                    className={`xs-chip is-${x.format}`}
-                    onClick={() => exportAs(x.format)}
-                    disabled={Boolean(exporting)}
-                    title={`Download this ${tableView === 'patients' ? 'patient-wise' : 'message'} view as ${x.label}`}
-                  >
-                    {exporting === x.format ? <span className="xs-spin" /> : <span className="xs-ext">{x.ext}</span>}
-                    {x.label}
-                  </button>
-                ))}
-              </div>
+              {canExport && (
+                <div className="wa-exports" role="group" aria-label="Export">
+                  <span>Export</span>
+                  {EXPORTS.map((x) => (
+                    <button
+                      key={x.format}
+                      type="button"
+                      className={`xs-chip is-${x.format}`}
+                      onClick={() => exportAs(x.format)}
+                      disabled={Boolean(exporting)}
+                      title={`Download this ${tableView === 'patients' ? 'patient-wise' : 'message'} view as ${x.label}`}
+                    >
+                      {exporting === x.format ? <span className="xs-spin" /> : <span className="xs-ext">{x.ext}</span>}
+                      {x.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </header>
           {exportNote && <div className="xs-note is-ok wa-export-note">{exportNote}</div>}

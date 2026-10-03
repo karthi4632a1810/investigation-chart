@@ -11,9 +11,14 @@
  * Counts are kept per day (IST) in Mongo for the /admin monitor.
  */
 import { getMongoCollection } from './mongo.js';
+import { setting } from './appSettingsService.js';
 
 const COLLECTION = 'wati_api_usage';
-export const STATUS_CHECKS_PER_DAY = Math.max(0, parseInt(process.env.WATI_STATUS_CHECKS_PER_DAY || '100', 10) || 0);
+// Both limits are Master Settings now (appSettingsService.js), defaulting to the .env values.
+export const statusChecksPerDay = () => setting('wati.statusChecksPerDay');
+// Automatic re-sends (failed / not on WhatsApp, every 15 min) get their own daily
+// allowance, so they can't use up the month's quota. Manual Retry isn't limited.
+export const retryCallsPerDay = () => setting('retry.dailyCap');
 const PAUSE_MS = [60, 180, 360].map((min) => min * 60_000);
 
 let pausedUntil = 0;
@@ -56,10 +61,20 @@ export function noteWatiOk() {
   pausedUntil = 0;
 }
 
+export async function retryCallsLeftToday() {
+  const today = await (await getMongoCollection(COLLECTION)).findOne({ _id: istDay() });
+  return Math.max(0, retryCallsPerDay() - (today?.retry || 0));
+}
+
+/** One automatic re-send attempted (the send itself is counted as a send too). */
+export async function countRetry() {
+  await (await getMongoCollection(COLLECTION)).updateOne({ _id: istDay() }, { $inc: { retry: 1 } }, { upsert: true });
+}
+
 export async function statusChecksLeftToday() {
   const c = await getMongoCollection(COLLECTION);
   const today = await c.findOne({ _id: istDay() });
-  return Math.max(0, STATUS_CHECKS_PER_DAY - (today?.status || 0));
+  return Math.max(0, statusChecksPerDay() - (today?.status || 0));
 }
 
 /** Today's and this month's calls, for the monitor. */
@@ -70,12 +85,13 @@ export async function watiUsage() {
   const sum = (list) =>
     list.reduce(
       (acc, r) => ({
+        retry: acc.retry + (r.retry || 0),
         send: acc.send + (r.send || 0),
         status: acc.status + (r.status || 0),
         other: acc.other + (r.other || 0),
         rateLimited: acc.rateLimited + (r.rateLimited || 0),
       }),
-      { send: 0, status: 0, other: 0, rateLimited: 0 },
+      { retry: 0, send: 0, status: 0, other: 0, rateLimited: 0 },
     );
   const withTotal = (s) => ({ ...s, total: s.send + s.status + s.other });
   const latest = (key) => rows.map((r) => r[key]).filter(Boolean).sort((a, b) => b - a)[0] || null;
@@ -84,7 +100,8 @@ export async function watiUsage() {
     lastRefusedAt: latest('lastRefusedAt'),
     today: withTotal(sum(rows.filter((r) => r._id === day))),
     month: withTotal(sum(rows)),
-    statusChecksPerDay: STATUS_CHECKS_PER_DAY,
+    statusChecksPerDay: statusChecksPerDay(),
+    retriesPerDay: retryCallsPerDay(),
     pausedUntil: watiPausedUntil(),
     lastRateLimitAt: lastRateLimit,
   };

@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import { config } from './config.js';
+import { loadSettings, publicSettings, settingsScreen, startSettingsRefresh, updateSettings } from './services/appSettingsService.js';
 import { getLabDetail, searchInvestigation } from './services/emrService.js';
 import {
   getReportPdfUrl,
@@ -23,6 +24,7 @@ import { clearSessionCookie, getSessionUser, loadSessionAccount, requireSession,
 import { allowedDocuments, effectivePermissions } from './services/accessControl.js';
 import { auditMiddleware } from './services/auditMiddleware.js';
 import {
+  applyRetention,
   auditAiChats,
   auditFilterOptions,
   auditSummary,
@@ -53,7 +55,7 @@ import { buildDischargeExport, DISCHARGE_EXPORT_FORMATS } from './services/disch
 import { sendTestWhatsApp } from './services/whatsappTestService.js';
 import { lookupKey, sendLookupWhatsApp } from './services/labLookupService.js';
 import { chatExportStream, EXPORT_TYPES as CHAT_EXPORT_TYPES } from './services/chatResultsService.js';
-import { checkMessageStatus } from './services/whatsappLogService.js';
+import { checkMessageStatus, retryQueueFacts } from './services/whatsappLogService.js';
 import {
   getPollState,
   getWhatsappMessage,
@@ -156,7 +158,7 @@ export function createApp() {
       const sid = await startSession(user, req).catch(() => null);
       req.sessionId = sid;
       setSessionCookie(req, res, user.username, user.tokenVersion || 0, sid);
-      res.json({ ok: true, username: user.username, user: publicUser(user) });
+      res.json({ ok: true, username: user.username, user: publicUser(user), app: publicSettings() });
     } catch (error) {
       res.status(error.status || 401).json({ ok: false, code: error.code, error: error.message });
     }
@@ -167,7 +169,7 @@ export function createApp() {
       const account = await loadSessionAccount(req);
       if (!account) return res.status(401).json({ ok: false, error: 'Not logged in' });
       if (account.blocked) return res.status(401).json({ ok: false, code: 'outside_hours', error: account.blocked });
-      res.json({ ok: true, username: account.user.username, user: publicUser(account.user) });
+      res.json({ ok: true, username: account.user.username, user: publicUser(account.user), app: publicSettings() });
     } catch (error) {
       res.status(503).json({ ok: false, error: error.message });
     }
@@ -692,6 +694,7 @@ app.get('/api/detail/:orderid', async (req, res) => {
           context: req.body?.context || {},
           user: getSessionUser(req),
           access: effectivePermissions(req.user),
+          superAdmin: Boolean(req.user?.isSuperAdmin),
           chatId: req.body?.chatId,
         })),
       });
@@ -874,7 +877,50 @@ app.get('/api/detail/:orderid', async (req, res) => {
   );
 
   /** The signed-in user's own profile and password. */
-  app.get('/api/me', userRoute(async (req) => ({ user: publicUser(req.user) })));
+  // Also how open pages pick up Master Settings changes (polled every minute).
+  app.get('/api/me', userRoute(async (req) => ({ user: publicUser(req.user), app: publicSettings() })));
+
+  /**
+   * Master Settings — super admin only (accessControl.js). Every tunable of
+   * the portal (appSettingsService.js), with live numbers for context.
+   */
+  // How many active staff accounts have each feature in their own access —
+  // i.e. who a global switch turns it off for.
+  const FEATURE_HOLDERS = {
+    'features.whatsappButton': (p) => p.whatsappButton && p.screens.reports === 'write',
+    'features.askAi': (p) => p.ai !== 'none',
+    'features.aiSend': (p) => p.ai === 'act',
+    'features.opLookup': (p) => p.ai !== 'none' && p.screens.search !== 'none',
+    'features.labSearch': (p) => p.screens.search !== 'none',
+    'features.labFinder': (p) => p.screens.labFinder !== 'none',
+    'features.exports': (p) => ['reports', 'labFinder', 'monitor'].some((id) => p.screens[id] !== 'none'),
+  };
+  const settingsLive = async () => {
+    const [wati, retries, watiSettings, users] = await Promise.all([
+      watiUsage().catch(() => null),
+      retryQueueFacts().catch(() => null),
+      getWatiSettings().catch(() => null),
+      listUsers().catch(() => []),
+    ]);
+    const staff = users.filter((u) => !u.isSuperAdmin && u.active !== false);
+    return {
+      wati,
+      retries,
+      scheduler: getSchedulerStatus(),
+      whatsappLive: watiSettings ? Boolean(watiSettings.liveEnabled) : null,
+      staffCount: staff.length,
+      featureHolders: Object.fromEntries(Object.entries(FEATURE_HOLDERS).map(([key, has]) => [key, staff.filter((u) => has(u.permissions)).length])),
+    };
+  };
+  app.get('/api/settings', userRoute(async () => ({ ...(await settingsScreen()), live: await settingsLive() })));
+  app.put(
+    '/api/settings',
+    userRoute(async (req) => {
+      const values = req.body?.values;
+      if (!values || typeof values !== 'object' || Array.isArray(values)) throw Object.assign(new Error('Nothing to save'), { status: 400 });
+      return { ...(await updateSettings(values, getSessionUser(req))), live: await settingsLive() };
+    }),
+  );
   app.post('/api/me/password', async (req, res) => {
     try {
       const version = await changeOwnPassword(req.user.username, req.body?.current, req.body?.password);
@@ -894,6 +940,11 @@ app.get('/api/detail/:orderid', async (req, res) => {
 
   return app;
 }
+
+// Master Settings first — the scheduler, retries and sessions read them.
+await loadSettings();
+startSettingsRefresh();
+applyRetention().catch((error) => console.warn(`[audit] retention not updated: ${error.message}`));
 
 const app = createApp();
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { changeMyPassword } from '../api/client';
 import { initials, levelLabel } from '../utils/access';
-import { CheckIcon, ClockIcon, KeyIcon, LogoutIcon, ShieldCheckIcon } from './Icons';
+import { CheckIcon, ClockIcon, KeyIcon, LockIcon, LogoutIcon, ShieldCheckIcon } from './Icons';
 
 const SCREEN_NAMES = { search: 'Lab Search', reports: 'Discharge Reports', labFinder: 'Lab Finder', wati: 'WATI Settings', monitor: 'WhatsApp Monitor' };
 const AI = { none: 'Off', ask: 'Ask questions', act: 'Ask + send' };
@@ -41,7 +41,8 @@ export default function ProfileMenu({ me, onLogout }) {
     }
   }
 
-  const p = me.permissions;
+  // What they can do right now (their own access with Master Settings switches applied).
+  const p = me.effective || me.permissions;
   const screens = Object.entries(p.screens).filter(([, v]) => v !== 'none');
 
   return (
@@ -96,6 +97,11 @@ export default function ProfileMenu({ me, onLogout }) {
               <div className="pm-note">
                 <ClockIcon size={14} /> Access hours: <b>{me.scheduleText}</b>
               </div>
+              {p.readOnlyMode && (
+                <div className="pm-note">
+                  <LockIcon size={14} /> Read-only mode is on for maintenance — viewing only for now.
+                </div>
+              )}
             </>
           )}
 
@@ -109,8 +115,8 @@ export default function ProfileMenu({ me, onLogout }) {
             (changing ? (
               <form className="pm-form" onSubmit={savePassword}>
                 <input type="password" placeholder="Current password" value={form.current} onChange={(e) => setForm({ ...form, current: e.target.value })} autoComplete="current-password" required autoFocus />
-                <input type="password" placeholder="New password (8+ characters)" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} autoComplete="new-password" minLength={8} required />
-                <input type="password" placeholder="New password again" value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} autoComplete="new-password" minLength={8} required />
+                <input type="password" placeholder={`New password (${me.minPasswordLength || 8}+ characters)`} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} autoComplete="new-password" minLength={me.minPasswordLength || 8} required />
+                <input type="password" placeholder="New password again" value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} autoComplete="new-password" minLength={me.minPasswordLength || 8} required />
                 {status.error && <div className="pm-error">{status.error}</div>}
                 <div className="pm-form-actions">
                   <button type="button" className="btn btn-secondary" onClick={() => setChanging(false)}>

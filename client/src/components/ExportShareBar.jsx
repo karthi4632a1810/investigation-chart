@@ -27,6 +27,7 @@ export default function ExportShareBar({
   via,
   // From the user's permissions (utils/access.js).
   allowShare = true,
+  allowDownload = true, // Master Settings → Downloads & exports
   showLab = true,
   showSummary = true,
 }) {
@@ -39,7 +40,7 @@ export default function ExportShareBar({
   const hasLab = patient ? showLab && patient.dateCount !== undefined : true;
   const hasSummary = patient ? showSummary && Boolean(patient.hasSummary && !patient.summaryDataMissing) : false;
   const labQuery = patient ? { ipNo: patient.ipNo, from: patient.date, to: patient.date } : query;
-  const tableFormats = patient ? (hasLab ? ['xlsx', 'docx', 'csv'] : []) : ['pdf', 'xlsx', 'docx', 'csv'];
+  const tableFormats = !allowDownload ? [] : patient ? (hasLab ? ['xlsx', 'docx', 'csv'] : []) : ['pdf', 'xlsx', 'docx', 'csv'];
   const canShare = allowShare && (patient ? hasLab || hasSummary : true);
 
   async function download(format) {

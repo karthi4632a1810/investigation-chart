@@ -22,22 +22,27 @@ import UserManagement from './components/UserManagement';
 import ProfileMenu from './components/ProfileMenu';
 import SetPasswordScreen from './components/SetPasswordScreen';
 import AuditLog from './components/AuditLog';
+import MasterSettings from './components/MasterSettings';
 import { startAudit, stopAudit, track } from './utils/audit';
 import { accessFor, canOpen, firstOpenView } from './utils/access';
 import {
   FilePdfIcon,
   ChartIcon,
+  ClockIcon,
+  CloseIcon,
   FlaskIcon,
+  GearIcon,
   HospitalIcon,
   LockIcon,
+  MegaphoneIcon,
   SearchIcon,
   ShieldCheckIcon,
   UsersIcon,
   WhatsAppIcon,
 } from './components/Icons';
 
-// Screens with their own address: /admin (WhatsApp Monitor) and /users.
-const VIEW_PATHS = { admin: '/admin', users: '/users', audit: '/audit' };
+// Screens with their own address: /admin (WhatsApp Monitor), /users, /audit, /settings.
+const VIEW_PATHS = { admin: '/admin', users: '/users', audit: '/audit', settings: '/settings' };
 const pathView = () => {
   const path = window.location.pathname.replace(/\/+$/, '');
   return Object.keys(VIEW_PATHS).find((v) => VIEW_PATHS[v] === path) || null;
@@ -50,6 +55,105 @@ function storedUser() {
   } catch {
     return null;
   }
+}
+
+// Master Settings everyone gets (switches, announcement, timings) — server: publicSettings().
+const APP_KEY = 'investigation-app';
+function storedApp() {
+  try {
+    return JSON.parse(sessionStorage.getItem(APP_KEY) || 'null') || {};
+  } catch {
+    return {};
+  }
+}
+function keepApp(app) {
+  try {
+    if (app) sessionStorage.setItem(APP_KEY, JSON.stringify(app));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+/**
+ * Master Settings → "Sign out after no activity": no mouse / keyboard in any
+ * tab of the portal for `minutes` signs out, with a one-minute warning.
+ */
+const ACTIVITY_KEY = 'portal_last_activity';
+function useIdleSignOut(minutes, onSignOut) {
+  const [secondsLeft, setSecondsLeft] = useState(null);
+  useEffect(() => {
+    if (!minutes) {
+      setSecondsLeft(null);
+      return undefined;
+    }
+    let last = Date.now();
+    let lastShared = 0;
+    const mark = () => {
+      last = Date.now();
+      if (last - lastShared > 5000) {
+        lastShared = last;
+        try {
+          localStorage.setItem(ACTIVITY_KEY, String(last));
+        } catch {
+          // ignore storage errors
+        }
+      }
+    };
+    mark();
+    const events = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'wheel'];
+    events.forEach((ev) => window.addEventListener(ev, mark, { passive: true, capture: true }));
+    const timer = setInterval(() => {
+      let shared = 0;
+      try {
+        shared = Number(localStorage.getItem(ACTIVITY_KEY)) || 0;
+      } catch {
+        // ignore storage errors
+      }
+      const left = minutes * 60_000 - (Date.now() - Math.max(last, shared));
+      if (left <= 0) {
+        clearInterval(timer);
+        onSignOut(minutes);
+      } else setSecondsLeft(left <= 60_000 ? Math.ceil(left / 1000) : null);
+    }, 1000);
+    return () => {
+      clearInterval(timer);
+      events.forEach((ev) => window.removeEventListener(ev, mark, { capture: true }));
+    };
+  }, [minutes, onSignOut]);
+  return secondsLeft;
+}
+
+/** The announcement from Master Settings; each text can be hidden once per session. */
+function NoticeBanner({ text, tone }) {
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return sessionStorage.getItem('portal_notice_hidden') || '';
+    } catch {
+      return '';
+    }
+  });
+  if (!text || hidden === text) return null;
+  return (
+    <div className={`app-notice is-${tone || 'info'} no-print`} role={tone === 'danger' ? 'alert' : 'status'}>
+      <MegaphoneIcon size={15} />
+      <span>{text}</span>
+      <button
+        type="button"
+        className="app-notice-close"
+        aria-label="Hide this announcement"
+        onClick={() => {
+          setHidden(text);
+          try {
+            sessionStorage.setItem('portal_notice_hidden', text);
+          } catch {
+            // ignore storage errors
+          }
+        }}
+      >
+        <CloseIcon size={13} />
+      </button>
+    </div>
+  );
 }
 
 const RECENT_SEARCHES_KEY = 'portal_recent_searches';
@@ -78,6 +182,14 @@ export default function App() {
   const [hospital, setHospital] = useState(null);
   // The signed-in user and their permissions (server: userService.js).
   const [me, setMe] = useState(storedUser);
+  const [appSettings, setAppSettings] = useState(storedApp);
+  const applyApp = (app) => {
+    if (!app) return;
+    keepApp(app);
+    setAppSettings(app);
+  };
+  // So Master Settings can refresh this page's copy right after saving.
+  const refreshSessionRef = useRef(() => {});
   // /admin opens the WhatsApp monitor, /users user management; / the rest.
   const [view, setView] = useState(() => pathView() || 'reports'); // 'search' | 'reports' | 'labFinder' | 'wati' | 'admin' | 'users'
   // Set by the AI assistant to open a screen at a given date / filter / query;
@@ -171,16 +283,19 @@ export default function App() {
     };
     const refresh = () =>
       checkSession()
-        .then(({ user, reason }) => {
+        .then(({ user, app, reason }) => {
           if (!user) return expire(reason);
           sessionStorage.setItem('investigation-auth', JSON.stringify(user));
           setMe(user);
+          applyApp(app);
         })
         .catch(() => {});
     refresh();
+    refreshSessionRef.current = refresh;
     const onExpired = (e) => expire(e.detail?.reason);
     const onFocus = () => !document.hidden && refresh();
-    const timer = setInterval(refresh, 3 * 60_000);
+    // Every minute: Master Settings changes (switches, announcement) reach open pages.
+    const timer = setInterval(refresh, 60_000);
     window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
     document.addEventListener('visibilitychange', onFocus);
     return () => {
@@ -199,6 +314,7 @@ export default function App() {
       const data = await login({ username, password });
       if (data.ok && data.user) {
         sessionStorage.setItem('investigation-auth', JSON.stringify(data.user));
+        applyApp(data.app);
         setTempPassword(data.user.mustChangePassword ? password : '');
         setMe(data.user);
         setPassword('');
@@ -213,15 +329,21 @@ export default function App() {
     }
   }
 
-  function handleLogout() {
+  function handleLogout(reason = '') {
     stopAudit();
     logout();
     sessionStorage.removeItem('investigation-auth');
     setMe(null);
     setUsername('');
     setPassword('');
-    setLoginError('');
+    setLoginError(typeof reason === 'string' ? reason : '');
   }
+
+  const idleMinutes = isAuthenticated ? Number(appSettings['auth.idleSignOutMinutes']) || 0 : 0;
+  const idleSignOutRef = useRef(null);
+  idleSignOutRef.current = (minutes) => handleLogout(`Signed out after ${minutes} minutes without activity. Please sign in again.`);
+  const onIdle = useRef((minutes) => idleSignOutRef.current(minutes)).current;
+  const idleSecondsLeft = useIdleSignOut(idleMinutes, onIdle);
 
   async function executeSearch(targetRegNo, targetFrom, targetTo) {
     const searchId = targetRegNo || regNo;
@@ -325,6 +447,7 @@ export default function App() {
               ['admin', 'Monitor', ChartIcon],
               ['audit', 'Audit Log', ShieldCheckIcon],
               ['users', 'Users', UsersIcon],
+              ['settings', 'Settings', GearIcon],
             ]
               .filter(([id]) => canOpen(me, id))
               .map(([id, label, Icon]) => (
@@ -340,6 +463,36 @@ export default function App() {
       </header>
 
       <main className="page">
+        <NoticeBanner text={appSettings['notice.text']} tone={appSettings['notice.tone']} />
+        {appSettings['maintenance.readOnly'] && (
+          <div className="app-notice is-readonly no-print" role="status">
+            <LockIcon size={14} />
+            {me.isSuperAdmin ? (
+              <span>
+                <b>Read-only mode is on</b> for staff — they can view but not send, download or change anything. You still have full access.{' '}
+                <button type="button" className="app-notice-link" onClick={() => setView('settings')}>
+                  Master Settings
+                </button>
+              </span>
+            ) : (
+              <span>
+                <b>Read-only mode</b> — the portal is under maintenance. You can view everything; sending, downloads and changes are paused.
+              </span>
+            )}
+          </div>
+        )}
+        {idleSecondsLeft !== null && (
+          <div className="app-idle-warning" role="alert">
+            <ClockIcon size={16} />
+            <span>
+              No activity — you’ll be signed out in <b>{idleSecondsLeft} s</b>.
+            </span>
+            <button type="button" className="btn btn-primary" onClick={() => window.dispatchEvent(new Event('mousedown'))}>
+              Stay signed in
+            </button>
+          </div>
+        )}
+
         {!firstOpenView(me) && (
           <div className="no-access">
             <LockIcon size={28} />
@@ -348,17 +501,23 @@ export default function App() {
           </div>
         )}
 
-        {view === 'reports' && canOpen(me, 'reports') && <DischargeReports navRequest={navRequest} access={access} />}
+        {view === 'reports' && canOpen(me, 'reports') && (
+          <DischargeReports navRequest={navRequest} access={access} refreshMs={(Number(appSettings['reports.refreshSeconds']) || 20) * 1000} />
+        )}
 
-        {view === 'labFinder' && canOpen(me, 'labFinder') && <LabFinder navRequest={navRequest} canShare={access.labFinder.canShare} />}
+        {view === 'labFinder' && canOpen(me, 'labFinder') && (
+          <LabFinder navRequest={navRequest} canShare={access.labFinder.canShare} canDownload={access.exports} />
+        )}
 
         {view === 'wati' && canOpen(me, 'wati') && <WatiSettings readOnly={access.wati.readOnly} />}
 
-        {view === 'admin' && canOpen(me, 'admin') && <AdminDashboard readOnly={access.monitor.readOnly} navRequest={navRequest} />}
+        {view === 'admin' && canOpen(me, 'admin') && <AdminDashboard readOnly={access.monitor.readOnly} navRequest={navRequest} canExport={access.exports} />}
 
         {view === 'users' && canOpen(me, 'users') && <UserManagement />}
 
-        {view === 'audit' && canOpen(me, 'audit') && <AuditLog />}
+        {view === 'audit' && canOpen(me, 'audit') && <AuditLog canExport={access.exports} />}
+
+        {view === 'settings' && canOpen(me, 'settings') && <MasterSettings onNavigate={setView} onSaved={() => refreshSessionRef.current()} />}
 
         {view === 'search' && canOpen(me, 'search') && (
           <div className="search-view-container">

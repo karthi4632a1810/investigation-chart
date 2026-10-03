@@ -6,6 +6,7 @@
  *
  * Times use the EMR's discharge time ("29-09-2026 12:24", India time).
  */
+import { matchPatient } from './patientSearchService.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -66,8 +67,10 @@ export function describeDischargeQuery(q) {
 export async function dischargeReport(input = {}) {
   const q = normaliseDischargeQuery(input);
   const docs = await (await getMongoCollection('discharge_reports'))
-    .find({ date: { $gte: q.from, $lte: q.to } }, { projection: { _id: 0, reqNos: 0 } })
+    .find({ date: { $gte: q.from, $lte: q.to } }, { projection: { _id: 0 } })
     .toArray();
+  // "Search": any value (name, IP, UHID, mobile in any format, address …) — patientSearchService.js.
+  const searchHit = q.q ? new Set(docs.filter((d) => matchPatient(d, q.q)).map((d) => `${d.date}|${d.ipNo}`)) : null;
 
   // Best WhatsApp status per patient (their reports' messages).
   const msgs = await (await getMongoCollection('whatsapp_messages'))
@@ -116,7 +119,7 @@ export async function dischargeReport(input = {}) {
     if (q.lab && r.lab !== q.lab) return false;
     if (q.summary && r.summary !== q.summary) return false;
     if (q.whatsapp && r.whatsapp !== q.whatsapp) return false;
-    if (q.q && ![r.name, r.ipNo, r.regNo, r.mobile].some((v) => contains(v, q.q))) return false;
+    if (searchHit && !searchHit.has(`${r.date}|${r.ipNo}`)) return false;
     return true;
   });
   rows.sort((a, b) => (a.dischargeTime ?? 0) - (b.dischargeTime ?? 0) || a.name.localeCompare(b.name));

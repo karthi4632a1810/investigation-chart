@@ -31,14 +31,17 @@ import { cleanLookupId, lookupLabReport } from './labLookupService.js';
 import { checkWhatsAppNumber } from './watiService.js';
 import { comparePatients, detailsForModel, patientDetails, patientJourney } from './patientInsightService.js';
 import { buildChatExport, listResults, numberResult, saveReply } from './chatResultsService.js';
+import { searchPatients } from './patientSearchService.js';
 
 // Patient details (name, age, mobile, address, lab values…) go to the AI
 // service so it can answer with them — "her WhatsApp number", "discharge time
 // in 12-hour format", "compare these two". AI_SHARE_PATIENT_DATA=off keeps them
 // on screen only (the model then just gets counts). ABHA ID and religion are never sent.
-const SHARE = !/^(off|false|0|no)$/i.test(String(process.env.AI_SHARE_PATIENT_DATA || 'on'));
+// Master Settings → Ask AI (default from AI_SHARE_PATIENT_DATA, else on).
+const SHARE = () => setting('ai.sharePatientData');
 import { cleanTestMessage, cleanTestNumber, formatNumber, sendTestWhatsApp } from './whatsappTestService.js';
 import { FULL_PERMISSIONS } from './userService.js';
+import { setting } from './appSettingsService.js';
 
 const GROQ_KEY = process.env.GROQ_API_KEY || process.env.GROQ_API;
 const GROQ_URL = 'https://api.groq.com/openai/v1';
@@ -111,17 +114,17 @@ const TOOL_ACCESS = {
   whatsapp_report: (a) => canRead(a, 'monitor'),
   discharge_report: (a) => canRead(a, 'reports'),
   open_screen: () => true,
-  offer_download: (a) => canRead(a, 'labFinder') || canRead(a, 'reports'),
+  offer_download: (a) => a.exports !== false && (canRead(a, 'labFinder') || canRead(a, 'reports')),
   offer_whatsapp_share: (a) => a.ai === 'act',
   send_test_whatsapp: (a) => a.ai === 'act',
-  lab_report_lookup: (a) => a.ai !== 'none' && canRead(a, 'search'),
+  lab_report_lookup: (a) => a.ai !== 'none' && canRead(a, 'search') && a.opLookup !== false,
   patient_details: (a) => canRead(a, 'reports'),
   patient_journey: (a) => canRead(a, 'reports'),
   compare_patients: (a) => canRead(a, 'reports'),
-  export_results: () => true,
-  offer_lookup_whatsapp: (a) => a.ai === 'act' && canRead(a, 'search'),
+  export_results: (a) => a.exports !== false,
+  offer_lookup_whatsapp: (a) => a.ai === 'act' && canRead(a, 'search') && a.opLookup !== false,
 };
-const SCREEN_OF = { discharge_reports: 'reports', lab_finder: 'labFinder', lab_search: 'search', wati_settings: 'wati', whatsapp_monitor: 'monitor' };
+const SCREEN_OF = { discharge_reports: 'reports', lab_finder: 'labFinder', lab_search: 'search', wati_settings: 'wati', whatsapp_monitor: 'monitor', audit_log: 'audit' };
 const NO_ACCESS = "This user's account has no access to that. Tell them to ask the super admin if they need it.";
 
 class NoAccessError extends Error {}
@@ -175,14 +178,16 @@ function systemPrompt(context = {}) {
   return `You are the help assistant inside the ${hospital} Diagnostics Summary Portal, used by hospital staff.
 Today is ${today.weekday}, ${today.iso} (India time). Resolve "today", "yesterday", "last week", "this month" etc. from this date. Tool dates are YYYY-MM-DD; in replies write dates as DD-MM-YYYY.
 
-Screens: Lab Search (one patient's results from the EMR), Discharge Reports (each discharged patient's Lab Report + Discharge Summary PDFs, made every 15 minutes; WhatsApp button), Lab Finder (lab values across patients, exports), WATI Settings (Test mode / Live), WhatsApp Monitor (/admin: every WhatsApp message, delivered/read/failed, WATI quota).
+Screens: Lab Search (one patient's results from the EMR), Discharge Reports (each discharged patient's Lab Report + Discharge Summary PDFs, made every ${setting('discharge.checkMinutes')} minutes; WhatsApp button), Lab Finder (lab values across patients, exports), WATI Settings (Test mode / Live), WhatsApp Monitor (/admin: every WhatsApp message, delivered/read/failed, WATI quota).
 
 ${describeContext(context)}
 Rules:
 - Use the tools for anything about patients, reports or lab results. Never invent names, IP numbers, values or counts.
-- When the user asks for a specific patient's report, lab report or discharge summary (by IP number, UHID or name), call find_patient — it shows their reports with download and WhatsApp options. Don't send them to Lab Search for that.
-- If find_patient finds nothing for a UHID or IP number (often an OP / out-patient, who isn't in the discharge data), call lab_report_lookup with that number to search the EMR lab directly (last 30 days unless they give dates). OP patients exist only here in the chat — never say they'll appear in Discharge Reports. Once found, offer: open or download the PDF, or send it on WhatsApp. For WhatsApp ask "Which WhatsApp number should I send it to?", then call offer_lookup_whatsapp; if it says the number is wrong (e.g. only 9 digits), tell them exactly that and ask for the correct number. They press Send on the card, which then shows whether it was sent, not on WhatsApp, delivered or read.
-${SHARE
+- To find a patient by anything — IP number, UHID, mobile / WhatsApp number (any format or its last digits), name or part of it, lab Req No, bed, doctor, ward, address, town, relation's name — call find_patient with exactly what they typed. It searches every date (not just today) and shows their reports with download and WhatsApp options. Use it whenever someone asks "find / who is / which patient has …". Don't use discharge_report to look up one patient, and don't send them to Lab Search for that.
+- A question about one patient given by their mobile number, name or anything else ("age and discharge time of the patient with number 89396 05869") goes straight to patient_details with that value as id — it accepts the same values as find_patient. Answer the question itself, not just "details are below".
+- If find_patient finds the patient, say who it is and what matched (e.g. "Baby Gugan Priyan, IP07029120, discharged 02-10-2026 — mobile 8939605869 matches"). If several match, say how many and that they're listed best match first.
+- If find_patient finds nothing for a UHID or IP number (often an OP / out-patient, who isn't in the discharge data), call lab_report_lookup with that number to search the EMR lab directly (last ${setting('ai.lookupDays')} days unless they give dates). OP patients exist only here in the chat — never say they'll appear in Discharge Reports. Once found, offer: open or download the PDF, or send it on WhatsApp. For WhatsApp ask "Which WhatsApp number should I send it to?", then call offer_lookup_whatsapp; if it says the number is wrong (e.g. only 9 digits), tell them exactly that and ask for the correct number. They press Send on the card, which then shows whether it was sent, not on WhatsApp, delivered or read.
+${SHARE()
     ? `- Tool results come to you with the patient data, and also appear on screen as numbered results (#1, #2 …). Answer the question itself from the data — a mobile number, a discharge time, an age, an address, a value — formatted the way the user asks (e.g. "29/09/2026, 12:24 PM", 12-hour time, "3 days 4 hours"). Don't paste long lists; the table is on screen.
 - For anything about one discharged patient (mobile / WhatsApp number, age, gender, address, city, relation, email, diagnosis, admission or discharge date and time, length of stay, doctor, ward, bed, reports, WhatsApp status, out-of-range lab values) call patient_details.`
     : "- Tool results are shown to the user on screen; you only get counts. Don't repeat patient details — say briefly what was found and that it's shown below."}
@@ -205,12 +210,13 @@ ${SHARE
 const TOOLS = [
   {
     name: 'find_patient',
-    description: 'Find discharged patients by IP number, UHID (registration number) or name. Shows their report cards on screen.',
+    description:
+      'Find discharged patients by anything about them, across every date: IP number, UHID, mobile / WhatsApp number (any format, or its last digits), name or part of it (any order), lab Req No, bed, doctor, department, ward, staff who created it, relation name, address, town or village. Shows their report cards on screen, best match first, and says what matched.',
     parameters: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'IP number (e.g. IP07028148), UHID digits, or part of the patient name' },
-        date: { type: 'string', description: 'Optional discharge date YYYY-MM-DD' },
+        query: { type: 'string', description: 'Exactly what the user gave, e.g. "8939605869", "+91 89396 05869", "IP07028148", "6181354", "gugan priyan", "tindivanam"' },
+        date: { type: 'string', description: 'Optional discharge date YYYY-MM-DD — only if the user named one' },
       },
       required: ['query'],
     },
@@ -328,7 +334,7 @@ const TOOLS = [
     parameters: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'IP number, UHID or name' },
+        id: { type: 'string', description: 'Anything that identifies the patient: IP number, UHID, mobile / WhatsApp number (any format), or name' },
         date: { type: 'string', description: 'Optional discharge date YYYY-MM-DD (if they had several stays)' },
       },
       required: ['id'],
@@ -339,7 +345,7 @@ const TOOLS = [
     description: "A patient's journey as a timeline / flowchart: admission, lab test days (with out-of-range values), discharge, reports made, WhatsApp sent / delivered / read, staff actions.",
     parameters: {
       type: 'object',
-      properties: { id: { type: 'string', description: 'IP number, UHID or name' }, date: { type: 'string', description: 'Optional discharge date YYYY-MM-DD' } },
+      properties: { id: { type: 'string', description: 'Anything that identifies the patient: IP number, UHID, mobile / WhatsApp number (any format), or name' }, date: { type: 'string', description: 'Optional discharge date YYYY-MM-DD' } },
       required: ['id'],
     },
   },
@@ -350,7 +356,7 @@ const TOOLS = [
     parameters: {
       type: 'object',
       properties: {
-        a: { type: 'string', description: 'IP number, UHID or name' },
+        a: { type: 'string', description: 'IP number, UHID, mobile number or name' },
         b: { type: 'string', description: 'Second patient (leave empty to compare one patient over time)' },
         a_date: { type: 'string', description: 'Optional lab result date for a, YYYY-MM-DD' },
         b_date: { type: 'string', description: 'Optional lab result date for b, YYYY-MM-DD' },
@@ -415,7 +421,7 @@ const TOOLS = [
     parameters: {
       type: 'object',
       properties: {
-        screen: { type: 'string', enum: ['discharge_reports', 'lab_finder', 'lab_search', 'wati_settings', 'whatsapp_monitor'] },
+        screen: { type: 'string', enum: ['discharge_reports', 'lab_finder', 'lab_search', 'wati_settings', 'whatsapp_monitor', 'audit_log', 'users', 'master_settings'] },
         date: { type: 'string', description: 'For discharge_reports: the date to show, YYYY-MM-DD' },
         filter: { type: 'string', description: 'For discharge_reports: text to filter the list by (name, IP, doctor, ward)' },
       },
@@ -463,7 +469,7 @@ const patientFacts = (r) => ({
   dischargeDate: r.date,
   hasLabReport: r.dateCount !== undefined,
   hasDischargeSummary: Boolean(r.hasSummary && !r.summaryDataMissing),
-  ...(SHARE
+  ...(SHARE()
     ? {
         name: r.name,
         uhid: r.regNo,
@@ -647,18 +653,33 @@ function schedulerStatusFacts() {
 /** Each tool returns { forModel, block? }. */
 const handlers = {
   async find_patient({ query, date }) {
-    const q = String(query || '').trim().slice(0, 60);
-    if (!q) return { forModel: { error: 'Give an IP number, UHID or name' } };
-    const c = await getMongoCollection('discharge_reports');
-    let filter;
-    if (/^ip\s*\d+$/i.test(q)) filter = { ipNo: { $regex: `^${escapeRegex(q.replace(/\s+/g, ''))}$`, $options: 'i' } };
-    else if (/^\d{4,}$/.test(q)) filter = { $or: [{ regNo: q }, { ipNo: { $regex: `${escapeRegex(q)}$` } }] };
-    else filter = { name: { $regex: escapeRegex(q), $options: 'i' } };
-    if (DATE_RE.test(date || '')) filter = { ...filter, date };
-    const docs = await c.find(filter, { projection: { _id: 0 } }).sort({ date: -1 }).limit(20).toArray();
+    const q = String(query || '').trim().slice(0, 80);
+    if (!q) return { forModel: { error: 'Give a name, IP number, UHID, mobile number or anything else about the patient' } };
+    // Any value, every date (patientSearchService.js); a date the user named narrows it.
+    let docs = await searchPatients(q, { date: DATE_RE.test(date || '') ? date : undefined });
+    let note;
+    if (!docs.length && DATE_RE.test(date || '')) {
+      docs = await searchPatients(q);
+      if (docs.length) note = `Not discharged on ${date} — these are from other dates.`;
+    }
+    const on = [...new Set(docs.map((d) => d.match.on))];
     return {
-      forModel: { count: docs.length, patients: docs.slice(0, 5).map(patientFacts) },
-      block: docs.length ? { type: 'patients', title: `Found ${docs.length} match${docs.length === 1 ? '' : 'es'}`, patients: docs.map(patientCard) } : undefined,
+      forModel: {
+        count: docs.length,
+        searchedFor: q,
+        searchedAllDates: !note && !DATE_RE.test(date || ''),
+        matchedOn: on.join(', '),
+        ...(note ? { note } : {}),
+        patients: docs.slice(0, 5).map((d) => ({ ...patientFacts(d), matchedOn: d.match.on })),
+        ...(docs.length ? {} : { hint: 'Nothing in the discharge data on any date. For a UHID or IP number of an OP patient, try lab_report_lookup.' }),
+      },
+      block: docs.length
+        ? {
+            type: 'patients',
+            title: `Found ${docs.length} match${docs.length === 1 ? '' : 'es'} for “${q}” · by ${on.slice(0, 2).join(', ')}${note ? ' · other dates' : ''}`,
+            patients: docs.map(patientCard),
+          }
+        : undefined,
     };
   },
 
@@ -703,7 +724,7 @@ const handlers = {
     if (!hasCriteria(query)) return { forModel: { error: 'Give at least a test name, result value or patient' } };
     const search = await searchLabResults(query);
     const forModel = { total: search.total, patients: search.patients, matchedTests: search.matchedTests.slice(0, 12) };
-    if (SHARE && search.total) {
+    if (SHARE() && search.total) {
       forModel.rows = search.rows.slice(0, 80).map((r) => `${r.name} ${r.ipNo} | ${r.test} = ${r.value} (${r.range || 'no range'}) ${r.status || ''} | ${r.resultDate}`);
       if (search.total > 80) forModel.note = `first 80 of ${search.total} rows`;
     }
@@ -843,8 +864,20 @@ const handlers = {
       whatsapp: args.whatsapp,
       q: args.search,
     });
+    // A search with nothing in these dates: say where that patient is instead.
+    const elsewhere = args.search && !report.rows.length ? await searchPatients(args.search, { limit: 5 }) : [];
     return {
-      forModel: { range: report.description, totals: report.totals, shownOnScreen: `${report.rows.length} patients in a table with downloads` },
+      forModel: {
+        range: report.description,
+        totals: report.totals,
+        shownOnScreen: `${report.rows.length} patients in a table with downloads`,
+        ...(elsewhere.length
+          ? {
+              notInThisRange: `"${args.search}" isn't in these dates, but matches ${elsewhere.length} patient(s) discharged on other dates — call find_patient with "${args.search}" to show them.`,
+              otherDates: elsewhere.map((d) => ({ ipNo: d.ipNo, dischargeDate: d.date, matchedOn: d.match.on, ...(SHARE() ? { name: d.name } : {}) })),
+            }
+          : {}),
+      },
       block: {
         type: 'dischargeReport',
         title: `Discharge report · ${report.description}`,
@@ -860,7 +893,7 @@ const handlers = {
     const d = await patientDetails(id, DATE_RE.test(date || '') ? date : undefined);
     if (!d.found) return { forModel: { found: false, hint: 'Not in the discharge data — for an OP patient, use lab_report_lookup with the UHID.' } };
     return {
-      forModel: SHARE ? { ...detailsForModel(d), record: undefined } : { found: true, ipNo: d.record.ipNo, dischargeDate: d.record.date, shownOnScreen: true },
+      forModel: SHARE() ? { ...detailsForModel(d), record: undefined } : { found: true, ipNo: d.record.ipNo, dischargeDate: d.record.date, shownOnScreen: true },
       block: { type: 'patientDetails', title: `${d.record.name} · ${d.record.ipNo}`, ...d },
     };
   },
@@ -869,7 +902,7 @@ const handlers = {
     const j = await patientJourney(id, DATE_RE.test(date || '') ? date : undefined);
     if (!j.found) return { forModel: { found: false, hint: 'Not in the discharge data.' } };
     return {
-      forModel: SHARE
+      forModel: SHARE()
         ? { patient: `${j.record.name} (${j.record.ipNo})`, steps: j.steps.map((st) => `${istTime(st.at)} · ${st.lane} · ${st.title}${st.detail ? ` — ${st.detail}` : ''}`) }
         : { steps: j.steps.length, shownOnScreen: true },
       block: { type: 'journey', title: `Journey · ${j.record.name} (${j.record.ipNo})`, ...j },
@@ -881,7 +914,7 @@ const handlers = {
     if (!r.found) return { forModel: { found: false, notFound: r.missing } };
     const both = r.labs.filter((l) => l.a && l.b);
     return {
-      forModel: SHARE
+      forModel: SHARE()
         ? {
             a: r.labelA,
             b: r.labelB,
@@ -973,9 +1006,11 @@ const handlers = {
   },
 
   async open_screen({ screen, date, filter }, context) {
-    const views = { discharge_reports: 'reports', lab_finder: 'labFinder', lab_search: 'search', wati_settings: 'wati', whatsapp_monitor: 'admin' };
+    const views = { discharge_reports: 'reports', lab_finder: 'labFinder', lab_search: 'search', wati_settings: 'wati', whatsapp_monitor: 'admin', audit_log: 'audit', users: 'users', master_settings: 'settings' };
     if (!views[screen]) return { forModel: { error: 'Unknown screen' } };
-    if (context.access && !canRead(context.access, SCREEN_OF[screen])) return { forModel: { error: NO_ACCESS } };
+    if (['users', 'master_settings'].includes(screen) ? !context.superAdmin : context.access && !canRead(context.access, SCREEN_OF[screen])) {
+      return { forModel: { error: screen === 'master_settings' || screen === 'users' ? 'Only the super admin can open that screen.' : NO_ACCESS } };
+    }
     return {
       forModel: { opened: screen },
       block: { type: 'navigate', view: views[screen], date: DATE_RE.test(date || '') ? date : undefined, filter: filter ? String(filter).slice(0, 60) : undefined },
@@ -1302,18 +1337,20 @@ async function ruleBasedAnswer(messages, ctx) {
     [/relation|father|husband|mother|wife|guardian/i, 'RELATION NAME'],
   ];
   const asked = DETAIL_WORDS.filter(([re]) => re.test(text)).map(([, label]) => label);
-  if (pid && (asked.length || /details|about|info/i.test(text)) && !/lab\s*report|summary\s*pdf|\bpdf\b/i.test(text)) {
-    const r = await run('patient_details', { id: pid });
-    if (r.found === false) return { reply: `${pid} isn't in the discharge data${ctx.allowedTools?.has('lab_report_lookup') ? ' — for an OP patient ask for their lab report by UHID' : ''}.`, blocks };
+  // "age and address of 89396 05869" — a mobile number works as the patient too.
+  const did = pid || (phone && (asked.some((l) => !['Mobile', 'WhatsApp No'].includes(l)) || /details|about|info/i.test(text)) ? phone : null);
+  if (did && (asked.length || /details|about|info/i.test(text)) && !/lab\s*report|summary\s*pdf|\bpdf\b/i.test(text)) {
+    const r = await run('patient_details', { id: did });
+    if (r.found === false) return { reply: `${did} isn't in the discharge data${ctx.allowedTools?.has('lab_report_lookup') ? ' — for an OP patient ask for their lab report by UHID' : ''}.`, blocks };
     if (r.fields && asked.length) {
       const pick = (label) => r.fields.find((f) => f.label === label || (label === 'City' && ['City', 'District', 'State', 'AREA / VILLAGE'].includes(f.label)));
       const answers = [...new Set(asked)].map((label) => {
         const f = label === 'Ward' ? r.fields.filter((x) => ['Ward', 'Bed'].includes(x.label)) : [pick(label)].filter(Boolean);
         return f.length ? f.map((x) => `${x.label}: ${x.value}`).join(', ') : `${label}: not recorded`;
       });
-      return { reply: `${pid} — ${answers.join(' · ')}. All details are below.`, blocks };
+      return { reply: `${did} — ${answers.join(' · ')}. All details are below.`, blocks };
     }
-    return { reply: `Details of ${pid} are below.`, blocks };
+    return { reply: `Details of ${did} are below.`, blocks };
   }
 
   const summarise = (t) =>
@@ -1384,6 +1421,24 @@ async function ruleBasedAnswer(messages, ctx) {
       blocks,
     };
   }
+  // A patient by mobile number ("find the patient with 89396 05869") or by name
+  // / place ("find patient gugan priyan", "who is from tindivanam") — every date.
+  const findWords = /\b(find|search|look\s*up|lookup|who\s+is|which\s+patient|whose|belongs?|patient\s+(?:with|named|called|of|by)|details?\s+of)\b/i;
+  if (!ip && phone && !/\b(send|share|forward)\b/i.test(text)) {
+    const r = await run('find_patient', { query: phone });
+    return {
+      reply: r.count
+        ? `${busyNote} Found ${r.count} patient${r.count === 1 ? '' : 's'} with ${phone} (matched on ${r.matchedOn}) — shown below.`
+        : `${busyNote} No discharged patient has the number ${phone} on any date. If they're an OP patient, give me their UHID and I'll check the EMR lab.`,
+      blocks,
+    };
+  }
+  const named = findWords.test(text) && !ip ? /\b(?:find|search|look\s*up|lookup|who\s+is|named|called|details?\s+of)\s+(?:for\s+)?(?:the\s+)?(?:patient\s+)?(?:named\s+|called\s+|with\s+(?:name\s+)?)?([a-z][a-z .'-]{2,40}?)\s*(?:\?|$|'s|\b(?:report|lab|summary|details|discharged)\b)/i.exec(text)?.[1]?.trim() : null;
+  if (named && !/^(patient|patients|a patient|the patient|report|reports|discharge|discharges|lab|today|yesterday)$/i.test(named)) {
+    const r = await run('find_patient', { query: named });
+    if (r.count) return { reply: `${busyNote} Found ${r.count} match${r.count === 1 ? '' : 'es'} for “${named}” (by ${r.matchedOn}) — shown below.`, blocks };
+  }
+
   const uhid =
     /\b(?:uhid|reg(?:istration)?\s*(?:no|number)?|op)\D{0,4}(\d{5,})/i.exec(text)?.[1] ||
     (/\b(find|lab|report|search|look|check|result)/i.test(text) ? /\b(\d{6,9})\b/.exec(text)?.[1] : undefined);
@@ -1512,10 +1567,11 @@ function describeBlocks(blocks) {
 const formatIstShort = (at) =>
   at ? new Date(at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : '';
 
-export async function runAssistant({ messages, context = {}, user = null, access = FULL_PERMISSIONS, chatId = null }) {
+export async function runAssistant({ messages, context = {}, user = null, access = FULL_PERMISSIONS, chatId = null, superAdmin = false }) {
   const ctx = sanitiseContext(context);
   ctx.user = user;
   ctx.access = access;
+  ctx.superAdmin = Boolean(superAdmin);
   ctx.chatId = /^[a-z0-9]{6,40}$/i.test(String(chatId || '')) ? String(chatId) : null;
   ctx.results = await listResults(ctx.chatId).catch(() => []);
   const question = String([...messages].reverse().find((m) => m.role === 'user')?.content || '').slice(0, 500);
