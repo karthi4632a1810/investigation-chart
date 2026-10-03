@@ -17,8 +17,11 @@ import { config } from '../config.js';
 import { getPdfPresignedUrl } from './storageService.js';
 import { setting } from './appSettingsService.js';
 
+// "hex:<64 hex digits>" = the key's raw bytes — how scripts/reset-superadmin-password.sh
+// keeps the key that used to come from APP_PASSWORD, so links already sent keep working.
+const envKey = (v) => (/^hex:[0-9a-f]{64}$/i.test(String(v || '')) ? Buffer.from(String(v).slice(4), 'hex') : v);
 const signingKey =
-  process.env.PUBLIC_LINK_SECRET ||
+  envKey(process.env.PUBLIC_LINK_SECRET) ||
   crypto.createHash('sha256').update(`investigation-public-link:${config.auth.username}:${config.auth.password}`).digest();
 
 export const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
