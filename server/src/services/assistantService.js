@@ -184,8 +184,8 @@ ${describeContext(context)}
 Rules:
 - Use the tools for anything about patients, reports or lab results. Never invent names, IP numbers, values or counts.
 - To find a patient by anything — IP number, UHID, mobile / WhatsApp number (any format or its last digits), name or part of it, lab Req No, bed, doctor, ward, address, town, relation's name — call find_patient with exactly what they typed. It searches every date (not just today) and shows their reports with download and WhatsApp options. Use it whenever someone asks "find / who is / which patient has …". Don't use discharge_report to look up one patient, and don't send them to Lab Search for that.
-- A question about one patient given by their mobile number, name or anything else ("age and discharge time of the patient with number 89396 05869") goes straight to patient_details with that value as id — it accepts the same values as find_patient. Answer the question itself, not just "details are below".
-- If find_patient finds the patient, say who it is and what matched (e.g. "Baby Gugan Priyan, IP07029120, discharged 02-10-2026 — mobile 8939605869 matches"). If several match, say how many and that they're listed best match first.
+- A question about one patient given by their mobile number, name or anything else ("age and discharge time of the patient with number 98765 43210") goes straight to patient_details with that value as id — it accepts the same values as find_patient. Answer the question itself, not just "details are below".
+- If find_patient finds the patient, say who it is and what matched (e.g. "Baby Arun Kumar, IP07000123, discharged 02-10-2026 — mobile 98765 43210 matches"). If several match, say how many and that they're listed best match first.
 - If find_patient finds nothing for a UHID or IP number (often an OP / out-patient, who isn't in the discharge data), call lab_report_lookup with that number to search the EMR lab directly (last ${setting('ai.lookupDays')} days unless they give dates). OP patients exist only here in the chat — never say they'll appear in Discharge Reports. Once found, offer: open or download the PDF, or send it on WhatsApp. For WhatsApp ask "Which WhatsApp number should I send it to?", then call offer_lookup_whatsapp; if it says the number is wrong (e.g. only 9 digits), tell them exactly that and ask for the correct number. They press Send on the card, which then shows whether it was sent, not on WhatsApp, delivered or read.
 ${SHARE()
     ? `- Tool results come to you with the patient data, and also appear on screen as numbered results (#1, #2 …). Answer the question itself from the data — a mobile number, a discharge time, an age, an address, a value — formatted the way the user asks (e.g. "29/09/2026, 12:24 PM", 12-hour time, "3 days 4 hours"). Don't paste long lists; the table is on screen.
@@ -215,7 +215,7 @@ const TOOLS = [
     parameters: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Exactly what the user gave, e.g. "8939605869", "+91 89396 05869", "IP07028148", "6181354", "gugan priyan", "tindivanam"' },
+        query: { type: 'string', description: 'Exactly what the user gave, e.g. "9876543210", "+91 98765 43210", "IP07028148", "6159338", "arun kumar", "tindivanam"' },
         date: { type: 'string', description: 'Optional discharge date YYYY-MM-DD — only if the user named one' },
       },
       required: ['query'],
@@ -1337,7 +1337,7 @@ async function ruleBasedAnswer(messages, ctx) {
     [/relation|father|husband|mother|wife|guardian/i, 'RELATION NAME'],
   ];
   const asked = DETAIL_WORDS.filter(([re]) => re.test(text)).map(([, label]) => label);
-  // "age and address of 89396 05869" — a mobile number works as the patient too.
+  // "age and address of 98765 43210" — a mobile number works as the patient too.
   const did = pid || (phone && (asked.some((l) => !['Mobile', 'WhatsApp No'].includes(l)) || /details|about|info/i.test(text)) ? phone : null);
   if (did && (asked.length || /details|about|info/i.test(text)) && !/lab\s*report|summary\s*pdf|\bpdf\b/i.test(text)) {
     const r = await run('patient_details', { id: did });
@@ -1421,8 +1421,8 @@ async function ruleBasedAnswer(messages, ctx) {
       blocks,
     };
   }
-  // A patient by mobile number ("find the patient with 89396 05869") or by name
-  // / place ("find patient gugan priyan", "who is from tindivanam") — every date.
+  // A patient by mobile number ("find the patient with 98765 43210") or by name
+  // / place ("find patient arun kumar", "who is from tindivanam") — every date.
   const findWords = /\b(find|search|look\s*up|lookup|who\s+is|which\s+patient|whose|belongs?|patient\s+(?:with|named|called|of|by)|details?\s+of)\b/i;
   if (!ip && phone && !/\b(send|share|forward)\b/i.test(text)) {
     const r = await run('find_patient', { query: phone });

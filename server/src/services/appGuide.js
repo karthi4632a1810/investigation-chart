@@ -48,7 +48,7 @@ Screens: Lab Search, Discharge Reports, Lab Finder, WATI Settings, Monitor (What
 - Date bar: Prev / Next day (keys [ and ], or arrow keys), Today (key T), or pick a date. "Check Now" runs the EMR check immediately; otherwise it runs every 15 minutes (countdown shown).
 - Stat chips after a check: found (discharges seen), generated (new lab reports), ready (already made), no lab data, failed, summaries, summary issues (will retry next check).
 - Category chips: All Patients, 📋 Lab Ready, 📄 Summary Ready, ⏳ No Lab Data, 🏢 Corporate.
-- Filter box: type anything — name (any part, any order), IP number, UHID, mobile number in any format (+91 89396 05869, or its last digits), lab Req No, doctor, ward, town (Escape clears). If nobody on that date matches, "Search all dates" looks across every date.
+- Filter box: type anything — name (any part, any order), IP number, UHID, mobile number in any format (+91 98765 43210, or its last digits), lab Req No, doctor, ward, town (Escape clears). If nobody on that date matches, "Search all dates" looks across every date.
 - Cards / Table switch (top right of the list). Advanced Search has a "Search anything" box (every date, best match first) plus fields for IP number, UHID, name, doctor, department, ward, patient type, mobile, created by and discharge date period.`,
   },
   {
@@ -275,7 +275,7 @@ Times are India time; "8 pm to 8 am" means overnight from the evening before.`,
     id: 'ai-patient-answers',
     title: 'Ask AI: patient details, journey, compare, files',
     keywords: 'find search patient by phone mobile number who has belongs details whatsapp number mobile age address discharge time format journey flowchart timeline compare comparison two patients two reports change pdf csv excel group results combine file number #1 #2',
-    text: `Ask AI answers with the patient's own data. Find a patient by anything — "find the patient with phone 89396 05869", "who is from Tindivanam", "gugan priyan", a UHID, IP number or lab Req No; it searches every discharge date, best match first, and says what matched:
+    text: `Ask AI answers with the patient's own data. Find a patient by anything — "find the patient with phone 98765 43210", "who is from Tindivanam", "arun kumar", a UHID, IP number or lab Req No; it searches every discharge date, best match first, and says what matched:
 - Details: "WhatsApp number and discharge time of IP07028684 in 12-hour format", "age and address of UHID 6176487" — mobile, age, gender, address, city, relation, email, diagnosis, admission / discharge date and time, length of stay, doctor, ward, bed, reports, WhatsApp status, out-of-range lab values (from the EMR discharge list).
 - Journey: "patient journey of IP…" — a flowchart from admission, lab test days and discharge to reports made, WhatsApp sent / delivered / read and staff actions.
 - Compare: "compare IP… and IP…" (two patients side by side) or "compare the lab reports of IP… first vs last day" — every test with both values and the change.

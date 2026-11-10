@@ -1,8 +1,8 @@
 /**
  * Find a discharged patient by anything people know about them — IP number,
- * UHID, mobile / WhatsApp number in any format ("+91 89396 05869",
- * "089396-05869", or just the last 4+ digits), name or part of it in any word
- * order ("gugan priyan", "priyan baby"), lab Req No, bed, doctor, department,
+ * UHID, mobile / WhatsApp number in any format ("+91 98765 43210",
+ * "098765-43210", or just the last 4+ digits), name or part of it in any word
+ * order ("arun kumar", "kumar baby"), lab Req No, bed, doctor, department,
  * ward, the staff who created it, summary approver, relation's name, address,
  * town or village. Searches every date unless one is given; best match first.
  *
@@ -136,7 +136,7 @@ export function patientSearchFilter(raw) {
   const p = typeof raw === 'object' && raw?.kind ? raw : parse(raw);
   if (!p) return null;
   const rx = (s) => ({ $regex: s, $options: 'i' });
-  const loose = (d) => d.split('').join('\\D*'); // digits with anything between ("89396 05869")
+  const loose = (d) => d.split('').join('\\D*'); // digits with anything between ("98765 43210")
   const digitConditions = (d, mobile) => {
     const or = [{ regNo: d }, { bedNo: d }, { reqNos: d }, { ipNo: rx(`${esc(d)}$`) }];
     if (mobile.length === 10) for (const [f] of PHONE_FIELDS) or.push({ [f]: rx(`${loose(mobile)}\\D*$`) });

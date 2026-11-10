@@ -103,8 +103,17 @@ export function clearSessionCookie(req, res) {
   res.setHeader('Set-Cookie', `${COOKIE_NAME}=; ${cookieAttributes(req, 0)}`);
 }
 
-// Reachable without a session: the login screen needs these before anyone is signed in.
-const PUBLIC_API_PATHS = new Set(['/api/health', '/api/login', '/api/logout', '/api/session', '/api/config/hospital']);
+// Reachable without a session: the login screen needs these before anyone is signed in,
+// and /api/reports allows fetching patient reports (lab/summary PDF) from anywhere.
+const PUBLIC_API_PATHS = new Set([
+  '/api/health',
+  '/api/login',
+  '/api/logout',
+  '/api/session',
+  '/api/config/hospital',
+  '/api/reports',
+  '/api/reports/download',
+]);
 
 /**
  * Express middleware: every /api route except the public ones needs a valid

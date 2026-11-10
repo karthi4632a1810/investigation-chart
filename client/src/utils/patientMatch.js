@@ -1,7 +1,7 @@
 /**
  * Does a patient card match what was typed in the filter box? Same rules as
  * the server's search (server/src/services/patientSearchService.js): IP
- * number, UHID, mobile / WhatsApp number in any format ("+91 89396 05869",
+ * number, UHID, mobile / WhatsApp number in any format ("+91 98765 43210",
  * last 4+ digits), name in any word order, Req No, bed, doctor, department,
  * ward, created by, approver, and the EMR's relation / address / town.
  */

@@ -17,6 +17,7 @@ import {
   startDischargeScheduler,
 } from './services/dischargeReportService.js';
 import { getPdfStream, pdfExists, reportObjectKey, reportSummaryObjectKey } from './services/storageService.js';
+import { handleReportsApi, handleReportsDownload } from './services/reportsApiService.js';
 import { isWebhookKey, readDocToken, webhookKey, whatsappLinkInfo } from './services/publicLinkService.js';
 import { watiUsage } from './services/watiBudget.js';
 import { getWatiSettings, updateWatiSettings } from './services/watiSettingsService.js';
@@ -94,9 +95,18 @@ export function createApp() {
 
   app.use(cors());
   app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
 
   // Serve static frontend files (React dist)
   app.use(express.static(clientDistPath));
+
+  /**
+   * Reports API: fetch lab report PDF and/or discharge summary PDF by entering
+   * patient UHID or IP number. Publicly accessible from anywhere (reportsApiService.js).
+   */
+  app.get('/api/reports', handleReportsApi);
+  app.post('/api/reports', handleReportsApi);
+  app.get('/api/reports/download', handleReportsDownload);
 
   /**
    * A report PDF for WhatsApp / WATI, which can't log in: the signed token in

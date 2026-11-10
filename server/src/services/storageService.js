@@ -67,7 +67,13 @@ export async function ensureBucket() {
         await minioClient.makeBucket(BUCKET);
         console.log(`[storage] created MinIO bucket "${BUCKET}"`);
       }
-    })();
+    })().catch((error) => {
+      // Don't cache a failure: if MinIO was briefly down (restarting, or still
+      // starting after a reboot), the cached rejection used to fail every later
+      // PDF request with the same stale ECONNREFUSED until the backend restarted.
+      bucketReady = null;
+      throw error;
+    });
   }
   return bucketReady;
 }
