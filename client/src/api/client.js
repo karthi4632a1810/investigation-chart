@@ -132,9 +132,18 @@ export async function sendReportWhatsApp(date, regNo, toNumber) {
   return data;
 }
 
+async function parseJsonSafe(res, fallback) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: false, error: `${fallback} (HTTP ${res.status})` };
+  }
+}
+
 export async function fetchUnsentWhatsAppCount(date) {
   const res = await apiFetch(`${API_BASE}/reports/${encodeURIComponent(date)}/unsent-whatsapp`);
-  const data = await res.json();
+  const data = await parseJsonSafe(res, 'Failed to check unsent reports');
   if (!res.ok) throw new Error(data.error || 'Failed to check unsent reports');
   return data;
 }
@@ -145,7 +154,7 @@ export async function sendUnsentReportsWhatsApp(date) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
   });
-  const data = await res.json();
+  const data = await parseJsonSafe(res, 'Failed to send unsent reports');
   if (!res.ok) throw new Error(data.error || 'Failed to send unsent reports');
   return data;
 }

@@ -384,6 +384,11 @@ export async function sendReportsWhatsApp({ dateFolder, regNo, toNumber, name, n
 }
 
 const bulkSendingDates = new Set();
+const bulkJobs = new Map();
+
+export function getUnsentBulkJob(dateFolder) {
+  return bulkJobs.get(dateFolder) || null;
+}
 
 function isValidTargetMobile(mobile) {
   const digits = toWatiNumber(mobile);
@@ -413,7 +418,9 @@ export async function listUnsentReadyReports(dateFolder) {
 
 /**
  * Catch-up bulk send for ready reports on `dateFolder` that missed Live auto-send
- * (for example, reports generated while Test mode was active).
+ * (for example, reports generated while Test mode was active). Runs in the
+ * background so long batches never hit nginx's HTTP proxy timeout; progress is
+ * reported via `getUnsentBulkJob(dateFolder)`.
  */
 export async function sendUnsentReportsWhatsApp(dateFolder, { triggeredBy = 'staff', concurrency = 4 } = {}) {
   if (setting('maintenance.readOnly')) throw new Error('System is in read-only mode');
@@ -425,72 +432,96 @@ export async function sendUnsentReportsWhatsApp(dateFolder, { triggeredBy = 'sta
     throw new Error('A bulk send is already running for this date');
   }
 
-  bulkSendingDates.add(dateFolder);
-  try {
-    const reportsCol = await getMongoCollection(REPORTS_COLLECTION);
-    const targets = await listUnsentReadyReports(dateFolder);
-    let sent = 0;
-    let failed = 0;
-    let skipped = 0;
-    let stoppedReason = '';
-    let cursor = 0;
+  const targets = await listUnsentReadyReports(dateFolder);
+  const job = {
+    date: dateFolder,
+    running: targets.length > 0,
+    startedAt: new Date().toISOString(),
+    finishedAt: targets.length > 0 ? null : new Date().toISOString(),
+    total: targets.length,
+    processed: 0,
+    sent: 0,
+    failed: 0,
+    skipped: 0,
+    stoppedReason: '',
+  };
+  bulkJobs.set(dateFolder, job);
+  if (!targets.length) {
+    return { started: false, ...job, job };
+  }
 
-    async function worker() {
-      while (cursor < targets.length && !stoppedReason) {
-        if (watiPausedUntil()) {
-          stoppedReason = 'WATI API usage limit reached — remaining reports can be sent later';
-          break;
-        }
-        const rec = targets[cursor++];
-        const key = reportObjectKey(dateFolder, rec.regNo);
-        if (!(await pdfExists(key).catch(() => false))) {
-          skipped += 1;
-          continue;
-        }
-        const waResult = await sendReportsWhatsApp({
-          dateFolder,
-          regNo: rec.regNo,
-          toNumber: rec.mobile,
-          name: rec.name || rec.regNo,
-          note: settings.secondParam,
-          template: settings.labReportTemplate,
-          log: {
-            trigger: 'manual',
-            via: 'bulk',
-            triggeredBy,
-            patientName: rec.name || '',
-            department: rec.department || '',
-            liveMode: true,
-          },
-        });
-        if (waResult.sent.length) {
-          sent += 1;
-          await reportsCol.updateOne(
-            { date: dateFolder, regNo: rec.regNo },
-            { $set: { whatsappSentAt: new Date(), whatsappStatus: 'sent' } },
-          );
-        } else if (waResult.failed.length) {
-          failed += 1;
-          const errMsg = waResult.failed[0].error || 'Send failed';
-          await reportsCol.updateOne(
-            { date: dateFolder, regNo: rec.regNo },
-            { $set: { whatsappStatus: 'failed', whatsappError: errMsg } },
-          );
-          if (RATE_LIMITED.test(errMsg)) {
-            stoppedReason = 'WATI API usage limit reached — remaining reports can be sent later';
+  bulkSendingDates.add(dateFolder);
+  const runJob = async () => {
+    try {
+      const reportsCol = await getMongoCollection(REPORTS_COLLECTION);
+      let cursor = 0;
+
+      async function worker() {
+        while (cursor < targets.length && !job.stoppedReason) {
+          if (watiPausedUntil()) {
+            job.stoppedReason = 'WATI API usage limit reached — remaining reports can be sent later';
             break;
           }
-        } else {
-          skipped += 1;
+          const rec = targets[cursor++];
+          const key = reportObjectKey(dateFolder, rec.regNo);
+          if (!(await pdfExists(key).catch(() => false))) {
+            job.skipped += 1;
+            job.processed += 1;
+            continue;
+          }
+          const waResult = await sendReportsWhatsApp({
+            dateFolder,
+            regNo: rec.regNo,
+            toNumber: rec.mobile,
+            name: rec.name || rec.regNo,
+            note: settings.secondParam,
+            template: settings.labReportTemplate,
+            log: {
+              trigger: 'manual',
+              via: 'bulk',
+              triggeredBy,
+              patientName: rec.name || '',
+              department: rec.department || '',
+              liveMode: true,
+            },
+          });
+          job.processed += 1;
+          if (waResult.sent.length) {
+            job.sent += 1;
+            await reportsCol.updateOne(
+              { date: dateFolder, regNo: rec.regNo },
+              { $set: { whatsappSentAt: new Date(), whatsappStatus: 'sent' } },
+            );
+          } else if (waResult.failed.length) {
+            job.failed += 1;
+            const errMsg = waResult.failed[0].error || 'Send failed';
+            await reportsCol.updateOne(
+              { date: dateFolder, regNo: rec.regNo },
+              { $set: { whatsappStatus: 'failed', whatsappError: errMsg } },
+            );
+            if (RATE_LIMITED.test(errMsg)) {
+              job.stoppedReason = 'WATI API usage limit reached — remaining reports can be sent later';
+              break;
+            }
+          } else {
+            job.skipped += 1;
+          }
         }
       }
-    }
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(targets.length, 1)) }, worker));
-    return { date: dateFolder, total: targets.length, sent, failed, skipped, stoppedReason };
-  } finally {
-    bulkSendingDates.delete(dateFolder);
-  }
+      await Promise.all(Array.from({ length: Math.min(concurrency, targets.length) }, worker));
+    } catch (error) {
+      job.stoppedReason = error.message || 'Bulk send interrupted';
+      console.error(`[op-reports] bulk WhatsApp send failed for ${dateFolder}: ${error.message}`);
+    } finally {
+      job.running = false;
+      job.finishedAt = new Date().toISOString();
+      bulkSendingDates.delete(dateFolder);
+    }
+  };
+
+  void runJob();
+  return { started: true, ...job, job };
 }
 
 /** Merges OP lab order rows with front-office visit metadata for a single `regNo`. */

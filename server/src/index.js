@@ -9,6 +9,7 @@ import {
   getReportPdfUrl,
   getReportRecord,
   getSchedulerStatus,
+  getUnsentBulkJob,
   listReportDates,
   listUnsentReadyReports,
   loadReportIndex,
@@ -444,13 +445,13 @@ app.get('/api/detail/:orderid', async (req, res) => {
     }
     try {
       const [targets, settings] = await Promise.all([listUnsentReadyReports(date), getWatiSettings()]);
-      res.json({ ok: true, date, count: targets.length, liveEnabled: Boolean(settings.liveEnabled) });
+      res.json({ ok: true, date, count: targets.length, liveEnabled: Boolean(settings.liveEnabled), job: getUnsentBulkJob(date) });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
     }
   });
 
-  /** Catch-up Live Mode WhatsApp send for all unsent ready OP lab reports on `date`. */
+  /** Catch-up Live Mode WhatsApp send (runs in background to avoid HTTP timeouts). */
   app.post('/api/reports/:date/send-unsent-whatsapp', async (req, res) => {
     const { date } = req.params;
     if (!DATE_RE.test(date)) {
@@ -458,7 +459,7 @@ app.get('/api/detail/:orderid', async (req, res) => {
     }
     try {
       const summary = await sendUnsentReportsWhatsApp(date, { triggeredBy: getSessionUser(req) });
-      res.json({ ok: true, ...summary });
+      res.status(summary.started ? 202 : 200).json({ ok: true, ...summary });
     } catch (error) {
       const status = /live mode|read-only|already running/i.test(error.message) ? 400 : 500;
       res.status(status).json({ ok: false, error: error.message });

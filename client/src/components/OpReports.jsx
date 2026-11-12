@@ -1278,7 +1278,9 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
   const [unsentCount, setUnsentCount] = useState(0);
   const [bulkConfirming, setBulkConfirming] = useState(false);
   const [bulkSending, setBulkSending] = useState(false);
+  const [bulkJob, setBulkJob] = useState(null);
   const [bulkError, setBulkError] = useState('');
+  const bulkWasRunning = useRef(false);
   useEffect(() => {
     fetchWatiSettings()
       .then(setWaSettings)
@@ -1352,13 +1354,17 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
 
   const refreshUnsentCount = useCallback((forDate) => {
     fetchUnsentWhatsAppCount(forDate)
-      .then((res) => setUnsentCount(res?.count || 0))
+      .then((res) => {
+        setUnsentCount(res?.count || 0);
+        setBulkJob(res?.job || null);
+      })
       .catch(() => setUnsentCount(0));
   }, []);
 
   useEffect(() => {
     if (mode !== 'date' || !waSettings?.liveEnabled) {
       setUnsentCount(0);
+      setBulkJob(null);
       return;
     }
     refreshUnsentCount(date);
@@ -1381,6 +1387,25 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
       .catch((err) => !quiet && setError(err.message))
       .finally(() => !quiet && setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (bulkJob?.running) {
+      bulkWasRunning.current = true;
+      if (mode !== 'date') return undefined;
+      const t = setInterval(() => refreshUnsentCount(date), 2500);
+      return () => clearInterval(t);
+    }
+    if (bulkWasRunning.current && bulkJob && !bulkJob.running) {
+      bulkWasRunning.current = false;
+      const parts = [`Sent ${bulkJob.sent || 0}`];
+      if (bulkJob.failed) parts.push(`${bulkJob.failed} failed`);
+      if (bulkJob.skipped) parts.push(`${bulkJob.skipped} skipped`);
+      if (bulkJob.stoppedReason) parts.push(bulkJob.stoppedReason);
+      showToast(`Bulk WhatsApp complete: ${parts.join(' · ')}`);
+      if (mode === 'date') loadByDate(date, { quiet: true });
+    }
+    return undefined;
+  }, [bulkJob, mode, date, refreshUnsentCount, loadByDate, showToast]);
 
   const runSearch = useCallback(({ quiet = false } = {}) => {
     if (!quiet) {
@@ -1585,19 +1610,22 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
 
   const lastRefreshedLabel = lastRefreshedAt ? formatRelativeTime(new Date(lastRefreshedAt).toISOString()) : null;
 
+  const bulkActive = bulkSending || Boolean(bulkJob?.running);
+
   async function handleBulkSend() {
     setBulkSending(true);
     setBulkError('');
     try {
-      const summary = await sendUnsentReportsWhatsApp(date);
+      const res = await sendUnsentReportsWhatsApp(date);
       setBulkConfirming(false);
+      if (res?.job) setBulkJob(res.job);
       refreshUnsentCount(date);
-      loadByDate(date, { quiet: true });
-      const parts = [`Sent ${summary.sent || 0}`];
-      if (summary.failed) parts.push(`${summary.failed} failed`);
-      if (summary.skipped) parts.push(`${summary.skipped} skipped`);
-      if (summary.stoppedReason) parts.push(summary.stoppedReason);
-      showToast(`Bulk WhatsApp: ${parts.join(' · ')}`);
+      if (res?.started) {
+        bulkWasRunning.current = true;
+        showToast(`Sending ${res.total} unsent report${res.total === 1 ? '' : 's'} in the background…`);
+      } else {
+        showToast('No unsent ready reports left for this date');
+      }
     } catch (err) {
       setBulkError(err.message);
     } finally {
@@ -1873,12 +1901,12 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
                 <span className="cat-count-badge">{categoryCounts.corporate}</span>
               </button>
             )}
-            {mode === 'date' && access.reports.showWhatsApp && waSettings?.liveEnabled && unsentCount > 0 && (
+            {mode === 'date' && access.reports.showWhatsApp && waSettings?.liveEnabled && (unsentCount > 0 || bulkActive) && (
               <button
                 type="button"
                 className="btn btn-send-whatsapp"
                 style={{ marginLeft: 'auto' }}
-                disabled={bulkSending}
+                disabled={bulkActive}
                 onClick={() => {
                   setBulkError('');
                   setBulkConfirming(true);
@@ -1886,7 +1914,13 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
                 title="Send all ready reports for this date that have not been sent in Live mode yet"
               >
                 <WhatsAppIcon size={15} />
-                <span>{bulkSending ? 'Sending unsent…' : `Send ${unsentCount} unsent`}</span>
+                <span>
+                  {bulkJob?.running
+                    ? `Sending ${bulkJob.processed || 0}/${bulkJob.total || unsentCount}…`
+                    : bulkSending
+                      ? 'Starting…'
+                      : `Send ${unsentCount} unsent`}
+                </span>
               </button>
             )}
           </div>
