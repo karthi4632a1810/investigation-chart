@@ -1,14 +1,12 @@
 /**
- * Find a discharged patient by anything people know about them — IP number,
- * UHID, mobile / WhatsApp number in any format ("+91 98765 43210",
- * "098765-43210", or just the last 4+ digits), name or part of it in any word
- * order ("arun kumar", "kumar baby"), lab Req No, bed, doctor, department,
- * ward, the staff who created it, summary approver, relation's name, address,
- * town or village. Searches every date unless one is given; best match first.
+ * Find an OP patient by anything people know about them — UHID (`regNo`),
+ * mobile / WhatsApp number in any format ("+91 98765 43210", "098765-43210",
+ * or last 4+ digits), name or part of it in any word order, lab Req No, Bill
+ * No, token number, doctor, department, visit type, staff who registered, town
+ * or village. Searches every date unless one is given; best match first.
  *
- * Used by Ask AI (find_patient, patient details / journey / compare, the
- * discharge report's search) and the Discharge Reports "search anything" box.
- * The screen's own filter box uses the same rules (client utils/patientMatch.js).
+ * Used by Ask AI and the OP Reports search box. The client filter box uses the
+ * matching rules in `client/src/utils/patientMatch.js`.
  */
 import { getMongoCollection } from './mongo.js';
 
@@ -25,89 +23,77 @@ export function mobileDigits(raw) {
   return d;
 }
 
-// Text fields a word may match, with how a match reads ("matched on doctor").
 const TEXT_FIELDS = [
   ['name', 'name'],
+  ['emr.NAME', 'name'],
   ['emr.PATIENT NAME', 'name'],
   ['doctor', 'doctor'],
-  ['emr.DOCTOR1', 'doctor'],
   ['emr.REFERRAL DOCTOR', 'referral doctor'],
   ['department', 'department'],
-  ['ward', 'ward'],
+  ['visitType', 'visit type'],
+  ['tokenNo', 'token'],
   ['patientType', 'patient type'],
+  ['corporate', 'corporate'],
   ['createdUser', 'created by'],
-  ['summaryApprovedBy', 'summary approved by'],
-  ['emr.RELATION NAME', 'relation'],
-  ['emr.ADDRESS', 'address'],
+  ['city', 'city / village'],
+  ['emr.Address', 'address'],
   ['emr.AREA / VILLAGE', 'area / village'],
   ['emr.City', 'city'],
   ['emr.District', 'district'],
   ['emr.EMAIL', 'email'],
-  ['emr.E-MAIL', 'email'],
-  ['ipNo', 'IP number'],
   ['regNo', 'UHID'],
 ];
 const PHONE_FIELDS = [
   ['mobile', 'mobile number'],
-  ['whatsapp', 'WhatsApp number'],
+  ['whatsappNo', 'WhatsApp number'],
   ['emr.MOBILE', 'mobile number'],
+  ['emr.WhatsApp No', 'WhatsApp number'],
 ];
-// Words that say nothing on their own ("Mr", "patient") — ignored when there are others.
-const FILLER = new Set(['mr', 'mrs', 'ms', 'miss', 'master', 'baby', 'dr', 'smt', 'thiru', 'the', 'patient', 'of', 'and']);
+const FILLER = new Set(['mr', 'mrs', 'ms', 'miss', 'master', 'baby', 'dr', 'smt', 'thiru', 'the', 'patient', 'of', 'and', 'uhid']);
 
 const get = (doc, path) => path.split('.').reduce((v, k) => (v == null ? v : v[k]), doc);
 
-/** What kind of value was typed. */
 function parse(raw) {
-  const q = String(raw ?? '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  const q = String(raw ?? '')
+    .trim()
+    .replace(/^(?:UHID|REG(?:\s*NO)?)\s*[:#-]?\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 80);
   if (!q) return null;
   const compact = q.replace(/[\s\-()+.]/g, '');
-  if (/^ip\d{2,}$/i.test(compact)) return { kind: 'ip', q, ip: compact.toUpperCase() };
   if (/^\d{3,}$/.test(compact)) return { kind: 'digits', q, digits: compact, mobile: mobileDigits(compact) };
   const all = norm(q).split(' ').filter((w) => w.length >= 2 || /\d/.test(w));
   const words = all.filter((w) => !FILLER.has(w));
   return { kind: 'text', q, phrase: norm(q), words: words.length ? words : all };
 }
 
-/** How well one digit string matches a record: { score, on } or null. */
 function digitMatch(doc, d, mobile) {
   const hits = [];
-  const regNo = String(doc.regNo ?? '');
-  const ipDigits = digitsOf(doc.ipNo);
+  const regNo = String(doc.regNo ?? '').trim();
   if (regNo === d) hits.push([100, 'UHID']);
   if (mobile.length === 10) {
     for (const [f, label] of PHONE_FIELDS) if (mobileDigits(get(doc, f)) === mobile) hits.push([98, label]);
   }
-  if (ipDigits && ipDigits === d) hits.push([96, 'IP number']);
   if ((doc.reqNos || []).some((r) => String(r) === d)) hits.push([90, 'lab Req No']);
-  if (d.length >= 5 && ipDigits.endsWith(d)) hits.push([85, 'IP number']);
+  if ((doc.billNos || []).some((b) => String(b) === d)) hits.push([88, 'Bill No']);
   if (d.length >= 4) {
     for (const [f, label] of PHONE_FIELDS) if (digitsOf(get(doc, f)).includes(d)) hits.push([65, `${label} (part)`]);
     if (regNo.includes(d)) hits.push([60, 'UHID (part)']);
-    if (ipDigits.includes(d)) hits.push([55, 'IP number (part)']);
     if ((doc.reqNos || []).some((r) => String(r).includes(d))) hits.push([50, 'lab Req No (part)']);
+    if ((doc.billNos || []).some((b) => String(b).includes(d))) hits.push([48, 'Bill No (part)']);
   }
-  if (String(doc.bedNo ?? '') === d) hits.push([30, 'bed']);
+  if (String(doc.tokenNo ?? '') === d) hits.push([35, 'token']);
   if (!hits.length) return null;
   hits.sort((a, b) => b[0] - a[0]);
   return { score: hits[0][0], on: hits[0][1] };
 }
 
-/** How well a record matches what was typed: { score, on } or null (no match). */
 export function matchPatient(doc, raw) {
   const p = typeof raw === 'object' && raw?.kind ? raw : parse(raw);
   if (!p || !doc) return null;
-  if (p.kind === 'ip') {
-    const ip = String(doc.ipNo ?? '').toUpperCase();
-    if (ip === p.ip) return { score: 100, on: 'IP number' };
-    if (ip.startsWith(p.ip)) return { score: 70, on: 'IP number (start)' };
-    if (ip.includes(p.ip.slice(2))) return { score: 55, on: 'IP number (part)' };
-    return null;
-  }
   if (p.kind === 'digits') return digitMatch(doc, p.digits, p.mobile);
 
-  // Words: every word must be found somewhere (name, doctor, ward, address, a number…).
-  const name = norm(doc.name || get(doc, 'emr.PATIENT NAME'));
+  const name = norm(doc.name || get(doc, 'emr.NAME') || get(doc, 'emr.PATIENT NAME'));
   if (name && p.phrase && name.includes(p.phrase)) return { score: 100, on: 'name' };
   const on = new Set();
   let inName = 0;
@@ -131,23 +117,24 @@ export function matchPatient(doc, raw) {
   return { score, on: [...on].join(' + ') };
 }
 
-/** A Mongo filter that finds every possible match (matchPatient then ranks them). */
 export function patientSearchFilter(raw) {
   const p = typeof raw === 'object' && raw?.kind ? raw : parse(raw);
   if (!p) return null;
   const rx = (s) => ({ $regex: s, $options: 'i' });
-  const loose = (d) => d.split('').join('\\D*'); // digits with anything between ("98765 43210")
+  const loose = (d) => d.split('').join('\\D*');
   const digitConditions = (d, mobile) => {
-    const or = [{ regNo: d }, { bedNo: d }, { reqNos: d }, { ipNo: rx(`${esc(d)}$`) }];
+    const or = [{ regNo: d }, { tokenNo: d }, { reqNos: d }, { billNos: d }];
     if (mobile.length === 10) for (const [f] of PHONE_FIELDS) or.push({ [f]: rx(`${loose(mobile)}\\D*$`) });
     if (d.length >= 4) {
       for (const [f] of PHONE_FIELDS) or.push({ [f]: rx(loose(d)) });
-      or.push({ regNo: rx(esc(d)) }, { ipNo: rx(esc(d)) }, { reqNos: rx(esc(d)) });
+      or.push({ regNo: rx(esc(d)) }, { reqNos: rx(esc(d)) }, { billNos: rx(esc(d)) });
     }
     return { $or: or };
   };
-  if (p.kind === 'ip') return { ipNo: rx(esc(p.ip.slice(2))) };
   if (p.kind === 'digits') return digitConditions(p.digits, p.mobile);
+  if (!p.words.length) {
+    return p.phrase ? { $or: TEXT_FIELDS.map(([f]) => ({ [f]: rx(esc(p.phrase)) })) } : null;
+  }
   return {
     $and: p.words.map((w) =>
       /^\d{3,}$/.test(w) ? digitConditions(w, mobileDigits(w)) : { $or: TEXT_FIELDS.map(([f]) => ({ [f]: rx(esc(w)) })) },
@@ -156,7 +143,7 @@ export function patientSearchFilter(raw) {
 }
 
 /**
- * Discharged patients matching `query`, best first (then newest), each with
+ * OP patients matching `query`, best first (then newest), each with
  * `match: { score, on }`. `date` (one day) or `from` / `to` narrow it.
  */
 export async function searchPatients(query, { date, from, to, limit = 20, extra } = {}) {
@@ -169,9 +156,9 @@ export async function searchPatients(query, { date, from, to, limit = 20, extra 
     and.push({ date: { ...(DATE_RE.test(from || '') ? { $gte: from } : {}), ...(DATE_RE.test(to || '') ? { $lte: to } : {}) } });
   }
   if (extra && Object.keys(extra).length) and.push(extra);
-  const docs = await (await getMongoCollection('discharge_reports'))
+  const docs = await (await getMongoCollection('op_reports'))
     .find(and.length > 1 ? { $and: and } : filter, { projection: { _id: 0 } })
-    .sort({ date: -1, generatedAt: -1 })
+    .sort({ date: -1, generatedAt: -1, updatedAt: -1 })
     .limit(500)
     .toArray();
   return docs

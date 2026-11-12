@@ -4,7 +4,7 @@ import {
   askAssistant,
   chatExportUrl,
   checkWhatsAppNumber,
-  downloadDischargeExport,
+  downloadOpReportExport,
   downloadLabResults,
   downloadWhatsappExport,
   fetchMessageStatus,
@@ -17,16 +17,16 @@ import ExportShareBar from './ExportShareBar';
 import { CheckIcon, CloseIcon, ExternalLinkIcon, FilePdfIcon, RotateCcwIcon, SendIcon, SparklesIcon, WhatsAppIcon } from './Icons';
 
 const SUGGESTIONS = [
-  "Show today's discharges",
+  "Show today's OP reports",
   'Patients with urine glucose negative last week',
   'Is WhatsApp working right now?',
   "Today's WhatsApp report, patient and message wise",
-  'Patients discharged today 10 am to 2 pm',
-  'What does the red No Summary button mean?',
+  'Pending OP lab reports today',
+  'Search UHID 4625656 lab report',
   'Send a test WhatsApp message',
 ];
 
-const SCREEN_NAMES = { reports: 'Discharge Reports', labFinder: 'Lab Finder', search: 'Lab Search', wati: 'WATI Settings', admin: 'WhatsApp Monitor', audit: 'Audit Log', users: 'Users', settings: 'Master Settings' };
+const SCREEN_NAMES = { reports: 'OP Reports', labFinder: 'Lab Finder', search: 'Lab Search', wati: 'WATI Settings', admin: 'WhatsApp Monitor', audit: 'Audit Log', users: 'Users', settings: 'Master Settings' };
 
 function formatIst(value) {
   if (!value) return '';
@@ -39,7 +39,7 @@ const FLAG = { high: 'High', low: 'Low', normal: 'Normal' };
 const newChatId = () => `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
 // The user's permissions for every download / share bar in the chat (utils/access.js).
-const BarAccess = createContext({ allowShare: true, allowDownload: true, showLab: true, showSummary: true });
+const BarAccess = createContext({ allowShare: true, allowDownload: true });
 function Bar(props) {
   return <ExportShareBar {...useContext(BarAccess)} {...props} />;
 }
@@ -63,13 +63,15 @@ function PatientsBlock({ block, onNavigate }) {
     <div className="ai-block">
       <div className="ai-block-title">{block.title}</div>
       {list.map((p) => (
-        <div className="ai-patient" key={`${p.date}-${p.ipNo}`}>
+        <div className="ai-patient" key={`${p.date}-${p.regNo}`}>
           <div className="ai-patient-top">
             <div className="ai-patient-name">{p.name}</div>
             <div className="ai-patient-date">{isoToDmy(p.date)}</div>
           </div>
           <div className="ai-patient-meta">
-            <span>{p.ipNo}</span>
+            <span>UHID {p.regNo}</span>
+            {p.tokenNo && <span>Token {p.tokenNo}</span>}
+            {p.visitType && <span>{p.visitType}</span>}
             {p.regNo && <span>UHID {p.regNo}</span>}
             {p.department && <span>{p.department}</span>}
           </div>
@@ -83,8 +85,8 @@ function PatientsBlock({ block, onNavigate }) {
           </button>
         )}
         {block.patients[0]?.date && (
-          <button type="button" className="ai-link" onClick={() => onNavigate({ view: 'reports', date: block.patients[0].date, filter: block.patients.length === 1 ? block.patients[0].ipNo : '' })}>
-            Open in Discharge Reports
+          <button type="button" className="ai-link" onClick={() => onNavigate({ view: 'reports', date: block.patients[0].date, filter: block.patients.length === 1 ? block.patients[0].regNo : '' })}>
+            Open in OP Reports
           </button>
         )}
       </div>
@@ -117,7 +119,7 @@ function LabResultsBlock({ block, onNavigate }) {
                 <td>
                   <div className="ai-cell-name">{r.name}</div>
                   <div className="ai-cell-sub">
-                    {r.ipNo} · {r.test}
+                    {r.regNo} · {r.test}
                   </div>
                 </td>
                 <td>
@@ -144,7 +146,7 @@ function DownloadBlock({ block }) {
   const started = useRef(false);
   const [note, setNote] = useState('');
   const isPatientPdf = block.target === 'patient' && block.format === 'pdf';
-  const query = block.target === 'patient' ? { ipNo: block.patient.ipNo, from: block.patient.date, to: block.patient.date } : block.query;
+  const query = block.target === 'patient' ? { regNo: block.patient.regNo, from: block.patient.date, to: block.patient.date } : block.query;
 
   // Start the chosen download straight away; the options stay as a fallback.
   useEffect(() => {
@@ -159,7 +161,7 @@ function DownloadBlock({ block }) {
   return (
     <div className="ai-block">
       <div className="ai-block-title">
-        {isPatientPdf ? 'Open the PDFs' : `${EXPORT_LABELS[block.format]} download`}
+        {isPatientPdf ? 'Open the PDF' : `${EXPORT_LABELS[block.format]} download`}
         {note && <span className="ai-block-note"> · {note}</span>}
       </div>
       {block.target === 'patient' ? <Bar via="assistant" patient={block.patient} highlight={block.format} compact /> : <Bar via="assistant" query={block.query} highlight={block.format} compact />}
@@ -293,13 +295,12 @@ function WhatsAppReportBlock({ block, onNavigate }) {
                 <li key={p.key}>
                   <StatusPill status={p.status} notOnWhatsApp={p.notOnWhatsApp} />
                   <span className="ai-wa-main">
-                    <b>{p.patientName || p.ipNo || 'Patient'}</b>
+                    <b>{p.patientName || p.regNo || 'Patient'}</b>
                     <span>
-                      {[p.ipNo, p.department, p.dischargeDate && isoToDmy(p.dischargeDate)].filter(Boolean).join(' · ')}
+                      {[p.regNo, p.department, p.reportDate && isoToDmy(p.reportDate)].filter(Boolean).join(' · ')}
                     </span>
                     <span className="ai-wa-docs">
                       {p.lab && <em className={`is-${p.lab}`}>Lab: {DOC_STATUS[p.lab]}</em>}
-                      {p.summary && <em className={`is-${p.summary}`}>Summary: {DOC_STATUS[p.summary]}</em>}
                     </span>
                   </span>
                 </li>
@@ -308,10 +309,10 @@ function WhatsAppReportBlock({ block, onNavigate }) {
                 <li key={m.id}>
                   <StatusPill status={m.status} notOnWhatsApp={m.notOnWhatsApp} />
                   <span className="ai-wa-main">
-                    <b>{m.patientName || m.ipNo || 'Message'}</b>
+                    <b>{m.patientName || m.regNo || 'Message'}</b>
                     <span>
                       {m.document}
-                      {m.ipNo ? ` · ${m.ipNo}` : ''} · {formatIst(m.sentAt)}
+                      {m.regNo ? ` · ${m.regNo}` : ''} · {formatIst(m.sentAt)}
                     </span>
                     {m.reason && (
                       <span className="ai-wa-reason">
@@ -340,13 +341,14 @@ function WhatsAppReportBlock({ block, onNavigate }) {
   );
 }
 
-const SUMMARY_TEXT = { ready: 'Summary', no_summary: 'No Summary', pending: 'Summary pending' };
+const LAB_TEXT = { ready: 'Lab report', pending: 'Pending approval', no_data: 'No lab data', failed: 'Failed' };
 const WA_TEXT = { read: 'Read', delivered: 'Delivered', sent: 'Sent', pending: 'Pending', failed: 'WhatsApp failed', nowa: 'Not on WhatsApp', none: 'Not sent' };
 
-/** Discharge report: patients discharged in a date / time range, with downloads. */
-function DischargeReportBlock({ block, onNavigate }) {
+/** OP report: outpatients in a date range, with approval counts and downloads. */
+function OpReportBlock({ block, onNavigate }) {
   const [all, setAll] = useState(false);
-  const t = block.totals;
+  const t = block.totals || { whatsapp: {} };
+  const byDepartment = block.byDepartment || t.byDepartment || [];
   const shown = all ? block.rows : block.rows.slice(0, 8);
   return (
     <div className="ai-block ai-report">
@@ -354,29 +356,32 @@ function DischargeReportBlock({ block, onNavigate }) {
       <div className="ai-wa-totals">
         <span><b>{t.patients}</b> patients</span>
         <span><b>{t.labReady}</b> lab reports</span>
-        <span><b>{t.summaryReady}</b> summaries</span>
-        {t.noSummary > 0 && <span className="is-failed"><b>{t.noSummary}</b> No Summary</span>}
-        <span className="is-read"><b>{t.whatsapp.read}</b> read on WhatsApp</span>
-        {t.whatsapp.failed > 0 && <span className="is-failed"><b>{t.whatsapp.failed}</b> WhatsApp failed</span>}
-        <span><b>{t.whatsapp.notSent}</b> not sent</span>
+        {t.labPending > 0 && <span className="is-pending"><b>{t.labPending}</b> pending approval</span>}
+        {t.noLabData > 0 && <span><b>{t.noLabData}</b> no lab data</span>}
+        <span className="is-read"><b>{t.whatsapp?.read || 0}</b> read on WhatsApp</span>
+        {t.whatsapp?.failed > 0 && <span className="is-failed"><b>{t.whatsapp.failed}</b> WhatsApp failed</span>}
+        <span><b>{t.whatsapp?.notSent || 0}</b> not sent</span>
       </div>
-      {t.byDepartment.length > 1 && (
-        <div className="ai-tests">{t.byDepartment.slice(0, 5).map((d) => `${d.department} ${d.patients}`).join(' · ')}</div>
+      {byDepartment.length > 1 && (
+        <div className="ai-tests">{byDepartment.slice(0, 5).map((d) => `${d.department} ${d.patients}`).join(' · ')}</div>
       )}
       {block.rows.length === 0 ? (
         <div className="ai-block-empty">No patients match.</div>
       ) : (
         <ul className="ai-wa-list">
           {shown.map((r) => (
-            <li key={`${r.date}-${r.ipNo}`}>
-              <span className="ai-dis-time">{String(r.dischargedAt).split(' ')[1] || isoToDmy(r.date)}</span>
+            <li key={`${r.date}-${r.regNo}`}>
+              <span className="ai-dis-time">{isoToDmy(r.date)}</span>
               <span className="ai-wa-main">
                 <b>{r.name}</b>
-                <span>{[r.ipNo, r.department, r.doctor].filter(Boolean).join(' · ')}</span>
+                <span>{[r.regNo, r.tokenNo && `Token ${r.tokenNo}`, r.department, r.doctor].filter(Boolean).join(' · ')}</span>
                 <span className="ai-wa-docs">
-                  <em className={r.lab === 'ready' ? 'is-read' : ''}>{r.lab === 'ready' ? 'Lab report' : 'No lab data'}</em>
-                  <em className={r.summary === 'ready' ? 'is-read' : r.summary === 'no_summary' ? 'is-failed' : ''}>{SUMMARY_TEXT[r.summary]}</em>
-                  <em className={r.whatsapp === 'read' ? 'is-read' : r.whatsapp === 'failed' || r.whatsapp === 'nowa' ? 'is-failed' : ''}>{WA_TEXT[r.whatsapp]}</em>
+                  <em className={r.lab === 'ready' ? 'is-read' : r.lab === 'failed' ? 'is-failed' : ''}>
+                    {LAB_TEXT[r.lab] || r.lab}
+                  </em>
+                  <em className={r.whatsapp === 'read' ? 'is-read' : r.whatsapp === 'failed' || r.whatsapp === 'nowa' ? 'is-failed' : ''}>
+                    {WA_TEXT[r.whatsapp]}
+                  </em>
                 </span>
               </span>
             </li>
@@ -384,7 +389,7 @@ function DischargeReportBlock({ block, onNavigate }) {
         </ul>
       )}
       {block.total > block.rows.length && <div className="ai-report-note">Showing the first {block.rows.length} of {block.total} — the download has all of them.</div>}
-      <ReportDownloads formats={['xlsx', 'pdf', 'csv']} download={(f) => downloadDischargeExport(block.query, f)} />
+      <ReportDownloads formats={['xlsx', 'pdf', 'csv']} download={(f) => downloadOpReportExport(block.query, f)} />
       <div className="ai-block-links">
         {block.rows.length > 8 && (
           <button type="button" className="ai-link" onClick={() => setAll((v) => !v)}>
@@ -392,7 +397,7 @@ function DischargeReportBlock({ block, onNavigate }) {
           </button>
         )}
         <button type="button" className="ai-link" onClick={() => onNavigate({ view: 'reports', date: block.query.to })}>
-          Open in Discharge Reports
+          Open in OP Reports
         </button>
       </div>
     </div>
@@ -425,7 +430,6 @@ function PatientDetailsBlock({ block }) {
       )}
       <div className="ai-wa-docs">
         <em>Lab report: {block.reports?.labReport}</em>
-        <em>Summary: {block.reports?.dischargeSummary}</em>
         {(block.whatsapp || []).map((w) => (
           <em key={w.document} className={w.status === 'Read' ? 'is-read' : /Failed|Not on/.test(w.status) ? 'is-failed' : ''}>
             WhatsApp {w.document}: {w.status}
@@ -722,7 +726,6 @@ function LabLookupBlock({ block, canSend }) {
       </div>
       <div className="ai-patient-meta">
         {p.uhid && <span>UHID {p.uhid}</span>}
-        {p.ipNo && <span>{p.ipNo}</span>}
         <span className={`ai-pt-type is-${p.type.toLowerCase()}`}>{p.type === 'OP' ? 'OP patient' : 'IP patient'}</span>
         {(p.age || p.sex) && <span>{[p.age, p.sex].filter(Boolean).join(' / ')}</span>}
         {p.unit && <span>{p.unit}</span>}
@@ -745,7 +748,7 @@ function LabLookupBlock({ block, canSend }) {
         )}
       </div>
       {sharing && canSend && <LookupSender lookup={block} />}
-      {p.type === 'OP' && <div className="ai-report-note">OP patients appear only here in Ask AI — not in Discharge Reports.</div>}
+      {p.type === 'IP' && <div className="ai-report-note">Note: EMR record is flagged as IP; portal lists OP lab visits only.</div>}
     </div>
   );
 }
@@ -857,8 +860,8 @@ function OneBlock({ b, onNavigate, onTestDone }) {
       return <StatusBlock block={b} onNavigate={onNavigate} />;
     case 'whatsappReport':
       return <WhatsAppReportBlock block={b} onNavigate={onNavigate} />;
-    case 'dischargeReport':
-      return <DischargeReportBlock block={b} onNavigate={onNavigate} />;
+    case 'opReport':
+      return <OpReportBlock block={b} onNavigate={onNavigate} />;
     case 'patients':
       return <PatientsBlock block={b} onNavigate={onNavigate} />;
     case 'labResults':
@@ -884,8 +887,6 @@ export default function AssistantPanel({ onNavigate, view, access }) {
   const barAccess = {
     allowShare: !access || access.ai === 'act',
     allowDownload: !access || access.exports !== false,
-    showLab: access ? access.showLab : true,
-    showSummary: access ? access.showSummary : true,
   };
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -935,7 +936,7 @@ export default function AssistantPanel({ onNavigate, view, access }) {
           else delete next.pendingTest;
         }
         if (b.type === 'labResults') next.lastLabQuery = b.query;
-        if (b.type === 'patients' && b.patients.length === 1) next.lastPatient = { ipNo: b.patients[0].ipNo, date: b.patients[0].date };
+        if (b.type === 'patients' && b.patients.length === 1) next.lastPatient = { regNo: b.patients[0].regNo, date: b.patients[0].date };
         if (b.type === 'navigate') onNavigate(b);
       }
       setContext(next);
@@ -1070,7 +1071,7 @@ export default function AssistantPanel({ onNavigate, view, access }) {
                   send(input);
                 }
               }}
-              placeholder="e.g. IP07028148 lab report"
+              placeholder="e.g. UHID 4625656 lab report"
               maxLength={600}
             />
             <button type="submit" className="ai-send" disabled={busy || !input.trim()} aria-label="Send">

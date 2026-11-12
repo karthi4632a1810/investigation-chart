@@ -58,7 +58,7 @@ export function readDocToken(token) {
   }
 }
 
-/** File name the patient sees in WhatsApp, e.g. "Discharge-Summary-IP07028433.pdf". */
+/** File name the patient sees in WhatsApp, e.g. "Lab-Report-6214201.pdf". */
 export function whatsappFileName(label, id) {
   const clean = (s) => String(s || '').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
   return `${[clean(label), clean(id)].filter(Boolean).join('-') || 'Report'}.pdf`;

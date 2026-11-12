@@ -34,9 +34,9 @@ const SERIES = STATUS_ORDER.map((key) => ({ key, ...STATUS[key] }));
 // Filter chips follow a message's life: pending → sent → delivered → read, or failed.
 const CHIP_ORDER = ['pending', 'sent', 'delivered', 'read', 'failed', 'nowa'];
 
-const DOCUMENT_LABEL = { lab: 'Lab report', summary: 'Discharge summary', lab_results: 'Lab results list', other: 'Other' };
+const DOCUMENT_LABEL = { lab: 'Lab report', lab_results: 'Lab results list', other: 'Other' };
 const TRIGGER_LABEL = { auto: 'Automatic (live)', manual: 'Manual click', share: 'Shared to a number', imported: 'Imported history' };
-const VIA_LABEL = { assistant: 'Ask AI', lab_finder: 'Lab Finder', reports: 'Discharge Reports' };
+const VIA_LABEL = { assistant: 'Ask AI', lab_finder: 'Lab Finder', reports: 'OP Reports' };
 
 const PRESETS = [
   { id: 'today', label: 'Today' },
@@ -237,7 +237,7 @@ function MessageDrawer({ id, onClose, onChanged, readOnly = false }) {
     opened.current = true;
     track('message_open', {
       screen: 'admin',
-      target: { patientName: message.patientName, ipNo: message.ipNo, date: message.dischargeDate },
+      target: { patientName: message.patientName, regNo: message.regNo, date: message.reportDate },
       details: { document: message.documentLabel || message.document, status: message.status },
     });
   }, [message]);
@@ -321,7 +321,7 @@ function MessageDrawer({ id, onClose, onChanged, readOnly = false }) {
                       ? `Tried ${message.attempts} times — no more automatic retries. Press Retry to try again.`
                       : 'Not retried automatically — fix the cause, then press Retry.'}
                 </p>
-                {!readOnly && ['lab', 'summary'].includes(message.document) && message.ipNo && (
+                {!readOnly && message.document === 'lab' && message.regNo && (
                   <button type="button" className="btn wa-retry" onClick={retryNow} disabled={retrying}>
                     <RefreshIcon size={15} spinning={retrying} /> {retrying ? 'Sending again…' : 'Retry now'}
                   </button>
@@ -332,8 +332,8 @@ function MessageDrawer({ id, onClose, onChanged, readOnly = false }) {
             <dl className="wa-facts">
               {(message.attempts || 1) > 1 && <div><dt>Attempts</dt><dd>{message.attempts}</dd></div>}
               <div><dt>To</dt><dd>{formatNumber(message.toNumber)}</dd></div>
-              {message.ipNo && <div><dt>IP number</dt><dd>{message.ipNo}</dd></div>}
-              {message.dischargeDate && <div><dt>Discharged</dt><dd>{dmy(message.dischargeDate)}</dd></div>}
+              {message.regNo && <div><dt>UHID</dt><dd>{message.regNo}</dd></div>}
+              {message.reportDate && <div><dt>Report date</dt><dd>{dmy(message.reportDate)}</dd></div>}
               {message.department && <div><dt>Department</dt><dd>{message.department}</dd></div>}
               <div><dt>Mode</dt><dd>{message.trigger === 'imported' ? '—' : message.liveMode ? 'Live' : 'Test / manual'}</dd></div>
               <div><dt>Template</dt><dd>{message.template || '—'}</dd></div>
@@ -416,7 +416,7 @@ function PatientsTable({ patients, onOpen, changed }) {
                 <td>
                   <div className="wa-cell-main">{p.patientName || '—'}</div>
                   <div className="wa-cell-sub">
-                    {[p.ipNo, p.dischargeDate && `discharged ${dmy(p.dischargeDate)}`, p.department].filter(Boolean).join(' · ') || 'Imported from WATI'}
+                    {[p.regNo, p.reportDate && `reported ${dmy(p.reportDate)}`, p.department].filter(Boolean).join(' · ') || 'Imported from WATI'}
                   </div>
                 </td>
                 <td onClick={(e) => e.stopPropagation()}>
@@ -498,7 +498,7 @@ const EXPORTS = [
 
 // ---- coverage & attention ----------------------------------------------------
 
-// Every discharged patient ends in exactly one of these (best outcome first).
+// Every OP lab patient ends in exactly one of these (best outcome first).
 const COVERAGE_STATES = [
   { key: 'read', label: 'Read', color: 'var(--st-read)' },
   { key: 'delivered', label: 'Delivered', color: 'var(--st-delivered)' },
@@ -515,31 +515,31 @@ const STATE_LABEL = Object.fromEntries(COVERAGE_STATES.map((s) => [s.key, s.labe
 function CoverageCard({ coverage, liveEnabled, range }) {
   const [showAll, setShowAll] = useState(false);
   if (!coverage) return null;
-  const { discharged, reached, counts, notReached, notReachedTotal } = coverage;
-  const pctReached = discharged ? Math.round((reached / discharged) * 100) : 0;
+  const { opPatients = 0, reached, counts, notReached, notReachedTotal } = coverage;
+  const pctReached = opPatients ? Math.round((reached / opPatients) * 100) : 0;
   const list = showAll ? notReached : notReached.slice(0, 6);
   return (
     <section className="viz-card wa-span-2 wa-coverage">
       <header className="viz-card-head">
         <div>
-          <h3>Did every discharged patient get their reports?</h3>
-          <p>Patients discharged {range.from === range.to ? dmy(range.from) : `${dmy(range.from)} to ${dmy(range.to)}`} · by discharge date</p>
+          <h3>Did every OP patient get their lab report?</h3>
+          <p>OP lab patients {range.from === range.to ? dmy(range.from) : `${dmy(range.from)} to ${dmy(range.to)}`} · by report date</p>
         </div>
       </header>
-      {discharged === 0 ? (
-        <div className="viz-empty">No discharges recorded for these dates</div>
+      {opPatients === 0 ? (
+        <div className="viz-empty">No OP lab patients recorded for these dates</div>
       ) : (
         <>
           <div className="wa-coverage-hero">
             <div>
               <span className="wa-coverage-big">{reached}</span>
-              <span className="wa-coverage-of"> of {discharged} patients reached on WhatsApp</span>
+              <span className="wa-coverage-of"> of {opPatients} patients reached on WhatsApp</span>
             </div>
             <div className="wa-coverage-pct">
               <b>{pctReached}%</b> reached · <b>{counts.read}</b> read their reports
             </div>
           </div>
-          <div className="wa-coverage-bar" role="img" aria-label={`${reached} of ${discharged} patients reached`}>
+          <div className="wa-coverage-bar" role="img" aria-label={`${reached} of ${opPatients} patients reached`}>
             {COVERAGE_STATES.filter((st) => counts[st.key] > 0).map((st) => (
               <span key={st.key} style={{ flexGrow: counts[st.key], background: st.color }} title={`${st.label}: ${counts[st.key]}`} />
             ))}
@@ -560,10 +560,10 @@ function CoverageCard({ coverage, liveEnabled, range }) {
               <div className="wa-notreached-title">Not reached ({notReachedTotal})</div>
               <ul>
                 {list.map((p) => (
-                  <li key={`${p.date}-${p.ipNo}`}>
+                  <li key={`${p.date}-${p.regNo}`}>
                     <span className="wa-cell-main">{p.name}</span>
                     <span className="wa-cell-sub">
-                      {p.ipNo} · {p.department}
+                      {p.regNo} · {p.department}
                     </span>
                     <span className={`wa-reason is-${p.state}`}>{STATE_LABEL[p.state]}</span>
                   </li>
@@ -777,7 +777,7 @@ function savedBasis() {
 
 export default function AdminDashboard({ readOnly = false, navRequest, canExport = true }) {
   const [preset, setPreset] = useState('yesterday');
-  // "Dates by": the patient's report (discharge) date, or when the message was sent.
+  // "Dates by": the OP patient's report date, or when the message was sent.
   const [basis, setBasis] = useState(savedBasis);
   // Optional time of day, India time: from `from` at this time to `to` at that time.
   const [fromTime, setFromTime] = useState('');
@@ -1075,7 +1075,7 @@ export default function AdminDashboard({ readOnly = false, navRequest, canExport
             aria-checked={basis === 'report'}
             className={basis === 'report' ? 'is-on' : ''}
             onClick={() => chooseBasis('report')}
-            title="The patient's discharge date — the date the reports are filed under. Today = today's patients only."
+            title="The OP patient's report date — the date the reports are filed under. Today = today's patients only."
           >
             Report date
           </button>
@@ -1153,7 +1153,7 @@ export default function AdminDashboard({ readOnly = false, navRequest, canExport
           </select>
           <label className="wa-search">
             <SearchIcon size={15} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Patient, IP, number or staff" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Patient, UHID, number or staff" />
           </label>
           {(statuses.length > 0 || docFilter || trigger || search || fromTime || toTime) && (
             <button
@@ -1173,7 +1173,7 @@ export default function AdminDashboard({ readOnly = false, navRequest, canExport
           )}
         </div>
         <div className="wa-range-note">
-          {basis === 'report' ? 'Patients discharged ' : 'Messages sent '}
+          {basis === 'report' ? 'OP patients ' : 'Messages sent '}
           <b>
             {range.from === range.to ? dmy(range.from) : `${dmy(range.from)} to ${dmy(range.to)}`}
             {(fromTime || toTime) && `, ${fromTime || '00:00'}–${toTime || '23:59'}`}
@@ -1629,7 +1629,7 @@ export default function AdminDashboard({ readOnly = false, navRequest, canExport
                       </td>
                       <td>
                         <div className="wa-cell-main">{m.patientName || '—'}</div>
-                        <div className="wa-cell-sub">{m.ipNo || (m.imported ? 'Imported from WATI' : '')}</div>
+                        <div className="wa-cell-sub">{m.regNo || (m.imported ? 'Imported from WATI' : '')}</div>
                       </td>
                       <td>{m.documentLabel || DOCUMENT_LABEL[m.document]}</td>
                       <td className="wa-mono">

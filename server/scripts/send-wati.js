@@ -7,7 +7,7 @@
  *
  * Or inside the running container:
  *
- *   docker exec investigation-backend node scripts/send-wati.js --number ... --pdfUrl ...
+ *   docker exec op-lab-backend node scripts/send-wati.js --number ... --pdfUrl ...
  */
 import { sendInvestigationReportWhatsApp } from '../src/services/watiService.js';
 

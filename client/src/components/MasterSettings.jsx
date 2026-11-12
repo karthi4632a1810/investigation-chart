@@ -70,8 +70,12 @@ function warningFor(def, from, to, live) {
       return to ? 'Staff can only look: no sending, retries, downloads or changes. Automatic sending pauses too.' : null;
     case 'whatsapp.autoSend':
       return to ? null : 'New reports won’t go out by themselves, even in Live mode.';
-    case 'discharge.autoCheck':
-      return to ? null : 'No new discharge reports are made until this is back on.';
+    case 'opReports.autoCheck':
+      return to ? null : 'No new OP lab reports are made until this is back on.';
+    case 'opReports.usePdfTemplate':
+      return to
+        ? 'OP lab reports and WhatsApp sends will switch to our custom colourful chart PDF template.'
+        : 'OP lab reports and WhatsApp sends will switch back to the original hospital PDF directly from EMR.';
     case 'retry.enabled':
       return to ? null : 'Failed reports stay failed until someone presses Retry.';
     case 'audit.retentionDays':
@@ -409,7 +413,7 @@ function SectionExtra({ id, values, live, onNavigate }) {
       return <RetryPlan values={values} live={live} />;
     case 'wati':
       return <WatiToday values={values} live={live} />;
-    case 'discharge':
+    case 'opReports':
       return <SchedulerNow live={live} />;
     case 'security':
       return onNavigate ? (
@@ -729,12 +733,14 @@ export default function MasterSettings({ onNavigate, onSaved }) {
       tone: saved['retry.enabled'] ? 'ok' : 'warn',
     },
     {
-      id: 'discharge',
+      id: 'opReports',
       icon: ClockIcon,
-      title: 'Discharge check',
-      value: saved['discharge.autoCheck'] ? `Every ${saved['discharge.checkMinutes']} min` : 'Paused',
-      sub: saved['discharge.autoCheck'] && live.scheduler?.nextCheckAt ? `Next at ${fmtTime(live.scheduler.nextCheckAt)}` : 'Check Now still works',
-      tone: saved['discharge.autoCheck'] ? 'ok' : 'warn',
+      title: 'OP Lab Check',
+      value: saved['opReports.usePdfTemplate'] ? 'PDF Template On' : 'Original EMR PDF',
+      sub: saved['opReports.autoCheck']
+        ? `Checks every ${saved['opReports.checkMinutes']} min${live.scheduler?.nextCheckAt ? ` · next ${fmtTime(live.scheduler.nextCheckAt)}` : ''}`
+        : 'Auto check paused',
+      tone: saved['opReports.autoCheck'] ? 'ok' : 'warn',
     },
     {
       id: 'notice',

@@ -1,9 +1,11 @@
+name: op-lab-reports
+
 services:
   server:
     build:
       context: ./server
       dockerfile: Dockerfile
-    container_name: investigation-backend
+    container_name: op-lab-backend
     # PDF generation shells out to Chromium (investigationPdfService.js), which
     # forks crashpad handler subprocesses. Without a real init as PID 1, an
     # abruptly-killed or crashed Chromium leaves those as unreaped zombies forever
@@ -12,23 +14,23 @@ services:
     env_file:
       - ./server/.env
     environment:
-      PORT: 2003
+      PORT: 2021
       # Internal Docker-network addresses — different from the host-published ports
       # below, which are what your browser / host-side scripts use.
-      MONGO_URI: mongodb://mongo:3003
-      MONGO_DB: investigation-chart
+      MONGO_URI: mongodb://mongo:3021
+      MONGO_DB: op-lab-reports
       MINIO_ENDPOINT: minio
-      MINIO_PORT: 4003
+      MINIO_PORT: 4021
       MINIO_USE_SSL: "false"
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_BUCKET: investigation-reports
+      MINIO_BUCKET: op-lab-reports
       # The browser resolves this host itself when following a presigned PDF URL,
       # so it must be reachable from wherever the browser actually is — "localhost"
       # only works when the browser and this stack are on the same machine. Point
       # this at the server's real hostname/IP for anything beyond local testing.
       MINIO_PUBLIC_ENDPOINT: ${MINIO_PUBLIC_ENDPOINT:-localhost}
-      MINIO_PUBLIC_PORT: 4003
+      MINIO_PUBLIC_PORT: 4021
       # "Ask AI" assistant key, from the root .env (assistantService.js). Named
       # GROQ_API, not GROQ_API_KEY, so a GROQ_API_KEY in server/.env still wins.
       GROQ_API: ${GROQ_API:-}
@@ -39,13 +41,20 @@ services:
       WHATSAPP_LINK_DAYS: ${WHATSAPP_LINK_DAYS:-2}
       # WATI's monthly API quota is shared with sending — see watiBudget.js.
       WATI_STATUS_CHECKS_PER_DAY: ${WATI_STATUS_CHECKS_PER_DAY:-100}
+      # Optional WATI overrides from root .env (leave blank to use ./server/.env).
+      WATI_URL: ${WATI_URL:-}
+      WATI_TOKEN: ${WATI_TOKEN:-}
+      WATI_TEMPLATE_NAME: ${WATI_TEMPLATE_NAME:-}
+      WATI_SEND_ENABLED: ${WATI_SEND_ENABLED:-}
+      WATI_TEST_MODE: ${WATI_TEST_MODE:-}
+      WATI_TEST_PHONE: ${WATI_TEST_PHONE:-}
     # A single templated bind string (not a second "ports:" list in an override
     # file) — Compose concatenates list-valued keys across -f files instead of
     # replacing them, so a docker-compose.prod.yml override here would leave
     # BOTH the public and the loopback binding active at once. Overriding the
     # env var in .env is the only way to actually change this per environment.
     ports:
-      - "${SERVER_PORT_BIND:-2003:2003}"
+      - "${SERVER_PORT_BIND:-2021:2021}"
     depends_on:
       - mongo
       - minio
@@ -57,9 +66,9 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
-    container_name: investigation-front
+    container_name: op-lab-front
     ports:
-      - "${CLIENT_PORT_BIND:-1003:80}"
+      - "${CLIENT_PORT_BIND:-1021:80}"
     depends_on:
       - server
     restart: unless-stopped
@@ -68,10 +77,10 @@ services:
 
   mongo:
     image: mongo:7
-    container_name: investigation-mongo
-    command: ["--port", "3003"]
+    container_name: op-lab-mongo
+    command: ["--port", "3021"]
     ports:
-      - "${MONGO_PORT_BIND:-3003:3003}"
+      - "${MONGO_PORT_BIND:-3021:3021}"
     volumes:
       - mongo-data:/data/db
     restart: unless-stopped
@@ -80,14 +89,14 @@ services:
 
   minio:
     image: minio/minio:latest
-    container_name: investigation-min.io
-    command: ["server", "/data", "--address", ":4003", "--console-address", ":5003"]
+    container_name: op-lab-minio
+    command: ["server", "/data", "--address", ":4021", "--console-address", ":5021"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "${MINIO_API_PORT_BIND:-4003:4003}"
-      - "${MINIO_CONSOLE_PORT_BIND:-5003:5003}"
+      - "${MINIO_API_PORT_BIND:-4021:4021}"
+      - "${MINIO_CONSOLE_PORT_BIND:-5021:5021}"
     volumes:
       - minio-data:/data
     restart: unless-stopped
@@ -102,7 +111,7 @@ services:
   # Needs ports 80 and 443 free on the host and open in the firewall.
   https:
     image: caddy:2-alpine
-    container_name: investigation-https
+    container_name: op-lab-https
     profiles: ["https"]
     command: ["caddy", "reverse-proxy", "--from", "${PUBLIC_HOST:-localhost}", "--to", "client:80"]
     ports:

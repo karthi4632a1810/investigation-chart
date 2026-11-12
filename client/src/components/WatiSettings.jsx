@@ -1,17 +1,41 @@
 import { useEffect, useState } from 'react';
-import { fetchWatiSettings, updateWatiSettings } from '../api/client';
+import { fetchWatiSettings, saveMasterSettings, updateWatiSettings } from '../api/client';
 import { AlertIcon, CheckIcon, FilePdfIcon, LockIcon, PhoneIcon, WhatsAppIcon } from './Icons';
 
-// One message per document, in this order — mirrors WHATSAPP_DOCUMENTS on the server.
+// OP sends only the OP Lab Report PDF over WhatsApp — mirrors WHATSAPP_DOCUMENTS on the server.
 const DOCUMENTS = [
   { label: 'Lab Report', file: 'Lab-Report.pdf' },
-  { label: 'Discharge Summary', file: 'Discharge-Summary.pdf' },
 ];
 
 /** The template's {{2}} line — same format as documentLine() in watiService.js. */
 function documentLine(label, extra) {
   const text = String(extra || '').trim();
   return text ? `Attached: ${label} — ${text}` : `Attached: ${label}`;
+}
+
+/** Renders the approved WATI template body matching watiService.js. */
+function TemplatePreviewBody({ template, docLabel, secondParam }) {
+  if (template === 'mapims_lab_rpt') {
+    return (
+      <>
+        Dear <b>Patient name</b>,{'\n\n'}Your laboratory report is ready.{'\n\n'}Please find your report attached.
+        {'\n\n'}If you have any questions, please contact the laboratory.{'\n\n'}Thank you,{'\n'}Adhiparasakthi
+        Hospital
+      </>
+    );
+  }
+  return (
+    <>
+      Dear <b>Patient name</b>,{'\n\n'}Your investigation report is ready.{'\n\n'}Please find the report attached.
+      {template === 'investigation' ? (
+        <>
+          {'\n'}
+          <mark>{documentLine(docLabel, secondParam)}</mark>
+        </>
+      ) : null}
+      {'\n'}For any assistance, please contact Adhiparasakthi Hospital.{'\n\n'}Thank you.
+    </>
+  );
 }
 
 /** Same normalisation as toWatiNumber() on the server: 10 digits get +91. */
@@ -40,15 +64,20 @@ function SavedTick({ show }) {
   ) : null;
 }
 
-export default function WatiSettings({ readOnly = false }) {
+export default function WatiSettings({ readOnly = false, appSettings = {}, isSuperAdmin = false, onNavigate, onAppSettingsChange }) {
   const [settings, setSettings] = useState(null);
   const [fixedNumberInput, setFixedNumberInput] = useState('');
   const [secondParamInput, setSecondParamInput] = useState('');
+  const [usePdfTemplate, setUsePdfTemplate] = useState(Boolean(appSettings['opReports.usePdfTemplate']));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState('');
   const [savedField, setSavedField] = useState('');
   const [confirmLive, setConfirmLive] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    setUsePdfTemplate(Boolean(appSettings['opReports.usePdfTemplate']));
+  }, [appSettings]);
 
   useEffect(() => {
     fetchWatiSettings()
@@ -72,6 +101,26 @@ export default function WatiSettings({ readOnly = false }) {
       setSavedField(field);
       setTimeout(() => setSavedField((f) => (f === field ? '' : f)), 2200);
     } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving('');
+    }
+  }
+
+  async function togglePdfTemplate(next) {
+    if (readOnly || !isSuperAdmin) return;
+    setSaving('pdfTemplate');
+    setError('');
+    setSavedField('');
+    const prev = usePdfTemplate;
+    setUsePdfTemplate(next);
+    try {
+      await saveMasterSettings({ 'opReports.usePdfTemplate': next });
+      await onAppSettingsChange?.();
+      setSavedField('pdfTemplate');
+      setTimeout(() => setSavedField((f) => (f === 'pdfTemplate' ? '' : f)), 2200);
+    } catch (err) {
+      setUsePdfTemplate(prev);
       setError(err.message);
     } finally {
       setSaving('');
@@ -114,7 +163,7 @@ export default function WatiSettings({ readOnly = false }) {
         </div>
         <div className="wati-hero-text">
           <h2>WhatsApp delivery</h2>
-          <p>Send each patient's lab report and discharge summary on WhatsApp through WATI.</p>
+          <p>Send each OP patient&apos;s approved lab report on WhatsApp through WATI.</p>
         </div>
         <span className={`wati-mode-pill ${live ? 'is-live' : 'is-test'}`}>
           <span className="wati-mode-dot" />
@@ -186,8 +235,8 @@ export default function WatiSettings({ readOnly = false }) {
                 <div className="wati-confirm-body">
                   <strong id="wati-confirm-title">Send reports to real patients?</strong>
                   <span>
-                    From the next check, each new lab report and discharge summary is sent to the patient's
-                    own WhatsApp number, and "Send WhatsApp" also goes to the patient.
+                    From the next check, each newly approved OP lab report is sent to the patient&apos;s
+                    own WhatsApp number, and &quot;Send WhatsApp&quot; also goes to the patient.
                   </span>
                   <div className="wati-confirm-actions">
                     <button type="button" className="btn btn-secondary" onClick={() => setConfirmLive(false)}>
@@ -269,7 +318,7 @@ export default function WatiSettings({ readOnly = false }) {
                 <h3>
                   <label htmlFor="wati-second-param">Extra message line</label>
                 </h3>
-                <p>Optional text added after the document name in both messages.</p>
+                <p>Optional text added after the document name in the message.</p>
               </div>
               <SavedTick show={savedField === 'message'} />
             </div>
@@ -288,7 +337,7 @@ export default function WatiSettings({ readOnly = false }) {
                 {saving === 'message' ? 'Saving…' : 'Save'}
               </button>
             </div>
-            <p className="wati-hint">Leave blank to send just "Attached: Lab Report" / "Attached: Discharge Summary".</p>
+            <p className="wati-hint">Leave blank to send just &quot;Attached: Lab Report&quot;.</p>
             {live && secondParamInput.trim() && (
               <p className="wati-hint is-invalid" role="note">
                 Live mode is on, so every patient reads this line. Clear it if it's a test note.
@@ -325,9 +374,9 @@ export default function WatiSettings({ readOnly = false }) {
             <div className="wati-panel-head">
               <div>
                 <h3>
-                  <label htmlFor="wati-lab-template">Template for Ask AI lab reports</label>
+                  <label htmlFor="wati-lab-template">OP lab report WATI template</label>
                 </h3>
-                <p>Used when Ask AI sends a lab report it found in the EMR (OP patients too).</p>
+                <p>Used for automatic sends, manual OP report sends, retries, and Ask AI lab lookups.</p>
               </div>
               <SavedTick show={savedField === 'template'} />
             </div>
@@ -337,10 +386,54 @@ export default function WatiSettings({ readOnly = false }) {
               value={settings.labReportTemplate || 'mapims_lab_rpt'}
               onChange={(e) => persist('template', { labReportTemplate: e.target.value })}
             >
-              <option value="mapims_lab_rpt">mapims_lab_rpt — "Your laboratory report is ready"</option>
-              <option value="investigation_report">investigation_report — "Your investigation report is ready"</option>
-              <option value="investigation">investigation — same as discharge reports, with the extra line</option>
+              <option value="mapims_lab_rpt">mapims_lab_rpt — &quot;Your laboratory report is ready&quot;</option>
+              <option value="investigation_report">investigation_report — &quot;Your investigation report is ready&quot;</option>
+              <option value="investigation">investigation — investigation report with the extra line</option>
             </select>
+          </section>
+
+          <section className="wati-panel">
+            <div className="wati-panel-head">
+              <div>
+                <h3>
+                  <label htmlFor="wati-use-pdf-template">Lab report PDF format</label>
+                </h3>
+                <p>Choose between the original hospital EMR report PDF and our custom colourful template.</p>
+              </div>
+              <SavedTick show={savedField === 'pdfTemplate'} />
+            </div>
+            <label className="wati-toggle-row" htmlFor="wati-use-pdf-template">
+              <span>
+                <b>Use PDF template</b>
+                <small>
+                  {usePdfTemplate
+                    ? 'On — sends and opens our custom colourful lab report template PDF.'
+                    : 'Off (default) — sends and opens only the original hospital lab report PDF from EMR.'}
+                </small>
+              </span>
+              <input
+                id="wati-use-pdf-template"
+                type="checkbox"
+                className="wati-switch"
+                checked={usePdfTemplate}
+                disabled={Boolean(saving) || !isSuperAdmin}
+                onChange={(e) => togglePdfTemplate(e.target.checked)}
+              />
+            </label>
+            <p className="wati-hint">
+              {isSuperAdmin ? (
+                <>
+                  Synced with Master Settings &rarr; OP lab automation.{' '}
+                  {onNavigate && (
+                    <button type="button" className="ms-link" onClick={() => onNavigate('settings')}>
+                      Open Master Settings
+                    </button>
+                  )}
+                </>
+              ) : (
+                'Only a super admin can change this in Master Settings.'
+              )}
+            </p>
           </section>
         </fieldset>
 
@@ -374,21 +467,30 @@ export default function WatiSettings({ readOnly = false }) {
                     </div>
                   </div>
                   <div className="wati-bubble-text">
-                    Dear <b>Patient name</b>,{'\n\n'}Your investigation report is ready.{'\n\n'}Please find the report
-                    attached.{'\n'}
-                    <mark>{documentLine(doc.label, secondParamInput)}</mark>
-                    {'\n'}For any assistance, please contact Adhiparasakthi Hospital.{'\n\n'}Thank you.
+                    <TemplatePreviewBody
+                      template={settings.labReportTemplate || 'mapims_lab_rpt'}
+                      docLabel={doc.label}
+                      secondParam={secondParamInput}
+                    />
                   </div>
-                  <div className="wati-bubble-meta">Message {i + 1} of 2</div>
+                  <div className="wati-bubble-meta">
+                    OP Lab Report · {settings.labReportTemplate || 'mapims_lab_rpt'}
+                  </div>
                 </div>
               ))}
             </div>
           </div>
 
           <ul className="wati-rules">
-            <li>Each document is its own message — WhatsApp allows one file per template message.</li>
-            <li>A discharge summary the EMR returned without patient data is never sent.</li>
-            <li>Template: <code>investigation</code> (approved in WATI).</li>
+            <li>Only generated &amp; sent once all active lab orders on that date are RESULT APPROVED.</li>
+            <li>
+              Active OP lab template: <code>{settings.labReportTemplate || 'mapims_lab_rpt'}</code>
+              {settings.labReportTemplate === 'investigation' ? ' (includes extra message line).' : '.'}
+            </li>
+            <li>
+              PDF format: <code>{usePdfTemplate ? 'Custom colourful template PDF' : 'Original EMR hospital PDF'}</code>
+              {usePdfTemplate ? ' (Use PDF template is ON).' : ' (Use PDF template is OFF).'}
+            </li>
           </ul>
         </aside>
       </div>

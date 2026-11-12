@@ -13,7 +13,7 @@ import InvestigationChart from './components/InvestigationChart';
 import RawResults from './components/RawResults';
 import DetailModal from './components/DetailModal';
 import LoginScreen from './components/LoginScreen';
-import DischargeReports from './components/DischargeReports';
+import OpReports from './components/OpReports';
 import WatiSettings from './components/WatiSettings';
 import LabFinder from './components/LabFinder';
 import AssistantPanel from './components/AssistantPanel';
@@ -431,7 +431,7 @@ export default function App() {
               {hospital?.nameEn || 'Adhiparasakthi Hospitals'}
             </div>
             <div className="app-brand-subtitle">
-              <span>Diagnostics Summary Portal</span>
+              <span>OP Lab Reports Portal</span>
               <span className="brand-badge-pill">EMR Portal</span>
             </div>
           </div>
@@ -441,7 +441,7 @@ export default function App() {
           <nav className="nav-segmented-control no-print" aria-label="Main Navigation">
             {[
               ['search', 'Lab Search', SearchIcon],
-              ['reports', 'Discharge Reports', FilePdfIcon],
+              ['reports', 'OP Reports', FilePdfIcon],
               ['labFinder', 'Lab Finder', FlaskIcon],
               ['wati', 'WATI Settings', WhatsAppIcon],
               ['admin', 'Monitor', ChartIcon],
@@ -502,14 +502,22 @@ export default function App() {
         )}
 
         {view === 'reports' && canOpen(me, 'reports') && (
-          <DischargeReports navRequest={navRequest} access={access} refreshMs={(Number(appSettings['reports.refreshSeconds']) || 20) * 1000} />
+          <OpReports navRequest={navRequest} access={access} refreshMs={(Number(appSettings['reports.refreshSeconds']) || 20) * 1000} />
         )}
 
         {view === 'labFinder' && canOpen(me, 'labFinder') && (
           <LabFinder navRequest={navRequest} canShare={access.labFinder.canShare} canDownload={access.exports} />
         )}
 
-        {view === 'wati' && canOpen(me, 'wati') && <WatiSettings readOnly={access.wati.readOnly} />}
+        {view === 'wati' && canOpen(me, 'wati') && (
+          <WatiSettings
+            readOnly={access.wati.readOnly}
+            appSettings={appSettings}
+            isSuperAdmin={Boolean(me?.isSuperAdmin)}
+            onNavigate={setView}
+            onAppSettingsChange={() => refreshSessionRef.current()}
+          />
+        )}
 
         {view === 'admin' && canOpen(me, 'admin') && <AdminDashboard readOnly={access.monitor.readOnly} navRequest={navRequest} canExport={access.exports} />}
 
@@ -522,9 +530,9 @@ export default function App() {
         {view === 'search' && canOpen(me, 'search') && (
           <div className="search-view-container">
             <div className="section-header">
-              <h2>Lab Result Search & Diagnostics Summary</h2>
+              <h2>OP Lab Result Search & Charts</h2>
               <p className="section-subtitle">
-                Retrieve a patient's historical laboratory findings, automated trends, and raw analyzer values.
+                Retrieve an outpatient&apos;s chronological laboratory findings, automated trends, and raw analyzer values.
               </p>
             </div>
 
@@ -567,9 +575,9 @@ export default function App() {
                 <div className="search-guidance-grid">
                   <div className="guidance-card">
                     <div className="guidance-icon-box bg-blue-subtle">🆔</div>
-                    <h4>Dual Identification</h4>
+                    <h4>UHID Identification</h4>
                     <p>
-                      Supports lookups by either <strong>OP UHID</strong> (e.g. <code>6159338</code>) or <strong>Inpatient Number</strong> (e.g. <code>IP07025423</code>).
+                      Searches outpatient laboratory records by <strong>OP UHID</strong> (Registration Number, e.g. <code>4625656</code>).
                     </p>
                   </div>
 
@@ -577,7 +585,7 @@ export default function App() {
                     <div className="guidance-icon-box bg-emerald-subtle">📊</div>
                     <h4>Automated Trend Analysis</h4>
                     <p>
-                      Generates consolidated chronological tables tracking Hemoglobin, WBC, Renal profile, Liver function, and more over the patient's stay.
+                      Generates consolidated chronological tables tracking Hemoglobin, WBC, Renal profile, Liver function, and more across OP visits.
                     </p>
                   </div>
 
@@ -585,7 +593,7 @@ export default function App() {
                     <div className="guidance-icon-box bg-indigo-subtle">🖨️</div>
                     <h4>Clinical Print Readiness</h4>
                     <p>
-                      Outputs pre-formatted, letterhead-compliant charts designed for doctor clinical rounds and discharge summary folders.
+                      Outputs pre-formatted, letterhead-compliant charts designed for OP consultations and clinical follow-ups.
                     </p>
                   </div>
                 </div>
@@ -595,7 +603,7 @@ export default function App() {
             {loading && (
               <div className="loading modern-loading">
                 <div className="spinner"></div>
-                <div>Fetching diagnostics summary data from laboratory servers…</div>
+                <div>Fetching OP lab report data from laboratory servers…</div>
               </div>
             )}
 
@@ -612,9 +620,9 @@ export default function App() {
             {result && !result.data?.length && (
               <div className="empty modern-empty">
                 <div className="empty-icon">📂</div>
-                <div className="empty-title">No Diagnostics Summary Records Found</div>
+                <div className="empty-title">No OP Lab Records Found</div>
                 <p className="empty-subtitle">
-                  No verified lab test results were returned for UHID/IP <strong>"{result.regNo || regNo}"</strong> within the selected date range ({fromDate} to {toDate}).
+                  No verified OP lab test results were returned for UHID <strong>"{result.regNo || regNo}"</strong> within the selected date range ({fromDate} to {toDate}).
                 </p>
               </div>
             )}
@@ -627,7 +635,7 @@ export default function App() {
                     className={`tab-btn ${activeTab === 'chart' ? 'active' : ''}`}
                     onClick={() => setActiveTab('chart')}
                   >
-                    <span>📋 Diagnostics Summary</span>
+                    <span>📋 OP Lab Chart</span>
                   </button>
                   <button
                     type="button"

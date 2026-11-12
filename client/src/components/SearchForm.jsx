@@ -91,9 +91,9 @@ export default function SearchForm({
             <SearchIcon size={20} />
           </div>
           <div>
-            <h3 className="search-card-heading">Patient Lab Diagnostics Summary Lookup</h3>
+            <h3 className="search-card-heading">OP Patient Lab Diagnostics Lookup</h3>
             <p className="search-card-subheading">
-              Enter patient UHID or IP number to retrieve complete chronological diagnostics summary charts.
+              Enter OP patient UHID (Registration Number) to retrieve chronological outpatient lab diagnostics charts.
             </p>
           </div>
         </div>
@@ -140,7 +140,7 @@ export default function SearchForm({
         {/* Identifier Field */}
         <div className="field input-with-icon">
           <label htmlFor="patient-id-input">
-            UHID / IP NUMBER <span className="req-star">*</span>
+            UHID / REG NUMBER <span className="req-star">*</span>
           </label>
           <div className="input-group">
             <span className="input-affix-icon">
@@ -151,7 +151,7 @@ export default function SearchForm({
               type="text"
               value={regNo}
               onChange={(e) => onRegNoChange(e.target.value)}
-              placeholder="e.g. 6159338 or IP07025423"
+              placeholder="e.g. 4625656"
               required
               autoFocus
               className="styled-input with-prefix"
@@ -168,13 +168,13 @@ export default function SearchForm({
               </button>
             )}
           </div>
-          <span className="field-micro-hint">Accepts both OP UHID and IPD admission number</span>
+          <span className="field-micro-hint">Enter outpatient UHID / Registration Number</span>
         </div>
 
-        {/* Date of Admission */}
+        {/* From Date */}
         <div className="field date-range">
           <label htmlFor="from-date-input">
-            DATE OF ADMISSION <span className="req-star">*</span>
+            FROM DATE <span className="req-star">*</span>
           </label>
           <div className="input-group">
             <span className="input-affix-icon">
@@ -189,13 +189,13 @@ export default function SearchForm({
               className="styled-input with-prefix"
             />
           </div>
-          <span className="field-micro-hint">Start date for diagnostics summary orders</span>
+          <span className="field-micro-hint">Start date for OP lab report orders</span>
         </div>
 
-        {/* Date of Discharge */}
+        {/* To Date */}
         <div className="field date-range">
           <label htmlFor="to-date-input">
-            DATE OF DISCHARGE <span className="req-star">*</span>
+            TO DATE <span className="req-star">*</span>
           </label>
           <div className="input-group">
             <span className="input-affix-icon">
@@ -210,7 +210,7 @@ export default function SearchForm({
               className="styled-input with-prefix"
             />
           </div>
-          <span className="field-micro-hint">End date for diagnostics summary orders</span>
+          <span className="field-micro-hint">End date for OP lab report orders</span>
         </div>
 
         {/* Action Buttons */}
@@ -231,7 +231,7 @@ export default function SearchForm({
               onClick={() => window.print()}
             >
               <PrinterIcon size={16} />
-              <span>Print Diagnostics Summary</span>
+              <span>Print Lab Report</span>
             </button>
           )}
 

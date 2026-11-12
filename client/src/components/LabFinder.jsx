@@ -3,7 +3,7 @@ import { fetchLabCoverage, fetchLabTests, searchLabResults } from '../api/client
 import ExportShareBar from './ExportShareBar';
 import { FlaskIcon, SearchIcon } from './Icons';
 
-const EMPTY = { test: '', value: '', status: '', min: '', max: '', from: '', to: '', dateBasis: 'discharge', patient: '', department: '' };
+const EMPTY = { test: '', value: '', status: '', min: '', max: '', from: '', to: '', dateBasis: 'report', patient: '', department: '' };
 const PAGE = 100;
 
 const EXAMPLES = [
@@ -23,16 +23,16 @@ function isoToDmy(iso) {
 function toForm(q) {
   const f = { ...EMPTY };
   for (const k of Object.keys(EMPTY)) if (q?.[k] !== undefined && q[k] !== null) f[k] = String(q[k]);
-  if (q?.ipNo) f.patient = q.ipNo;
+  if (q?.regNo) f.patient = q.regNo;
   return f;
 }
 
 function toQuery(f) {
   const q = {};
   for (const [k, v] of Object.entries(f)) if (String(v).trim() !== '') q[k] = typeof v === 'string' ? v.trim() : v;
-  // The patient box takes a name or an IP number.
-  if (q.patient && /^ip\s*\d+$/i.test(q.patient)) {
-    q.ipNo = q.patient.replace(/\s+/g, '');
+  // The patient box takes a name or an OP UHID (Registration Number).
+  if (q.patient && /^\d{4,12}$/.test(q.patient.replace(/\s+/g, ''))) {
+    q.regNo = q.patient.replace(/\s+/g, '');
     delete q.patient;
   }
   return q;
@@ -101,11 +101,11 @@ export default function LabFinder({ navRequest, canShare = true, canDownload = t
         <div>
           <h2>Lab Finder</h2>
           <p>
-            Find patients by lab result across all discharges — then download the list or share it on WhatsApp.
+            Find OP patients by lab result across all reports — then download the list or share it on WhatsApp.
             {coverage?.from && (
               <span className="lf-coverage">
                 {' '}
-                Results stored for discharges {isoToDmy(coverage.from)} to {isoToDmy(coverage.to)}.
+                Results stored for OP reports {isoToDmy(coverage.from)} to {isoToDmy(coverage.to)}.
               </span>
             )}
           </p>
@@ -164,12 +164,12 @@ export default function LabFinder({ navRequest, canShare = true, canDownload = t
           <label className="lf-field">
             <span>Dates are</span>
             <select value={form.dateBasis} onChange={set('dateBasis')}>
-              <option value="discharge">Discharge dates</option>
+              <option value="report">OP report dates</option>
               <option value="result">Test result dates</option>
             </select>
           </label>
           <label className="lf-field">
-            <span>Patient or IP No</span>
+            <span>Patient or UHID</span>
             <input value={form.patient} onChange={set('patient')} placeholder="optional" />
           </label>
           <label className="lf-field">
@@ -247,23 +247,23 @@ export default function LabFinder({ navRequest, canShare = true, canDownload = t
                 <thead>
                   <tr>
                     <th>Patient</th>
-                    <th>IP No</th>
                     <th>UHID</th>
+                    <th>Token</th>
                     <th>Department</th>
                     <th>Test</th>
                     <th>Result</th>
                     <th>Ref. range</th>
                     <th>Flag</th>
                     <th>Result date</th>
-                    <th>Discharged</th>
+                    <th>Report date</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.slice(0, shown).map((r, i) => (
-                    <tr key={`${r.dischargeDate}-${r.ipNo}-${r.test}-${r.resultDate}-${i}`}>
+                    <tr key={`${r.reportDate}-${r.regNo}-${r.test}-${r.resultDate}-${i}`}>
                       <td className="lf-name">{r.name}</td>
-                      <td className="lf-id">{r.ipNo}</td>
-                      <td className="lf-id is-plain">{r.regNo}</td>
+                      <td className="lf-id">{r.regNo}</td>
+                      <td className="lf-id is-plain">{r.tokenNo || '—'}</td>
                       <td>{r.department}</td>
                       <td>
                         {r.test}
@@ -273,7 +273,7 @@ export default function LabFinder({ navRequest, canShare = true, canDownload = t
                       <td className="lf-range">{r.range}</td>
                       <td>{r.status && <span className={`lf-flag is-${r.status}`}>{FLAG_LABEL[r.status]}</span>}</td>
                       <td className="lf-date">{r.resultDate}</td>
-                      <td className="lf-date">{isoToDmy(r.dischargeDate)}</td>
+                      <td className="lf-date">{isoToDmy(r.reportDate)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -288,7 +288,7 @@ export default function LabFinder({ navRequest, canShare = true, canDownload = t
             <div className="lf-empty">
               No matching results.{' '}
               {coverage?.from
-                ? `Lab values are stored for discharges from ${isoToDmy(coverage.from)} to ${isoToDmy(coverage.to)}.`
+                ? `Lab values are stored for OP reports from ${isoToDmy(coverage.from)} to ${isoToDmy(coverage.to)}.`
                 : 'No lab values have been stored yet.'}
             </div>
           )}

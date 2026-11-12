@@ -32,7 +32,7 @@ export const minPasswordLength = () => setting('auth.minPasswordLength');
 /** Screens, in tab order. `write` says what the higher level ("View & send" / "View & edit") adds on that screen. */
 export const SCREENS = [
   { id: 'search', label: 'Lab Search', write: null },
-  { id: 'reports', label: 'Discharge Reports', write: 'Check for new discharges now and send reports on WhatsApp' },
+  { id: 'reports', label: 'OP Reports', write: 'Check for OP lab orders now and send reports on WhatsApp' },
   { id: 'labFinder', label: 'Lab Finder', write: 'Share result lists on WhatsApp' },
   { id: 'wati', label: 'WATI Settings', write: 'Change Test / Live mode, the test number and the extra line' },
   { id: 'monitor', label: 'WhatsApp Monitor', write: 'Retry failed messages and ask WATI for the latest ticks' },
@@ -41,7 +41,7 @@ export const SCREENS = [
 const SCREEN_IDS = SCREENS.map((s) => s.id);
 const LEVELS = ['none', 'read', 'write'];
 export const AI_LEVELS = ['none', 'ask', 'act']; // act = may also share on WhatsApp / send test messages
-export const DOCUMENT_CHOICES = ['both', 'lab', 'summary'];
+export const DOCUMENT_CHOICES = ['lab'];
 export const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']; // ISO order: 1 = Mon … 7 = Sun
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -53,7 +53,7 @@ export const FULL_PERMISSIONS = {
   screens: screens({ search: 'read', reports: 'write', labFinder: 'write', wati: 'write', monitor: 'write', audit: 'read' }),
   ai: 'act',
   whatsappButton: true,
-  documents: 'both',
+  documents: 'lab',
   schedule: { ...ANY_TIME },
 };
 
@@ -63,31 +63,31 @@ export const PRESETS = [
   {
     id: 'doctor',
     label: 'Doctor',
-    description: 'Reads reports and lab results, can ask AI',
+    description: 'Reads OP lab reports and lab results, can ask AI',
     permissions: {
       screens: screens({ search: 'read', reports: 'read', labFinder: 'read' }),
       ai: 'ask',
       whatsappButton: false,
-      documents: 'both',
+      documents: 'lab',
       schedule: { ...ANY_TIME },
     },
   },
   {
     id: 'nurse',
-    label: 'Nurse / ward staff',
-    description: 'Opens reports and sends them to patients',
+    label: 'OP clinic staff',
+    description: 'Opens OP lab reports and sends them to patients',
     permissions: {
       screens: screens({ search: 'read', reports: 'write' }),
       ai: 'none',
       whatsappButton: true,
-      documents: 'both',
+      documents: 'lab',
       schedule: { ...ANY_TIME },
     },
   },
   {
     id: 'lab',
     label: 'Lab staff',
-    description: 'Lab reports and Lab Finder only',
+    description: 'OP lab reports and Lab Finder',
     permissions: {
       screens: screens({ search: 'read', reports: 'read', labFinder: 'write' }),
       ai: 'ask',
@@ -99,24 +99,24 @@ export const PRESETS = [
   {
     id: 'frontdesk',
     label: 'Front desk',
-    description: 'Sends reports on WhatsApp, Mon–Sat 8 am – 8 pm',
+    description: 'Sends OP lab reports on WhatsApp, Mon–Sat 8 am – 8 pm',
     permissions: {
       screens: screens({ reports: 'write' }),
       ai: 'none',
       whatsappButton: true,
-      documents: 'both',
+      documents: 'lab',
       schedule: { enabled: true, days: [1, 2, 3, 4, 5, 6], from: '08:00', to: '20:00' },
     },
   },
   {
     id: 'viewer',
     label: 'View only',
-    description: 'Opens reports, changes nothing',
+    description: 'Opens OP lab reports, changes nothing',
     permissions: {
       screens: screens({ reports: 'read' }),
       ai: 'none',
       whatsappButton: false,
-      documents: 'both',
+      documents: 'lab',
       schedule: { ...ANY_TIME },
     },
   },
@@ -238,7 +238,7 @@ function superAdminUser() {
 let indexReady = null;
 async function collection() {
   const c = await getMongoCollection(COLLECTION);
-  indexReady ||= c.createIndex({ createdAt: -1 }).catch(() => {});
+  indexReady ||= c.createIndex({ createdAt: -1 }).catch(() => { });
   await indexReady;
   return c;
 }

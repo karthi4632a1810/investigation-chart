@@ -26,7 +26,7 @@ function loadAuthConfig() {
 async function main() {
   const { username, password } = loadAuthConfig();
   const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017';
-  const dbName = process.env.MONGO_DB || 'investigation-chart';
+  const dbName = process.env.MONGO_DB || 'op-lab-reports';
   const collectionName = process.env.MONGO_COLLECTION || 'auth';
 
   const client = new MongoClient(mongoUri);

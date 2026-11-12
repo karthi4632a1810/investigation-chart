@@ -87,7 +87,7 @@ export async function loadSessionAccount(req) {
 
 function cookieAttributes(req, maxAge) {
   // Secure only when the request really arrived over HTTPS — the VPS currently
-  // serves plain HTTP on :1003, where a Secure cookie would never be sent back.
+  // serves plain HTTP on :1021, where a Secure cookie would never be sent back.
   const https = req.secure || req.headers['x-forwarded-proto'] === 'https';
   return `Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${https ? '; Secure' : ''}`;
 }

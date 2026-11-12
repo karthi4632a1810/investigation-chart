@@ -3,12 +3,13 @@
  * flipped from the admin screen without redeploying.
  *
  * - liveEnabled: false (default) — manual "Send WhatsApp" button sends to
- *   fixedNumber instead of the patient's real mobile, and the discharge
+ *   fixedNumber instead of the patient's real mobile, and the OP lab-report
  *   automation never sends automatically. Safe default for testing.
- * - liveEnabled: true — the automation auto-sends the lab report and the
- *   discharge summary (two messages) to each patient's own mobile number as
- *   each one is generated, and the manual button also targets the real patient.
+ * - liveEnabled: true — the automation auto-sends each patient's approved OP
+ *   lab report to their mobile number once all active orders are approved,
+ *   and the manual button also targets the real patient.
  */
+import { config } from '../config.js';
 import { getMongoCollection } from './mongo.js';
 
 const COLLECTION = 'wati_settings';
@@ -17,10 +18,17 @@ const DOC_ID = 'wati';
 // truly empty parameter value, so a space is the safer "nothing to say" default.
 // confirmBeforeSend: the WhatsApp button on a patient card first shows the
 // number (test number or patient's mobile) in a popup, editable, then sends.
-// labReportTemplate: the WATI template Ask AI uses for lab reports it looks
-// up straight from the EMR (watiService.js DOCUMENT_TEMPLATES).
-const DEFAULTS = { liveEnabled: false, fixedNumber: '+919962460782', secondParam: ' ', confirmBeforeSend: true, labReportTemplate: 'mapims_lab_rpt' };
+// labReportTemplate: the WATI template used for OP lab reports.
 export const LAB_REPORT_TEMPLATES = ['mapims_lab_rpt', 'investigation_report', 'investigation'];
+const DEFAULTS = {
+  liveEnabled: false,
+  fixedNumber: config.wati.testPhone || '+919962460782',
+  secondParam: ' ',
+  confirmBeforeSend: true,
+  labReportTemplate: LAB_REPORT_TEMPLATES.includes(config.wati.templateId)
+    ? config.wati.templateId
+    : 'mapims_lab_rpt',
+};
 
 export async function getWatiSettings() {
   const collection = await getMongoCollection(COLLECTION);

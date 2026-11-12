@@ -21,10 +21,10 @@ const envBool = (name) => (process.env[name] === undefined || process.env[name] 
 /** Sections, in the order the screen shows them. */
 export const SECTIONS = [
   { id: 'features', title: 'Features for everyone', icon: 'toggle', intro: 'Switch a feature off for all staff at once — above each person’s own permissions. The super admin always keeps everything.' },
-  { id: 'whatsapp', title: 'WhatsApp sending', icon: 'whatsapp', intro: 'How reports go out. Live / Test mode, the test number, the extra line and the Ask AI template are on the WATI Settings screen.' },
+  { id: 'whatsapp', title: 'WhatsApp sending', icon: 'whatsapp', intro: 'How reports go out. Live / Test mode, the test number, the extra line and the lab report template are on the WATI Settings screen.' },
   { id: 'retry', title: 'Automatic retries', icon: 'retry', intro: 'Re-sending reports that failed or came back “not on WhatsApp” (that tag is sometimes wrong — a phone that’s off or out of data).' },
   { id: 'wati', title: 'WATI API usage', icon: 'gauge', intro: 'Every WATI API call, sends included, uses the account’s monthly quota (shared with the EMR’s own messages).' },
-  { id: 'discharge', title: 'Discharge automation', icon: 'clock', intro: 'The check that finds new discharges in the EMR and makes the lab reports and summaries.' },
+  { id: 'opReports', title: 'OP Lab Automation', icon: 'clock', intro: 'The check that monitors EMR OP lab orders, waits for all results to be approved, and generates OP lab reports.' },
   { id: 'security', title: 'Sign-in & security', icon: 'lock', intro: 'Sessions, wrong-password lockout and passwords for staff accounts.' },
   { id: 'ai', title: 'Ask AI', icon: 'sparkles', intro: 'What the assistant may do and see.' },
   { id: 'audit', title: 'Audit log', icon: 'shield', intro: 'What is recorded and for how long.' },
@@ -41,13 +41,13 @@ export const SETTINGS = [
   { key: 'features.whatsappButton', section: 'features', type: 'bool', default: true, public: true, label: 'WhatsApp button on patient cards', help: 'Off hides the round WhatsApp button for all staff, even those whose account allows sending. Automatic sending is separate (below).' },
   { key: 'features.askAi', section: 'features', type: 'bool', default: true, public: true, label: 'Ask AI', help: 'Off removes the Ask AI button for all staff.' },
   { key: 'features.aiSend', section: 'features', type: 'bool', default: true, public: true, label: 'Ask AI can send on WhatsApp', help: 'Off: Ask AI still answers, but can’t share reports, send lab lookups or test messages.' },
-  { key: 'features.opLookup', section: 'features', type: 'bool', default: true, public: true, label: 'Ask AI: OP / any patient’s lab report from the EMR', help: 'Lets Ask AI fetch a lab report straight from the EMR for a UHID that isn’t in the discharge list.' },
+  { key: 'features.opLookup', section: 'features', type: 'bool', default: true, public: true, label: 'Ask AI: live EMR lab lookup by UHID', help: 'Lets Ask AI fetch an OP lab report straight from the EMR for any UHID and date range.' },
   { key: 'features.labSearch', section: 'features', type: 'bool', default: true, public: true, label: 'Lab Search screen', help: 'Off hides Lab Search for all staff.' },
   { key: 'features.labFinder', section: 'features', type: 'bool', default: true, public: true, label: 'Lab Finder screen', help: 'Off hides Lab Finder for all staff.' },
   { key: 'features.exports', section: 'features', type: 'bool', default: true, public: true, label: 'Downloads & exports', help: 'Off blocks Excel / PDF / Word / CSV / JSON downloads of lists and reports for all staff (opening a patient’s own PDF still works).' },
 
   // WhatsApp sending
-  { key: 'whatsapp.autoSend', section: 'whatsapp', type: 'bool', default: true, label: 'Send automatically in Live mode', help: 'In Live mode each patient’s reports go out as soon as they are made. Off: Live mode only affects the WhatsApp button (staff send by hand).' },
+  { key: 'whatsapp.autoSend', section: 'whatsapp', type: 'bool', default: true, envBool: 'WATI_SEND_ENABLED', label: 'Send automatically in Live mode', help: 'In Live mode each patient’s reports go out as soon as they are made. Off: Live mode only affects the WhatsApp button (staff send by hand).' },
   { key: 'whatsapp.linkDays', section: 'whatsapp', type: 'number', min: 1, max: 7, step: 1, unit: 'days', default: 2, env: 'WHATSAPP_LINK_DAYS', label: 'PDF link in the message works for', help: 'WhatsApp saves the file on the phone when it arrives; the link matters for opening it from WATI’s inbox later.' },
 
   // Retries
@@ -62,10 +62,11 @@ export const SETTINGS = [
   { key: 'wati.statusPolling', section: 'wati', type: 'bool', default: true, envBool: 'WATI_STATUS_POLL', label: 'Ask WATI for delivered / read ticks', help: 'Not needed once the WATI webhook is connected (it then stops by itself). Off saves quota but ticks only arrive by webhook.' },
   { key: 'wati.statusChecksPerDay', section: 'wati', type: 'number', min: 0, max: 2000, step: 10, unit: 'calls / day', default: 100, env: 'WATI_STATUS_CHECKS_PER_DAY', label: 'Most status checks a day', help: 'Each message is checked 3 times (30 min, 6 h, 24 h after sending), within this allowance.' },
 
-  // Discharge automation
-  { key: 'discharge.autoCheck', section: 'discharge', type: 'bool', default: true, label: 'Check the EMR for new discharges automatically', help: 'Off pauses the automation — no new reports until it’s on again (Check Now still works).' },
-  { key: 'discharge.checkMinutes', section: 'discharge', type: 'select', options: [5, 10, 15, 30, 60], unit: 'min', default: 15, label: 'Check every', help: 'On the clock (e.g. 15 min = :00, :15, :30, :45). Shorter = reports sooner, more EMR load.' },
-  { key: 'reports.refreshSeconds', section: 'discharge', type: 'select', options: [10, 20, 30, 60, 120], unit: 'sec', default: 20, public: true, label: 'Discharge Reports screen refreshes every', help: 'Quietly, without closing popups. It pauses while a WhatsApp popup is open.' },
+  // OP lab automation
+  { key: 'opReports.autoCheck', section: 'opReports', type: 'bool', default: true, label: 'Check the EMR for OP lab orders automatically', help: 'Off pauses the automation — no new reports until it’s on again (Check Now still works).' },
+  { key: 'opReports.usePdfTemplate', section: 'opReports', type: 'bool', default: false, envBool: 'OP_USE_PDF_TEMPLATE', public: true, label: 'Use PDF template', help: 'Off (default): uses the original hospital lab report PDF from the EMR. On: uses our custom colourful lab template PDF for OP reports & WhatsApp.' },
+  { key: 'opReports.checkMinutes', section: 'opReports', type: 'select', options: [5, 10, 15, 30, 60], unit: 'min', default: 15, label: 'Check every', help: 'On the clock (e.g. 15 min = :00, :15, :30, :45). Shorter = reports sooner, more EMR load.' },
+  { key: 'reports.refreshSeconds', section: 'opReports', type: 'select', options: [10, 20, 30, 60, 120], unit: 'sec', default: 20, public: true, label: 'OP Reports screen refreshes every', help: 'Quietly, without closing popups. It pauses while a WhatsApp popup is open.' },
 
   // Security
   { key: 'auth.sessionHours', section: 'security', type: 'number', min: 1, max: 24, step: 1, unit: 'hours', default: 12, label: 'Stay signed in for', help: 'After this, everyone signs in again. Applies to new sign-ins.' },

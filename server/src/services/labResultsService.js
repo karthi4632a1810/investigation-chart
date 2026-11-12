@@ -3,9 +3,9 @@
  * be searched across patients ("everyone with Urine Glucose Negative between
  * two dates") — the PDFs alone can't be queried.
  *
- * Rows are written whenever a lab report is generated (dischargeReportService.js,
+ * Rows are written whenever an OP lab report is generated (opReportService.js,
  * regenerateReports.js) and for past dates by scripts/backfillLabResults.js.
- * Each save replaces that patient's rows for that discharge date, so reruns
+ * Each save replaces that patient's rows for that report date, so reruns
  * never duplicate.
  */
 import { getMongoCollection } from './mongo.js';
@@ -17,10 +17,10 @@ let indexesReady = null;
 async function collection() {
   const c = await getMongoCollection(COLLECTION);
   indexesReady ||= Promise.all([
-    c.createIndex({ dischargeDate: 1, ipNo: 1 }),
+    c.createIndex({ reportDate: 1, regNo: 1 }),
     c.createIndex({ searchText: 1 }),
     c.createIndex({ resultDay: 1 }),
-  ]).catch(() => {});
+  ]).catch(() => { });
   await indexesReady;
   return c;
 }
@@ -39,21 +39,21 @@ function testFilter(test) {
 }
 
 /**
- * @param patient discharge_reports record fields (ipNo, regNo, name, …)
+ * @param patient op_reports record fields (regNo, name, …)
  * @param rows    flattenChartResults() output
  */
-export async function saveLabResults(dischargeDate, patient, rows) {
+export async function saveLabResults(reportDate, patient, rows) {
   const c = await collection();
-  await c.deleteMany({ dischargeDate, ipNo: patient.ipNo });
+  await c.deleteMany({ reportDate, regNo: patient.regNo });
   if (!rows?.length) return 0;
   const base = {
-    dischargeDate,
-    ipNo: patient.ipNo,
-    regNo: patient.regNo || '',
+    reportDate,
+    regNo: patient.regNo,
     name: patient.name || '',
     department: patient.department || '',
     doctor: patient.doctor || '',
-    ward: patient.ward || '',
+    visitType: patient.visitType || '',
+    tokenNo: patient.tokenNo || '',
     patientType: patient.patientType || '',
   };
   await c.insertMany(
@@ -72,8 +72,10 @@ const STATUSES = new Set(['high', 'low', 'normal', 'abnormal']);
  */
 export function normaliseQuery(q = {}) {
   const query = {};
-  for (const key of ['test', 'value', 'ipNo', 'regNo', 'patient', 'department']) {
-    const v = String(q[key] ?? '').trim().slice(0, 80);
+  const rawReg = q.regNo ?? q.uhid;
+  for (const key of ['test', 'value', 'regNo', 'patient', 'department']) {
+    const src = key === 'regNo' ? rawReg : q[key];
+    const v = String(src ?? '').trim().slice(0, 80);
     if (v) query[key] = v;
   }
   for (const key of ['from', 'to']) {
@@ -84,15 +86,14 @@ export function normaliseQuery(q = {}) {
     const n = Number(q[key]);
     if (q[key] !== '' && q[key] !== null && q[key] !== undefined && Number.isFinite(n)) query[key] = n;
   }
-  query.dateBasis = q.dateBasis === 'result' ? 'result' : 'discharge';
+  query.dateBasis = q.dateBasis === 'result' ? 'result' : 'report';
   return query;
 }
 
 function buildFilter(q) {
   const filter = { ...testFilter(q.test) };
   if (q.value) filter.value = { $regex: escapeRegex(q.value), $options: 'i' };
-  if (q.ipNo) filter.ipNo = { $regex: `^${escapeRegex(q.ipNo)}$`, $options: 'i' };
-  if (q.regNo) filter.regNo = q.regNo;
+  if (q.regNo) filter.regNo = { $regex: `^${escapeRegex(q.regNo)}$`, $options: 'i' };
   if (q.patient) filter.name = { $regex: escapeRegex(q.patient), $options: 'i' };
   if (q.department) filter.department = { $regex: escapeRegex(q.department), $options: 'i' };
   if (q.status === 'abnormal') filter.status = { $in: ['high', 'low'] };
@@ -102,7 +103,7 @@ function buildFilter(q) {
     if (q.min !== undefined) filter.numeric.$gte = q.min;
     if (q.max !== undefined) filter.numeric.$lte = q.max;
   }
-  const dateField = q.dateBasis === 'result' ? 'resultDay' : 'dischargeDate';
+  const dateField = q.dateBasis === 'result' ? 'resultDay' : 'reportDate';
   if (q.from || q.to) {
     filter[dateField] = {};
     if (q.from) filter[dateField].$gte = q.from;
@@ -113,7 +114,7 @@ function buildFilter(q) {
 
 /** True when a search has at least one real criterion (not just dates). */
 export function hasCriteria(q) {
-  return Boolean(q.test || q.value || q.ipNo || q.regNo || q.patient || q.department || q.status || q.min !== undefined || q.max !== undefined);
+  return Boolean(q.test || q.value || q.regNo || q.patient || q.department || q.status || q.min !== undefined || q.max !== undefined);
 }
 
 export async function searchLabResults(rawQuery) {
@@ -122,7 +123,7 @@ export async function searchLabResults(rawQuery) {
   const filter = buildFilter(query);
   const docs = await c
     .find(filter, { projection: { _id: 0, searchText: 0 } })
-    .sort({ dischargeDate: -1, name: 1, test: 1, resultDay: 1 })
+    .sort({ reportDate: -1, name: 1, test: 1, resultDay: 1 })
     .limit(MAX_ROWS + 1)
     .toArray();
   const truncated = docs.length > MAX_ROWS;
@@ -132,7 +133,7 @@ export async function searchLabResults(rawQuery) {
     query,
     rows,
     total: rows.length,
-    patients: new Set(rows.map((r) => `${r.dischargeDate}|${r.ipNo}`)).size,
+    patients: new Set(rows.map((r) => `${r.reportDate}|${r.regNo}`)).size,
     matchedTests,
     truncated,
   };
@@ -152,10 +153,10 @@ export async function listLabTests(q, limit = 25) {
   return docs.map((d) => ({ section: d._id.section, test: d._id.test, count: d.count }));
 }
 
-/** Discharge dates that have stored lab values — for the Lab Finder's coverage note. */
+/** Report dates that have stored lab values — for the Lab Finder's coverage note. */
 export async function labResultsCoverage() {
   const c = await collection();
-  const dates = await c.distinct('dischargeDate');
+  const dates = await c.distinct('reportDate');
   dates.sort();
   return { from: dates[0] || null, to: dates[dates.length - 1] || null, days: dates.length };
 }

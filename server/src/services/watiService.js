@@ -85,26 +85,26 @@ export function documentLine(label, extra) {
 
 /**
  * @param log optional context for the WhatsApp monitor (whatsappLogService.js):
- *   { trigger, via, triggeredBy, document, documentLabel, dischargeDate, ipNo,
+ *   { trigger, via, triggeredBy, document, documentLabel, reportDate, regNo,
  *     patientName, department, liveMode }. Every send with it is recorded as
- *   pending → sent / failed, and later delivered / read.
+ *   pending -> sent / failed, and later delivered / read.
  */
 export async function sendInvestigationReportWhatsApp({ toNumber, name, note, pdfUrl, log, template }) {
   if (!config.wati.endpoint || !config.wati.accessToken) {
-    throw new Error('WATI is not configured — set API_ENDPOINT and WATI_ACCESS_TOKEN in server/.env');
+    throw new Error('WATI is not configured — set WATI_URL and WATI_TOKEN in .env (or API_ENDPOINT and WATI_ACCESS_TOKEN in server/.env)');
   }
   if (!toNumber) throw new Error('toNumber is required');
   if (!pdfUrl) throw new Error('pdfUrl is required');
 
   const digits = toWatiNumber(toNumber);
 
-  // Another approved document template (Ask AI lab lookups), or the default.
   const templateName = template && DOCUMENT_TEMPLATES[template] ? template : config.wati.templateId;
-  const parameters = template && DOCUMENT_TEMPLATES[template]
-    ? DOCUMENT_TEMPLATES[template](name || 'Patient', note, pdfUrl)
+  const builder = DOCUMENT_TEMPLATES[templateName];
+  const parameters = builder
+    ? builder(name || 'Patient', note, pdfUrl)
     : [
         { name: '1', value: name || 'Patient' },
-        { name: '2', value: note || '' },
+        { name: '2', value: note || ' ' },
         { name: '3', value: pdfUrl },
       ];
   const payload = {

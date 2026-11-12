@@ -27,11 +27,7 @@ export function firstOpenView(me) {
 export function accessFor(me) {
   const p = perms(me);
   const s = p.screens || {};
-  const documents = p.documents || 'both';
   return {
-    documents,
-    showLab: documents !== 'summary',
-    showSummary: documents !== 'lab',
     reports: {
       canRun: s.reports === 'write',
       showWhatsApp: s.reports === 'write' && Boolean(p.whatsappButton),

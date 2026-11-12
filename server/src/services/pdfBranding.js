@@ -1,10 +1,7 @@
 /**
- * Letterhead and patient-details block shared by both generated PDFs — the lab
- * report (investigationPdfService.js) and the discharge summary
- * (dischargeSummaryService.js) — so the two documents read as one set.
- *
- * Every class is `pi-` prefixed: the discharge summary is rendered inside the
- * EMR's own page, whose stylesheet must not collide with ours.
+ * Letterhead and patient-details block for OP Lab Report PDFs
+ * (investigationPdfService.js). Every class is `pi-` prefixed so styles stay
+ * self-contained.
  *
  * Fonts: only what the server's Chromium has (Alpine's ttf-freefont) — no web
  * fonts, no emoji (they render as "?" boxes there). IDs use tabular figures
@@ -44,8 +41,7 @@ export function formatGeneratedDate(date = new Date()) {
 
 /**
  * Brand bar, hospital identity + accreditation badges, then a dark title band
- * naming the document. A single root element — the discharge summary moves
- * `firstElementChild` of this markup into the EMR page.
+ * naming the document.
  */
 export function letterheadHtml(hospital, { title, subtitle = '', meta = '' }) {
   const logoSrc = logoDataUri || hospital?.logoPath || '';
@@ -64,11 +60,10 @@ export function letterheadHtml(hospital, { title, subtitle = '', meta = '' }) {
           <div class="pi-hosp-name-ta">${esc(hospital?.nameTa || 'ஆதிபராசக்தி மருத்துவமனை')}</div>
           <div class="pi-hosp-address">${hospital?.address || ''}</div>
         </div>
-        ${
-          badges
-            ? `<div class="pi-lh-accred"><div class="pi-accred-badges">${badges}</div><div class="pi-accred-caption">NABL Lab · NABH Accredited</div></div>`
-            : ''
-        }
+        ${badges
+      ? `<div class="pi-lh-accred"><div class="pi-accred-badges">${badges}</div><div class="pi-accred-caption">NABL Lab · NABH Accredited</div></div>`
+      : ''
+    }
       </div>
       <div class="pi-doc-title">
         <div>

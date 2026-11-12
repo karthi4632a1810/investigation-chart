@@ -17,7 +17,7 @@ import { getPdfStream, uploadPdfFile } from './storageService.js';
 
 const COLLECTION = 'assistant_results';
 const KEEP_SECONDS = 2 * 86400;
-const NUMBERED = new Set(['patients', 'labResults', 'whatsappReport', 'dischargeReport', 'status', 'labLookup', 'patientDetails', 'journey', 'compare']);
+const NUMBERED = new Set(['patients', 'labResults', 'whatsappReport', 'opReport', 'status', 'labLookup', 'patientDetails', 'journey', 'compare']);
 export const EXPORT_TYPES = { pdf: 'application/pdf', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', csv: 'text/csv; charset=utf-8' };
 
 let ready = null;
@@ -30,11 +30,11 @@ async function collection() {
 
 const dmy = (iso) => String(iso || '').split('-').reverse().join('-');
 
-/** A short name for a result, e.g. "WhatsApp report · patients discharged 29-09-2026". */
+/** A short name for a result, e.g. "WhatsApp report · OP visits 29-09-2026". */
 export function resultTitle(b) {
   switch (b.type) {
     case 'patients':
-      return b.title || 'Patients';
+      return b.title || 'OP Patients';
     case 'labResults':
       return `Lab results · ${b.total} results, ${b.patients} patients`;
     case 'labLookup':
@@ -61,7 +61,7 @@ export async function saveReply({ chatId, user, question, reply }) {
   await (await collection()).insertOne({ chatId, user, at: new Date(), n: 0, kind: 'turn', question, reply });
 }
 
-/** "#1 Discharge report · …" lines for the AI, so it knows what can be exported. */
+/** "#1 OP report · …" lines for the AI, so it knows what can be exported. */
 export async function listResults(chatId) {
   if (!chatId) return [];
   const c = await collection();
@@ -79,34 +79,39 @@ const col = (key, label) => ({ key, label });
 export function resultTables(b) {
   switch (b.type) {
     case 'patients':
-      return [table(resultTitle(b), [col('name', 'Patient'), col('ipNo', 'IP No'), col('regNo', 'UHID'), col('ageSex', 'Age / sex'), col('department', 'Department'), col('doctor', 'Doctor'), col('date', 'Discharged')],
+      return [table(resultTitle(b), [col('name', 'Patient'), col('regNo', 'UHID'), col('ageSex', 'Age / sex'), col('visitType', 'Visit'), col('tokenNo', 'Token'), col('department', 'Department'), col('doctor', 'Doctor'), col('date', 'Report date')],
         (b.patients || []).map((p) => ({ ...p, ageSex: [p.age, p.gender].filter(Boolean).join(' / '), date: dmy(p.date) })))];
     case 'labResults':
-      return [table(resultTitle(b), [col('name', 'Patient'), col('ipNo', 'IP No'), col('test', 'Test'), col('value', 'Result'), col('range', 'Range'), col('flag', 'Flag'), col('resultDate', 'Result date'), col('discharged', 'Discharged')],
-        (b.rows || []).map((r) => ({ ...r, test: r.section ? `${r.test} (${r.section})` : r.test, flag: FLAG[r.status] || '', discharged: dmy(r.dischargeDate) })))];
-    case 'dischargeReport':
-      return [table(b.title, [col('name', 'Patient'), col('ipNo', 'IP No'), col('regNo', 'UHID'), col('department', 'Department'), col('doctor', 'Doctor'), col('dischargedAt', 'Discharged'), col('lab', 'Lab report'), col('summary', 'Summary'), col('whatsapp', 'WhatsApp')],
-        (b.rows || []).map((r) => ({ ...r, lab: r.lab === 'ready' ? 'Ready' : 'No lab data', summary: { ready: 'Ready', no_summary: 'No Summary', pending: 'Not yet' }[r.summary] || '', whatsapp: { none: 'Not sent', nowa: 'Not on WhatsApp' }[r.whatsapp] || r.whatsapp })))];
+      return [table(resultTitle(b), [col('name', 'Patient'), col('regNo', 'UHID'), col('test', 'Test'), col('value', 'Result'), col('range', 'Range'), col('flag', 'Flag'), col('resultDate', 'Result date'), col('reportDate', 'Report date')],
+        (b.rows || []).map((r) => ({ ...r, test: r.section ? `${r.test} (${r.section})` : r.test, flag: FLAG[r.status] || '', reportDate: dmy(r.reportDate || r.dischargeDate) })))];
+    case 'opReport':
+      return [table(b.title, [col('name', 'Patient'), col('regNo', 'UHID'), col('visitType', 'Visit'), col('tokenNo', 'Token'), col('department', 'Department'), col('doctor', 'Doctor'), col('orders', 'Orders'), col('lab', 'Lab report'), col('whatsapp', 'WhatsApp')],
+        (b.rows || []).map((r) => ({
+          ...r,
+          orders: `${r.approvedOrders ?? 0}/${r.totalOrders ?? 0}`,
+          lab: { ready: 'Ready', pending: 'Pending', no_data: 'No lab data', failed: 'Failed' }[r.lab] || r.lab,
+          whatsapp: { none: 'Not sent', nowa: 'Not on WhatsApp' }[r.whatsapp] || r.whatsapp,
+        })))];
     case 'whatsappReport':
       return [
-        table(`${b.title} — patient-wise`, [col('patientName', 'Patient'), col('ipNo', 'IP No'), col('department', 'Department'), col('dischargeDate', 'Discharged'), col('status', 'Overall'), col('lab', 'Lab report'), col('summary', 'Summary')],
-          (b.patients || []).map((p) => ({ ...p, dischargeDate: dmy(p.dischargeDate), status: p.notOnWhatsApp ? 'Not on WhatsApp' : p.status }))),
-        table(`${b.title} — message-wise`, [col('patientName', 'Patient'), col('ipNo', 'IP No'), col('document', 'Document'), col('status', 'Status'), col('sentAt', 'Sent'), col('reason', 'Why it failed')],
+        table(`${b.title} — patient-wise`, [col('patientName', 'Patient'), col('regNo', 'UHID'), col('department', 'Department'), col('reportDate', 'Report date'), col('status', 'Overall'), col('lab', 'Lab report')],
+          (b.patients || []).map((p) => ({ ...p, reportDate: dmy(p.reportDate || p.dischargeDate), status: p.notOnWhatsApp ? 'Not on WhatsApp' : p.status }))),
+        table(`${b.title} — message-wise`, [col('patientName', 'Patient'), col('regNo', 'UHID'), col('document', 'Document'), col('status', 'Status'), col('sentAt', 'Sent'), col('reason', 'Why it failed')],
           (b.messages || []).map((m) => ({ ...m, status: m.notOnWhatsApp ? 'Not on WhatsApp' : m.status, sentAt: fmtTime(m.sentAt) }))),
       ];
     case 'status':
       return (b.sections || []).map((s) => table(s.title, [col('label', 'Item'), col('value', 'Value')], s.rows || []));
     case 'labLookup':
       return [table(resultTitle(b), [col('label', 'Item'), col('value', 'Value')], [
-        { label: 'UHID / IP', value: b.patient?.uhid || b.patient?.ipNo || b.id },
-        { label: 'Patient type', value: b.patient?.type },
+        { label: 'UHID', value: b.patient?.uhid || b.patient?.regNo || b.id },
+        { label: 'Patient type', value: b.patient?.type || 'OP' },
         { label: 'Age / sex', value: [b.patient?.age, b.patient?.sex].filter(Boolean).join(' / ') },
-        { label: 'Unit', value: b.patient?.unit },
+        { label: 'Department', value: b.patient?.unit },
         { label: 'Results', value: `${b.tests} over ${b.dates} day(s), ${b.firstDate}${b.dates > 1 ? ` – ${b.lastDate}` : ''}` },
       ])];
     case 'patientDetails':
       return [
-        table(b.title, [col('label', 'Detail'), col('value', 'Value')], [...(b.fields || []), { label: 'Lab report', value: b.reports?.labReport }, { label: 'Discharge summary', value: b.reports?.dischargeSummary }]),
+        table(b.title, [col('label', 'Detail'), col('value', 'Value')], [...(b.fields || []), { label: 'Lab report', value: b.reports?.labReport }]),
         ...(b.labs?.abnormal?.length ? [table('Out-of-range lab values', [col('test', 'Test'), col('value', 'Result'), col('range', 'Range'), col('flag', 'Flag'), col('date', 'Date')], b.labs.abnormal.map((l) => ({ ...l, flag: FLAG[l.flag] || l.flag })))] : []),
         ...(b.whatsapp?.length ? [table('WhatsApp', [col('document', 'Document'), col('status', 'Status'), col('to', 'To'), col('sentAt', 'Sent')], b.whatsapp.map((w) => ({ ...w, sentAt: fmtTime(w.sentAt) })))] : []),
       ];
@@ -165,7 +170,7 @@ ${BRAND_CSS}
 </style></head><body>
 ${letterheadHtml(config.hospital || {}, { title: title || 'Ask AI report', subtitle: 'Results from Ask AI', meta: `Generated ${formatGeneratedDate()}` })}
 ${body}
-<div class="foot">System-generated from the Diagnostics Summary Portal. Check against the original reports before clinical use.</div>
+<div class="foot">System-generated from the OP Lab Reports Portal. Check against the original reports before clinical use.</div>
 </body></html>`;
   const out = path.join(os.tmpdir(), `chat-export-${crypto.randomUUID()}.pdf`);
   try {
@@ -178,7 +183,7 @@ ${body}
 
 async function toXlsx(sections) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = config.hospital?.nameEn || 'Diagnostics Summary Portal';
+  wb.creator = config.hospital?.nameEn || 'OP Lab Reports Portal';
   const used = new Set();
   for (const s of sections) {
     for (const t of s.tables) {

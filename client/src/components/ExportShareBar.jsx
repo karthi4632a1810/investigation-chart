@@ -3,7 +3,6 @@ import {
   EXPORT_LABELS,
   downloadLabResults,
   reportPdfUrl,
-  reportSummaryPdfUrl,
   shareLabResults,
   sharePatientReports,
 } from '../api/client';
@@ -11,11 +10,10 @@ import { CheckIcon, FilePdfIcon, WhatsAppIcon } from './Icons';
 
 /**
  * "What next?" options for a result: download in a chosen format, or send on
- * WhatsApp to a number the user types. Used by the Lab Finder and the AI
- * assistant.
+ * WhatsApp to a number the user types. Used by the Lab Finder and Ask AI.
  *
- * Give either `query` (a Lab Finder search) or `patient` (one discharge record:
- * PDFs are the patient's own reports; Excel/Word/CSV are their lab values).
+ * Give either `query` (a Lab Finder search) or `patient` (one OP report record:
+ * PDF is the patient's own lab report; Excel/Word/CSV are their lab values).
  */
 export default function ExportShareBar({
   query,
@@ -25,11 +23,8 @@ export default function ExportShareBar({
   openShare = false,
   compact = false,
   via,
-  // From the user's permissions (utils/access.js).
   allowShare = true,
-  allowDownload = true, // Master Settings → Downloads & exports
-  showLab = true,
-  showSummary = true,
+  allowDownload = true,
 }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -37,11 +32,10 @@ export default function ExportShareBar({
   const [sharing, setSharing] = useState(openShare);
   const [number, setNumber] = useState(shareNumber || '');
 
-  const hasLab = patient ? showLab && patient.dateCount !== undefined : true;
-  const hasSummary = patient ? showSummary && Boolean(patient.hasSummary && !patient.summaryDataMissing) : false;
-  const labQuery = patient ? { ipNo: patient.ipNo, from: patient.date, to: patient.date } : query;
+  const hasLab = patient ? patient.reportStatus === 'ready' || patient.dateCount !== undefined : true;
+  const labQuery = patient ? { regNo: patient.regNo, from: patient.date, to: patient.date } : query;
   const tableFormats = !allowDownload ? [] : patient ? (hasLab ? ['xlsx', 'docx', 'csv'] : []) : ['pdf', 'xlsx', 'docx', 'csv'];
-  const canShare = allowShare && (patient ? hasLab || hasSummary : true);
+  const canShare = allowShare && (patient ? hasLab : true);
 
   async function download(format) {
     setBusy(format);
@@ -64,7 +58,7 @@ export default function ExportShareBar({
     setDone('');
     try {
       const result = patient
-        ? await sharePatientReports(patient.date, patient.ipNo, number, via)
+        ? await sharePatientReports(patient.date, patient.regNo, number, via)
         : await shareLabResults(query, number, undefined, via);
       setDone(`Sent on WhatsApp to ${result.sentTo}`);
       setSharing(false);
@@ -79,13 +73,8 @@ export default function ExportShareBar({
     <div className={`xs-bar ${compact ? 'is-compact' : ''}`}>
       <div className="xs-options">
         {patient && hasLab && (
-          <a className="xs-chip is-pdf" href={reportPdfUrl(patient.date, patient.ipNo)} target="_blank" rel="noreferrer">
+          <a className="xs-chip is-pdf" href={reportPdfUrl(patient.date, patient.regNo)} target="_blank" rel="noreferrer">
             <FilePdfIcon size={14} /> Lab Report PDF
-          </a>
-        )}
-        {patient && hasSummary && (
-          <a className="xs-chip is-pdf" href={reportSummaryPdfUrl(patient.date, patient.ipNo)} target="_blank" rel="noreferrer">
-            <FilePdfIcon size={14} /> Summary PDF
           </a>
         )}
         {tableFormats.map((f) => (
@@ -95,7 +84,7 @@ export default function ExportShareBar({
             className={`xs-chip is-${f} ${highlight === f ? 'is-highlight' : ''}`}
             onClick={() => download(f)}
             disabled={Boolean(busy)}
-            title={patient ? `Download ${patient.name || patient.ipNo}'s lab values as ${EXPORT_LABELS[f]}` : `Download as ${EXPORT_LABELS[f]}`}
+            title={patient ? `Download ${patient.name || patient.regNo}'s lab values as ${EXPORT_LABELS[f]}` : `Download as ${EXPORT_LABELS[f]}`}
           >
             {busy === f ? <span className="xs-spin" /> : <span className="xs-ext">{f === 'xlsx' ? 'XLS' : f.toUpperCase()}</span>}
             {EXPORT_LABELS[f]}
@@ -115,12 +104,12 @@ export default function ExportShareBar({
 
       {sharing && canShare && (
         <form className="xs-share" onSubmit={send}>
-          <label className="xs-share-label" htmlFor={`xs-number-${patient?.ipNo || 'results'}`}>
-            {patient ? `Send ${hasLab && hasSummary ? 'lab report + discharge summary' : hasLab ? 'lab report' : 'discharge summary'} to` : 'Send this results PDF to'}
+          <label className="xs-share-label" htmlFor={`xs-number-${patient?.regNo || 'results'}`}>
+            {patient ? 'Send OP lab report to' : 'Send this results PDF to'}
           </label>
           <div className="xs-share-row">
             <input
-              id={`xs-number-${patient?.ipNo || 'results'}`}
+              id={`xs-number-${patient?.regNo || 'results'}`}
               type="tel"
               inputMode="tel"
               placeholder="WhatsApp number, e.g. 99624 60782"

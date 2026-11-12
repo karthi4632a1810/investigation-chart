@@ -57,14 +57,14 @@ ${BRAND_CSS}
   .row { padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; font-size: 11px; font-weight: 700; }
   .note { margin-top: 16px; font-size: 10px; color: #64748b; line-height: 1.6; }
 </style></head><body>
-${letterheadHtml(config.hospital || {}, { title: 'WhatsApp Test Message', subtitle: 'Diagnostics Summary Portal', meta: `Generated ${formatGeneratedDate()}` })}
+${letterheadHtml(config.hospital || {}, { title: 'WhatsApp Test Message', subtitle: 'OP Lab Reports Portal', meta: `Generated ${formatGeneratedDate()}` })}
 <div class="msg"><div class="label">Message</div>${esc(message)}</div>
 <div class="rows">
   <div class="row"><div class="label">Sent to</div>${esc(formatNumber(toNumber))}</div>
   <div class="row"><div class="label">Sent by</div>${esc(sentBy || 'Staff')}</div>
   <div class="row"><div class="label">Time</div>${esc(`${formatGeneratedDate()} ${istNow()}`)}</div>
 </div>
-<div class="note">This is a test message from the hospital's Diagnostics Summary Portal, sent to check WhatsApp delivery. It contains no patient information.</div>
+<div class="note">This is a test message from the hospital's OP Lab Reports Portal, sent to check WhatsApp delivery. It contains no patient information.</div>
 </body></html>`;
   const out = path.join(os.tmpdir(), `wa-test-${crypto.randomUUID()}.pdf`);
   try {
@@ -90,6 +90,7 @@ export async function sendTestWhatsApp({ message, toNumber, triggeredBy }) {
     name: RECIPIENT,
     note: text,
     pdfUrl: await whatsappPdfUrl(objectKey, 'WhatsApp-Test.pdf'),
+    template: 'investigation',
     log: {
       trigger: 'manual',
       via: 'assistant',

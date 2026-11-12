@@ -1,8 +1,7 @@
 /**
- * Renders a patient's full investigation chart (admission -> discharge) to a PDF,
- * in the same visual format as the app's own print view (InvestigationChart.jsx +
- * App.css). Shared by the manual CLI script and the hourly discharge automation so
- * there is exactly one place that knows what the report looks like.
+ * Renders an OP patient's investigation chart to a PDF, in the same visual
+ * format as the app's own print view (InvestigationChart.jsx + App.css).
+ * Shared by manual tools, API downloads, and the OP lab-report scheduler.
  */
 import fs from 'fs';
 import path from 'path';
@@ -10,38 +9,10 @@ import os from 'os';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { searchInvestigation } from './emrService.js';
-import { reportObjectKey, uploadPdfFile } from './storageService.js';
+import { buildInvestigationChart, fetchOpLabOrders, fetchOriginalEmrLabPdf, searchInvestigation, toEmrMdy } from './emrService.js';
+import { reportObjectKey, uploadPdfBuffer, uploadPdfFile } from './storageService.js';
+import { setting } from './appSettingsService.js';
 import { BRAND_CSS, cleanPatientName, esc, formatGeneratedDate, letterheadHtml, patientCardHtml } from './pdfBranding.js';
-
-/**
- * Pulls the search window's start back by `hoursBack` hours. Confirmed against
- * the live EMR: a patient's lab orders can be timestamped *well before* her
- * recorded admission time (pre-admission / pre-op workup carried into the
- * inpatient record) — two observed cases so far, one 12 hours before admission,
- * another a full 3 days before. An exact admission->discharge window silently
- * misses these even though the search itself "succeeds" with zero rows.
- * Reformats to MM/DD/YYYY HH:mm, one of the formats normalizeSearchDate already
- * accepts.
- */
-function widenWindowStart(admissionDateStr, hoursBack) {
-  const m = String(admissionDateStr).match(/^(\d{1,2})-(\d{1,2})-(\d{4})[ T](\d{2}):(\d{2})/);
-  if (!m) return admissionDateStr;
-
-  const [, day, month, year, hour, minute] = m;
-  const d = new Date(+year, +month - 1, +day, +hour, +minute);
-  d.setHours(d.getHours() - hoursBack);
-
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-// A week, not a day: the second real case needed 3 days of headroom, and
-// pre-op workups can reasonably be ordered up to about a week ahead of an
-// elective admission. Kept bounded (not unbounded) so a patient with an
-// unrelated admission months earlier under the same REG NO doesn't have that
-// old stay's results folded into this one.
-const PRE_ADMISSION_BUFFER_HOURS = 24 * 7;
 
 const execFileAsync = promisify(execFile);
 
@@ -212,45 +183,58 @@ function findLatestFieldValue(template, chartValues, chartDates, labelRegex) {
   return '';
 }
 
-/**
- * UHID leads the identifier row (with IP number, bed and report period), not a
- * separate badge in the letterhead. The EMR's IP column sometimes repeats the
- * prefix ("IP IP07026996"), so the caller's own IP number wins when known.
- */
-function renderPatientCard(meta, { regNo, ipNo, bloodGroup, physicianName, reportPeriod }) {
+/** UHID leads the OP identifier card along with visit category, token, period, department, and doctor. */
+function renderPatientCard(meta, { regNo, bloodGroup, physicianName, department, visitType, tokenNo, reportPeriod }) {
   const ageSex = [meta?.age, meta?.sex].filter((v) => String(v || '').trim()).join(' · ');
-  const ip = ipNo || String(meta?.ip || '').replace(/^IP\s+(?=IP)/i, '');
+  const dept = department || meta?.unit || '';
+  const doctor = physicianName || meta?.doctor || '';
   return patientCardHtml({
     name: cleanPatientName(meta?.name),
     tags: [
       { text: ageSex, tone: 'blue' },
-      { text: meta?.unit, tone: 'green' },
+      { text: dept, tone: 'green' },
       { text: bloodGroup ? `Blood Group ${bloodGroup}` : '', tone: 'rose' },
     ],
     fields: [
-      { label: 'UHID', value: regNo, id: true, key: true },
-      { label: 'IP Number', value: ip, id: true },
-      { label: 'Bed No.', value: meta?.bed },
+      { label: 'UHID', value: regNo || meta?.regNo, id: true, key: true },
+      { label: 'Category', value: visitType ? `OP · ${visitType}` : 'OP' },
+      { label: 'Token No.', value: tokenNo },
       { label: 'Report Period', value: reportPeriod },
-      { label: 'Assigned Ward', value: meta?.ward, wide: true },
-      { label: 'Unit / Specialty', value: meta?.unit },
-      { label: 'Treating Physician', value: physicianName },
+      { label: 'Ordering Department', value: dept },
+      { label: 'Consulting Doctor', value: doctor },
     ],
   });
 }
 
-export function buildInvestigationChartHtml({ hospital, regNo, ipNo, chart, physicianName, subtitle = 'Laboratory investigation chart · admission to discharge' }) {
+export function buildInvestigationChartHtml({
+  hospital,
+  regNo,
+  chart,
+  physicianName,
+  department,
+  visitType,
+  tokenNo,
+  subtitle = 'Outpatient laboratory investigation report',
+}) {
   const { chartDates, chartValues, patientMeta, template } = chart;
   const pages = chunkArray(chartDates, 4);
   const bloodGroup = findLatestFieldValue(template, chartValues, chartDates, /blood\s*group/i);
   const reportPeriod =
     chartDates.length > 1 ? `${chartDates[0]} – ${chartDates[chartDates.length - 1]}` : chartDates[0] || '';
   const letterhead = letterheadHtml(hospital, {
-    title: 'Diagnostics Summary',
+    title: 'OP Laboratory Report',
     subtitle,
     meta: `Generated ${formatGeneratedDate()}`,
   });
-  const patientCard = renderPatientCard(patientMeta, { regNo, ipNo, bloodGroup, physicianName, reportPeriod });
+  const patientCard = renderPatientCard(patientMeta, {
+    regNo,
+    bloodGroup,
+    physicianName,
+    department,
+    visitType,
+    tokenNo,
+    reportPeriod,
+  });
 
   const pageBlocks = pages
     .map((pageDates, idx) => {
@@ -266,7 +250,7 @@ export function buildInvestigationChartHtml({ hospital, regNo, ipNo, chart, phys
               <span class="disclaimer-sub">• Diagnostic Notice &amp; Legal Advisory</span>
             </div>
             <div class="disclaimer-body">
-              This is a digitally generated diagnostic summary for information only and is not a legal document. The signed report issued by the authorised consultant is final and shall prevail. Please consult your treating doctor for interpretation. This WhatsApp copy is not valid for legal, insurance or other claims.
+              This is a digitally generated outpatient diagnostic report for information only and is not a legal document. The signed report issued by the authorised consultant is final and shall prevail. Please consult your treating doctor for interpretation. This WhatsApp copy is not valid for legal, insurance or other claims.
               <div class="disclaimer-ta">
                 இது கணினி மூலம் உருவாக்கப்பட்ட பரிசோதனை அறிக்கைச் சுருக்கம்; தகவலுக்காக மட்டுமே வாட்ஸ்அப் மூலம் அனுப்பப்படுகிறது. இது சட்டப்பூர்வ ஆவணம் அல்ல. அங்கீகரிக்கப்பட்ட மருத்துவரால் கையொப்பமிடப்பட்ட அறிக்கையே இறுதியானது. முடிவுகளை உங்கள் சிகிச்சை மருத்துவரிடம் கலந்தாலோசித்து அறிந்து கொள்ளவும். இந்த டிஜிட்டல் பிரதியை சட்ட, காப்பீடு அல்லது வேறு எந்த கோரிக்கைகளுக்கும் பயன்படுத்த இயலாது
               </div>
@@ -409,84 +393,130 @@ export async function renderHtmlToPdf(html, outPath) {
 }
 
 /**
- * Fetches the full chart for one patient across the given date window, renders
- * it to a PDF, and uploads it to MinIO at `<date>/<ipNo>.pdf`.
- *
- * Two corrections over a literal admission->discharge search, both confirmed
- * against the live EMR rather than assumed:
- *
- * 1. The search window starts PRE_ADMISSION_BUFFER_HOURS before the recorded
- *    admission time. A patient's lab orders can predate her official admission
- *    timestamp (ER / pre-admission workup carried into the inpatient record —
- *    one observed case had orders 12 hours earlier), and an exact window
- *    silently excludes them even though the search itself "succeeds" with zero
- *    rows.
- * 2. Tries the IP number first; some patients' lab orders are filed under their
- *    REG NO without a matching IP NO on the order record, which makes an
- *    IP-number search come back empty even though the patient has real results
- *    (confirmed directly: IP-number search 0 rows, REG-number search 24 rows,
- *    same patient, same window). When `regNo` is available and the IP search
- *    finds nothing, retry with it before giving up.
- *
- * @returns {Promise<{ok: true, dateCount: number, fetchErrors: string[], objectKey: string} | {ok: false, error: string}>}
+ * Fetches or builds the OP investigation chart for one patient (`regNo`) on a
+ * date (`date`, YYYY-MM-DD) or explicit window (`fromDate`..`toDate`).
  */
 /**
- * The EMR fetch half of generatePatientPdf (window widening + REG NO fallback,
- * see below), shared with the lab-results backfill so both find exactly the
- * same orders. Returns the same shape as generatePatientPdf's failures, or
- * `{ ok: true, chart }`.
+ * Runs EMR chart retrieval (or uses pre-fetched approved rows) and returns
+ * `{ ok: true, chart }` or `{ ok: false, reason, error }`.
  */
-export async function fetchPatientChart({ ipNo, regNo, admissionDate, dischargeDate }) {
-  const searchFromDate = widenWindowStart(admissionDate, PRE_ADMISSION_BUFFER_HOURS);
-
-  let result = await searchInvestigation(ipNo, searchFromDate, dischargeDate);
-
-  if (regNo && (!result.ok || !result.chart?.chartDates?.length)) {
-    const byRegNo = await searchInvestigation(regNo, searchFromDate, dischargeDate);
-    if (byRegNo.ok && byRegNo.chart?.chartDates?.length) {
-      result = byRegNo;
+export async function fetchPatientChart({ regNo, fromDate, toDate, date, rows = null }) {
+  let chart;
+  if (Array.isArray(rows) && rows.length) {
+    try {
+      chart = await buildInvestigationChart(rows);
+    } catch (error) {
+      return { ok: false, reason: 'TECHNICAL', error: `EMR chart build failed: ${error.message}` };
     }
+  } else {
+    const mdy = date ? toEmrMdy(date) : '';
+    const from = fromDate || (mdy ? `${mdy} 00:00` : '');
+    const to = toDate || (mdy ? `${mdy} 23:59` : '');
+    const result = await searchInvestigation(regNo, from, to);
+    if (!result.ok) {
+      return { ok: false, reason: 'TECHNICAL', error: `EMR search failed: ${result.error}` };
+    }
+    chart = result.chart;
   }
 
-  if (!result.ok) {
-    // A real technical failure (timeout, connection reset, EMR error) — worth
-    // retrying, since the same request could well succeed a few seconds later.
-    return { ok: false, reason: 'TECHNICAL', error: `EMR search failed: ${result.error}` };
-  }
-  if (!result.chart?.chartDates?.length) {
-    // Not a failure of this system — both identifiers were searched, with the
-    // window already widened a week before admission, and the EMR still has
-    // zero lab orders for this patient. Some short/observation admissions
-    // genuinely never have any labs ordered. Retrying can't produce data that
-    // was never entered, so this is a terminal outcome, not a transient one.
+  if (!chart?.chartDates?.length) {
     return {
       ok: false,
       reason: 'NO_DATA',
-      error: 'No lab orders found for this patient (checked both IP and REG number, admission week onward).',
+      error: 'No renderable OP lab orders found for this UHID in the selected window.',
     };
   }
-  return { ok: true, chart: result.chart };
+  return { ok: true, chart };
 }
 
-export async function generatePatientPdf({ ipNo, regNo, admissionDate, dischargeDate, hospital, date, physicianName }) {
-  const fetched = await fetchPatientChart({ ipNo, regNo, admissionDate, dischargeDate });
+/** Active OP lab PDF source mode based on Master Settings (`opReports.usePdfTemplate`). */
+export function currentPdfMode() {
+  return setting('opReports.usePdfTemplate') ? 'template' : 'emr';
+}
+
+async function resolveEmrOrderRows({ regNo, fromDate, toDate, date, rows }) {
+  if (Array.isArray(rows) && rows.length) return { ok: true, rows };
+  const mdy = date ? toEmrMdy(date) : '';
+  const res = await fetchOpLabOrders({
+    regNo,
+    fromDate: fromDate || (mdy ? `${mdy} 00:00` : undefined),
+    toDate: toDate || (mdy ? `${mdy} 23:59` : undefined),
+  });
+  if (!res.ok) return { ok: false, reason: 'TECHNICAL', error: `EMR search failed: ${res.error}` };
+  if (!res.data?.length) return { ok: false, reason: 'NO_DATA', error: 'No OP lab orders found for this UHID in the selected window.' };
+  return { ok: true, rows: res.data };
+}
+
+async function generateEmrOriginalPdf({ regNo, fromDate, toDate, date, rows, objectKey }) {
+  const orders = await resolveEmrOrderRows({ regNo, fromDate, toDate, date, rows });
+  if (!orders.ok) return orders;
+
+  const emrPdf = await fetchOriginalEmrLabPdf(orders.rows, { requireAllApproved: true });
+  if (!emrPdf.ok) return emrPdf;
+
+  await uploadPdfBuffer(objectKey, emrPdf.pdfBuffer);
+
+  let chart = null;
+  try {
+    chart = await buildInvestigationChart(orders.rows, { prefetchedHtmlByOrderId: emrPdf.htmlByOrderId });
+  } catch (error) {
+    console.warn(`[pdf] offline chart indexing skipped for ${regNo}: ${error.message}`);
+  }
+
+  return {
+    ok: true,
+    pdfMode: 'emr',
+    dateCount: chart?.chartDates?.length || 1,
+    fetchErrors: emrPdf.fetchErrors || [],
+    patientMeta: chart?.patientMeta || {},
+    reqNos: emrPdf.reqNos || [],
+    results: chart ? flattenChartResults(chart) : [],
+    objectKey,
+  };
+}
+
+export async function generatePatientPdf({
+  regNo,
+  fromDate,
+  toDate,
+  rows = null,
+  hospital,
+  date,
+  physicianName,
+  department,
+  visitType,
+  tokenNo,
+  usePdfTemplate,
+}) {
+  const templateMode = typeof usePdfTemplate === 'boolean' ? usePdfTemplate : setting('opReports.usePdfTemplate');
+  const objectKey = reportObjectKey(date, regNo);
+
+  if (!templateMode) {
+    return generateEmrOriginalPdf({ regNo, fromDate, toDate, date, rows, objectKey });
+  }
+
+  const fetched = await fetchPatientChart({ regNo, fromDate, toDate, date, rows });
   if (!fetched.ok) return fetched;
   const result = fetched;
 
-  // Display the real Reg No/UHID when the caller has it — the lab EMR search
-  // above only ever needs `ipNo`/`regNo` as alternate *search* identifiers,
-  // but the letterhead should show the patient's actual UHID, not whichever
-  // one happened to be used to find the results.
-  const html = buildInvestigationChartHtml({ hospital, regNo: regNo || ipNo, ipNo, chart: result.chart, physicianName });
-  const tmpPdfPath = path.join(os.tmpdir(), `investigation-pdf-${crypto.randomUUID()}.pdf`);
+  const html = buildInvestigationChartHtml({
+    hospital,
+    regNo: regNo || result.chart.patientMeta?.regNo,
+    chart: result.chart,
+    physicianName,
+    department,
+    visitType,
+    tokenNo,
+  });
+  const tmpPdfPath = path.join(os.tmpdir(), `op-lab-pdf-${crypto.randomUUID()}.pdf`);
 
   try {
     await renderHtmlToPdf(html, tmpPdfPath);
-    const objectKey = reportObjectKey(date, ipNo);
     await uploadPdfFile(objectKey, tmpPdfPath);
 
     return {
       ok: true,
+      pdfMode: 'template',
       dateCount: result.chart.chartDates.length,
       fetchErrors: result.chart.fetchErrors || [],
       patientMeta: result.chart.patientMeta,

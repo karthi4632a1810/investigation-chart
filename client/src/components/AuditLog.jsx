@@ -98,8 +98,8 @@ function EventRow({ e, onUser, onSession }) {
         <span className="al-text">
           {e.text}
           <span className="al-meta">
-            {e.target?.ipNo && <em>{e.target.ipNo}</em>}
-            {e.target?.uhid && <em>UHID {e.target.uhid}</em>}
+            {e.target?.regNo && <em>UHID {e.target.regNo}</em>}
+            {e.target?.uhid && e.target.uhid !== e.target?.regNo && <em>UHID {e.target.uhid}</em>}
             {e.durationMs ? <em>{fmtDur(e.durationMs)}</em> : null}
           </span>
         </span>
@@ -111,7 +111,7 @@ function EventRow({ e, onUser, onSession }) {
             <div><dt>When</dt><dd>{new Date(e.at).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</dd></div>
             <div><dt>Type</dt><dd>{cat.label} · {e.action}</dd></div>
             {e.screen && <div><dt>Screen</dt><dd>{e.screen}</dd></div>}
-            {e.target?.patientName && <div><dt>Patient</dt><dd>{e.target.patientName}{e.target.date ? ` · discharged ${e.target.date.split('-').reverse().join('-')}` : ''}</dd></div>}
+            {e.target?.patientName && <div><dt>Patient</dt><dd>{e.target.patientName}{e.target.date ? ` · OP date ${e.target.date.split('-').reverse().join('-')}` : ''}</dd></div>}
             {e.device && <div><dt>Device</dt><dd>{e.device}</dd></div>}
             {e.ip && <div><dt>IP address</dt><dd>{e.ip}</dd></div>}
             {e.designation && <div><dt>Role</dt><dd>{e.designation}</dd></div>}
@@ -174,7 +174,7 @@ export default function AuditLog({ canExport = true }) {
     return () => clearTimeout(t);
   }, [search]);
   useEffect(() => {
-    fetchAuditOptions().then(setOptions).catch(() => {});
+    fetchAuditOptions().then(setOptions).catch(() => { });
   }, []);
   useEffect(() => setLimit(PAGE), [params]);
 

@@ -39,8 +39,9 @@ export const EXPORT_FORMATS = {
 const COLUMNS = [
   { key: 'n', label: '#', width: 5 },
   { key: 'name', label: 'Patient', width: 26 },
-  { key: 'ipNo', label: 'IP No', width: 13 },
-  { key: 'regNo', label: 'UHID', width: 11 },
+  { key: 'regNo', label: 'UHID', width: 12 },
+  { key: 'visitType', label: 'Visit Type', width: 13 },
+  { key: 'tokenNo', label: 'Token', width: 9 },
   { key: 'department', label: 'Department', width: 18 },
   { key: 'doctor', label: 'Doctor', width: 18 },
   { key: 'testName', label: 'Test', width: 28 },
@@ -48,7 +49,7 @@ const COLUMNS = [
   { key: 'range', label: 'Ref. Range', width: 16 },
   { key: 'flag', label: 'Flag', width: 7 },
   { key: 'resultDate', label: 'Result Date', width: 12 },
-  { key: 'discharged', label: 'Discharged', width: 12 },
+  { key: 'reportDate', label: 'Report Date', width: 12 },
 ];
 
 const FLAG = { high: 'High', low: 'Low', normal: 'Normal' };
@@ -62,8 +63,9 @@ function tableRows(rows) {
   return rows.map((r, i) => ({
     n: i + 1,
     name: r.name,
-    ipNo: r.ipNo,
     regNo: r.regNo,
+    visitType: r.visitType || '',
+    tokenNo: r.tokenNo || '',
     department: r.department,
     doctor: r.doctor,
     testName: r.section ? `${r.test} (${r.section})` : r.test,
@@ -72,7 +74,7 @@ function tableRows(rows) {
     flag: FLAG[r.status] || '',
     status: r.status,
     resultDate: r.resultDate,
-    discharged: isoToDmy(r.dischargeDate),
+    reportDate: isoToDmy(r.reportDate || r.dischargeDate),
   }));
 }
 
@@ -86,10 +88,9 @@ export function describeQuery(q) {
     parts.push(`Value ${q.min !== undefined ? `≥ ${q.min}` : ''}${q.min !== undefined && q.max !== undefined ? ' and ' : ''}${q.max !== undefined ? `≤ ${q.max}` : ''}`);
   }
   if (q.patient) parts.push(`Patient: ${q.patient}`);
-  if (q.ipNo) parts.push(`IP No: ${q.ipNo}`);
   if (q.regNo) parts.push(`UHID: ${q.regNo}`);
   if (q.department) parts.push(`Department: ${q.department}`);
-  const basis = q.dateBasis === 'result' ? 'Result date' : 'Discharged';
+  const basis = q.dateBasis === 'result' ? 'Result date' : 'Report date';
   if (q.from && q.to) parts.push(`${basis} ${isoToDmy(q.from)} to ${isoToDmy(q.to)}`);
   else if (q.from) parts.push(`${basis} from ${isoToDmy(q.from)}`);
   else if (q.to) parts.push(`${basis} up to ${isoToDmy(q.to)}`);
@@ -97,7 +98,7 @@ export function describeQuery(q) {
 }
 
 export function exportFileName(q, format) {
-  const slug = [q.test, q.value, q.ipNo, q.from, q.to]
+  const slug = [q.test, q.value, q.regNo, q.from, q.to]
     .filter(Boolean)
     .join('-')
     .replace(/[^A-Za-z0-9]+/g, '-')
@@ -134,7 +135,7 @@ ${BRAND_CSS}
   thead { display: table-header-group; }
   tbody tr:nth-child(even) td { background: #fbfcfe; }
   .c-n { color: #94a3b8; }
-  .c-ipNo, .c-regNo { font-variant-numeric: tabular-nums; color: #1d4ed8; font-weight: 600; }
+  .c-regNo { font-variant-numeric: tabular-nums; color: #1d4ed8; font-weight: 600; }
   .c-name { font-weight: 700; }
   .v { font-weight: 700; }
   .v-high { color: #b45309; }
@@ -165,7 +166,7 @@ ${search.truncated ? '<div class="foot">Only the first 5,000 results are include
 
 async function toXlsx(search) {
   const wb = new ExcelJS.Workbook();
-  wb.creator = config.hospital?.nameEn || 'Diagnostics Summary Portal';
+  wb.creator = config.hospital?.nameEn || 'OP Lab Reports Portal';
   const ws = wb.addWorksheet('Lab results', { views: [{ state: 'frozen', ySplit: 3 }] });
   ws.mergeCells(1, 1, 1, COLUMNS.length);
   ws.getCell(1, 1).value = `Lab Results Report — ${describeQuery(search.query)}`;
@@ -227,7 +228,7 @@ async function toDocx(search) {
     ),
   ];
   const doc = new Document({
-    creator: config.hospital?.nameEn || 'Diagnostics Summary Portal',
+    creator: config.hospital?.nameEn || 'OP Lab Reports Portal',
     title: 'Lab Results Report',
     sections: [
       {
@@ -296,6 +297,7 @@ export async function shareLabResultsOnWhatsApp(search, { toNumber, recipientNam
     name: recipientName || 'Sir/Madam',
     note: documentLine('Lab Results Report', `${search.total} results, ${search.patients} patients`),
     pdfUrl: await whatsappPdfUrl(objectKey, path.basename(objectKey)),
+    template: 'investigation',
     log: log && {
       ...log,
       document: 'lab_results',

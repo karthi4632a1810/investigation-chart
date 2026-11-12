@@ -10,7 +10,6 @@ import {
   fetchReportsForDate,
   fetchReportStatus,
   reportPdfUrl,
-  reportSummaryPdfUrl,
   searchReports,
   sendReportWhatsApp,
   triggerReportRun,
@@ -21,6 +20,7 @@ import {
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ClockIcon,
   CopyIcon,
   DoctorIcon,
   ExternalLinkIcon,
@@ -37,28 +37,46 @@ import {
   WhatsAppIcon,
 } from './Icons';
 import Pagination from './Pagination';
+import PatientDetailsDialog from './PatientDetailsDialog';
 
 const LIVE_REFRESH_MS = 20_000; // default; Master Settings → refreshMs
 
 const EMPTY_FILTERS = {
-  any: '', // "Search anything" — name, IP, UHID, mobile in any format, address … (server: patientSearchService.js)
-  ipNo: '',
+  any: '', // "Search anything" — name, UHID, token, Req No, Bill No, mobile, town … (server: patientSearchService.js)
   regNo: '',
+  tokenNo: '',
   reqNo: '',
+  billNo: '',
   name: '',
   mobile: '',
   whatsapp: '',
   department: '',
   doctor: '',
+  visitType: '',
   patientType: '',
-  ward: '',
   createdUser: '',
   fromDate: '',
   toDate: '',
 };
 
 // Without an access prop (e.g. the super admin): everything. See utils/access.js.
-const FULL_ACCESS = { showLab: true, showSummary: true, reports: { canRun: true, showWhatsApp: true } };
+const FULL_ACCESS = { reports: { canRun: true, showWhatsApp: true } };
+
+function isReportReady(p) {
+  if (!p) return false;
+  if (p.reportStatus === 'ready') return true;
+  return p.reportStatus === undefined && p.dateCount !== undefined;
+}
+
+function isPendingReport(p) {
+  return p?.reportStatus === 'pending';
+}
+
+function pendingTooltip(p) {
+  const counts = p?.totalOrders ? `${p.approvedOrders ?? 0}/${p.totalOrders} orders Result Approved` : 'Waiting for lab result approval';
+  const statuses = Array.isArray(p?.pendingStatuses) && p.pendingStatuses.length ? ` · Pending: ${p.pendingStatuses.join(', ')}` : '';
+  return `${counts}${statuses}`;
+}
 
 function formatCountdown(ms) {
   if (ms <= 0) return 'any moment now';
@@ -144,9 +162,9 @@ function AutomationStatus({ status, onRunNow, running, canRun = true }) {
         <div className="automation-meta-text">
           <div className="automation-headline">
             {checking ? (
-              <span className="automation-checking-text">Syncing with hospital discharges now…</span>
+              <span className="automation-checking-text">Syncing with OP lab orders now…</span>
             ) : status.paused ? (
-              // Master Settings → Discharge automation switched off.
+              // Master Settings → OP lab automation switched off.
               <span>Automatic checks are paused{canRun ? ' — Check Now still works' : ''}</span>
             ) : msToNext !== null ? (
               <>
@@ -167,12 +185,12 @@ function AutomationStatus({ status, onRunNow, running, canRun = true }) {
       {summary && (
         <div className="automation-stats-chips">
           {summary.found !== undefined && (
-            <span className="stat-chip chip-found" title="Total discharged patients detected">
+            <span className="stat-chip chip-found" title="Total OP patients with lab orders detected">
               <strong>{summary.found}</strong> found
             </span>
           )}
           {summary.generated !== undefined && summary.generated > 0 && (
-            <span className="stat-chip chip-generated" title="Newly generated charts">
+            <span className="stat-chip chip-generated" title="Newly generated OP lab reports">
               <strong>+{summary.generated}</strong> generated
             </span>
           )}
@@ -181,10 +199,18 @@ function AutomationStatus({ status, onRunNow, running, canRun = true }) {
               <strong>{summary.alreadyReported}</strong> ready
             </span>
           )}
+          {summary.pending !== undefined && summary.pending > 0 && (
+            <span
+              className="stat-chip chip-pending"
+              title="Patients whose lab orders are not all Result Approved yet — will auto-generate once approved"
+            >
+              <strong>{summary.pending}</strong> pending
+            </span>
+          )}
           {summary.noLabData !== undefined && summary.noLabData > 0 && (
             <span
               className="stat-chip chip-nodata"
-              title="No lab orders exist for this patient in the EMR — not a failure, checked once and won't be rechecked"
+              title="No completed lab results exist for this patient in the EMR"
             >
               <strong>{summary.noLabData}</strong> no lab data
             </span>
@@ -192,19 +218,6 @@ function AutomationStatus({ status, onRunNow, running, canRun = true }) {
           {summary.failed !== undefined && summary.failed > 0 && (
             <span className="stat-chip chip-failed" title="Failed to generate">
               <strong>{summary.failed}</strong> failed
-            </span>
-          )}
-          {summary.summaryGenerated !== undefined && summary.summaryGenerated > 0 && (
-            <span className="stat-chip chip-generated" title="Discharge summary documents fetched from the EMR">
-              <strong>+{summary.summaryGenerated}</strong> summaries
-            </span>
-          )}
-          {summary.summaryFailed !== undefined && summary.summaryFailed > 0 && (
-            <span
-              className="stat-chip chip-failed"
-              title="Discharge summary document could not be fetched — will retry next check"
-            >
-              <strong>{summary.summaryFailed}</strong> summary issues
             </span>
           )}
         </div>
@@ -216,7 +229,7 @@ function AutomationStatus({ status, onRunNow, running, canRun = true }) {
           className="btn btn-secondary btn-check-now"
           onClick={onRunNow}
           disabled={running || checking}
-          title="Trigger an immediate check for new discharges"
+          title="Trigger an immediate check for OP lab orders"
         >
           <RefreshIcon spinning={running || checking} size={16} />
           <span>{running || checking ? 'Checking…' : 'Check Now'}</span>
@@ -342,7 +355,7 @@ function SendConfirmDialog({ patient, live, defaultNumber, documents, onCancel, 
         <div className="wa-send-patient">
           <b>{patient.name}</b>
           <span>
-            {patient.ipNo}
+            UHID {patient.regNo}
             {patient.department ? ` · ${patient.department}` : ''}
           </span>
         </div>
@@ -377,7 +390,7 @@ function SendConfirmDialog({ patient, live, defaultNumber, documents, onCancel, 
             </span>
           ))}
         </div>
-        <p className="wa-send-note">Each report goes as its own WhatsApp message.</p>
+        <p className="wa-send-note">Sent as the OP Lab Report PDF on WhatsApp.</p>
         {error && <div className="wa-send-error is-block">{error}</div>}
         <div className="um-modal-actions">
           <button type="button" className="btn btn-secondary" onClick={cancel} disabled={busy}>
@@ -394,7 +407,7 @@ function SendConfirmDialog({ patient, live, defaultNumber, documents, onCancel, 
 }
 
 /** Self-contained so each row tracks its own send state independently. */
-function SendWhatsAppButton({ date, ipNo, name, onToast, patient, waSettings, access = FULL_ACCESS, onPopup }) {
+function SendWhatsAppButton({ date, regNo, name, onToast, patient, waSettings, onPopup }) {
   const [status, setStatus] = useState('idle'); // idle | sending | sent | error
   const [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false);
@@ -406,16 +419,13 @@ function SendWhatsAppButton({ date, ipNo, name, onToast, patient, waSettings, ac
   }, [confirming, onPopup]);
   const live = Boolean(waSettings?.liveEnabled);
   const defaultNumber = live ? patient?.mobile || '' : waSettings?.fixedNumber || '';
-  const documents = [
-    access.showLab && patient?.dateCount !== undefined && 'Lab Report',
-    access.showSummary && patient?.hasSummary && !patient?.summaryDataMissing && 'Discharge Summary',
-  ].filter(Boolean);
+  const documents = [isReportReady(patient) && 'Lab Report'].filter(Boolean);
 
   async function send(toNumber) {
     setStatus('sending');
     setError('');
     try {
-      const result = await sendReportWhatsApp(date, ipNo, toNumber);
+      const result = await sendReportWhatsApp(date, regNo, toNumber);
       setStatus('sent');
       setConfirming(false);
       const docs = result.sent.map((d) => d.label).join(' + ');
@@ -427,7 +437,7 @@ function SendWhatsAppButton({ date, ipNo, name, onToast, patient, waSettings, ac
     }
   }
 
-  const auditTarget = { patientName: patient?.name || name, ipNo, date, department: patient?.department || '' };
+  const auditTarget = { patientName: patient?.name || name, regNo, date, department: patient?.department || '' };
 
   function handleClick(e) {
     e?.preventDefault?.();
@@ -435,7 +445,7 @@ function SendWhatsAppButton({ date, ipNo, name, onToast, patient, waSettings, ac
     if (status === 'sending') return;
     track('whatsapp_click', { screen: 'reports', target: auditTarget, details: { mode: live ? 'live' : 'test', popup: Boolean(waSettings?.confirmBeforeSend) } });
     if (waSettings?.confirmBeforeSend && patient) setConfirming(true);
-    else send().catch(() => {});
+    else send().catch(() => { });
   }
 
   if (status === 'sent') {
@@ -448,10 +458,10 @@ function SendWhatsAppButton({ date, ipNo, name, onToast, patient, waSettings, ac
 
   const label =
     status === 'sending'
-      ? 'Sending lab report and discharge summary…'
+      ? 'Sending OP lab report…'
       : status === 'error'
         ? `Failed: ${error} — click to retry`
-        : `Send lab report + discharge summary to ${name} via WhatsApp`;
+        : `Send OP lab report to ${name} via WhatsApp`;
 
   return (
     <>
@@ -503,7 +513,7 @@ function NoWhatsAppBadge() {
   );
 }
 
-function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS, waSettings, onPopup }) {
+function ReportsTable({ patients, dateColumn, getPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS, waSettings, onPopup, onInspect }) {
   if (!patients.length) return null;
 
   return (
@@ -511,34 +521,28 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
       <table className="results modern-results-table">
         <thead>
           <tr>
-            {dateColumn && <th>Discharge Date</th>}
-            <th>IP Number</th>
-            <th>Reg No (UHID)</th>
+            {dateColumn && <th>OP Date</th>}
+            <th>UHID (Reg No)</th>
+            <th>Token No</th>
             <th>Patient Name</th>
+            <th>Visit Type</th>
             <th>Patient Type</th>
             <th>Department</th>
             <th>Doctor</th>
-            <th>Ward</th>
             <th>Mobile</th>
             <th>Created By</th>
-            <th>Lab Dates</th>
+            <th>Lab Status</th>
             <th className="th-action">Report</th>
           </tr>
         </thead>
         <tbody>
           {patients.map((p) => {
             const isCorporate = p.patientType?.toLowerCase().includes('corp');
+            const ready = isReportReady(p);
+            const pending = isPendingReport(p);
             return (
-              <tr key={`${p.date}-${p.ipNo}`} className="patient-row">
+              <tr key={`${p.date}-${p.regNo}`} className="patient-row">
                 {dateColumn && <td className="cell-date">{p.date}</td>}
-                <td className="cell-ip">
-                  <CopyableChip
-                    value={p.ipNo}
-                    label="IP"
-                    className="code-chip code-chip-ip"
-                    onToast={onToast}
-                  />
-                </td>
                 <td className="cell-reg">
                   <CopyableChip
                     value={p.regNo}
@@ -547,10 +551,25 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                     onToast={onToast}
                   />
                 </td>
+                <td className="cell-ip">
+                  {p.tokenNo ? (
+                    <CopyableChip
+                      value={p.tokenNo}
+                      label="Token"
+                      className="code-chip code-chip-ip"
+                      onToast={onToast}
+                    />
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
+                </td>
                 <td className="cell-name">
                   <div className="patient-name-box">
                     <span className="name-text">{p.name}</span>
                   </div>
+                </td>
+                <td className="cell-ward">
+                  <span>{p.visitType || 'OP'}</span>
                 </td>
                 <td className="cell-type">
                   <span className={`type-badge ${isCorporate ? 'type-corporate' : 'type-general'}`}>
@@ -562,12 +581,6 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                   <div className="doctor-cell-content">
                     <DoctorIcon size={14} className="doctor-icon-dim" />
                     <span>{p.doctor}</span>
-                  </div>
-                </td>
-                <td className="cell-ward">
-                  <div className="ward-cell-content">
-                    <WardIcon size={14} className="ward-icon-dim" />
-                    <span>{p.ward}</span>
                   </div>
                 </td>
                 <td className="cell-mobile">
@@ -596,59 +609,68 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                   </span>
                 </td>
                 <td className="cell-dates">
-                  {p.dateCount !== undefined ? (
-                    <span className="dates-pill dates-pill-ready" title={`${p.dateCount} dates with lab orders`}>
+                  {ready ? (
+                    <span className="dates-pill dates-pill-ready" title={`${p.dateCount} dates with approved lab orders`}>
                       {p.dateCount} date{p.dateCount === 1 ? '' : 's'}
                     </span>
+                  ) : pending ? (
+                    <span className="dates-pill dates-pill-pending" title={pendingTooltip(p)}>
+                      Pending {p.approvedOrders ?? 0}/{p.totalOrders ?? '?'}
+                    </span>
+                  ) : p.reportStatus === 'failed' ? (
+                    <span className="text-muted" title={p.error || 'Report generation failed'}>
+                      failed
+                    </span>
                   ) : (
-                    <span className="text-muted" title="No lab orders found for this patient">
+                    <span className="text-muted" title="No completed lab orders found for this patient">
                       no lab data
                     </span>
                   )}
                 </td>
                 <td className="cell-action">
                   <div className="action-btn-group">
-                    {access.showLab && p.dateCount !== undefined && (
-                      <a
-                        className="btn btn-view-pdf"
-                        href={getPdfUrl(p)}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={`Open investigation chart PDF for ${p.name}`}
-                      >
-                        <FilePdfIcon size={15} />
-                        <span>Lab Report</span>
-                      </a>
-                    )}
-                    {!access.showSummary ? null : p.hasSummary && p.summaryDataMissing ? (
-                      <span className="btn btn-summary-missing" title={SUMMARY_NO_DATA_TITLE}>
-                        No Summary
+                    {ready ? (
+                      <>
+                        <a
+                          className="btn btn-view-pdf"
+                          href={getPdfUrl(p)}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={`Open OP lab report PDF for ${p.name}`}
+                        >
+                          <FilePdfIcon size={15} />
+                          <span>Lab Report</span>
+                        </a>
+                        {access.reports?.showWhatsApp && (
+                          <SendWhatsAppButton
+                            date={p.date}
+                            regNo={p.regNo}
+                            name={p.name}
+                            onToast={onToast}
+                            patient={p}
+                            waSettings={waSettings}
+                            onPopup={onPopup}
+                          />
+                        )}
+                      </>
+                    ) : pending ? (
+                      <span className="dates-pill dates-pill-pending" title={pendingTooltip(p)}>
+                        Awaiting approval
                       </span>
-                    ) : p.hasSummary ? (
-                      <a
-                        className="btn btn-view-summary"
-                        href={getSummaryPdfUrl(p)}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={`Open discharge summary for ${p.name}`}
-                      >
-                        <FilePdfIcon size={15} />
-                        <span>Summary</span>
-                      </a>
-                    ) : null}
-                    {access.reports.showWhatsApp && hasSendableDocument(p, access) && (
-                      <SendWhatsAppButton
-                        date={p.date}
-                        ipNo={p.ipNo}
-                        name={p.name}
-                        onToast={onToast}
-                        patient={p}
-                        waSettings={waSettings}
-                        access={access}
-                        onPopup={onPopup}
-                      />
+                    ) : (
+                      <span className="text-muted">—</span>
                     )}
-                    {p.dateCount === undefined && !p.hasSummary && <span className="text-muted">—</span>}
+                    {onInspect && (
+                      <button
+                        type="button"
+                        className={`btn-row-info ${pending ? 'is-pending' : ''}`}
+                        onClick={() => onInspect(p)}
+                        aria-label={`View full details and test status for ${p.name}`}
+                        title="View card details & lab test status"
+                      >
+                        <InfoIcon size={14} />
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -672,29 +694,17 @@ function patientInitials(name) {
   return (words.slice(0, 2).map((w) => w[0]).join('') || '?').toUpperCase();
 }
 
-const SUMMARY_NO_DATA_TITLE = 'The EMR returned no patient data for this discharge summary, so it is not shown or sent';
-
-// A summary the EMR returned empty is never sent (see the send-whatsapp route).
-function hasSendableDocument(p, access = FULL_ACCESS) {
-  return (access.showLab && p.dateCount !== undefined) || (access.showSummary && p.hasSummary && !p.summaryDataMissing);
-}
-
-// The name printed as "Prepared & Approved by" on the summary PDF. Records
-// generated before that was stored fall back to the discharging doctor.
-function summaryApprover(p) {
-  return p.summaryApprovedBy || p.doctor || 'Treating Consultant';
-}
-
-function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS, waSettings, onPopup }) {
+function ReportsCards({ patients, dateColumn, getPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS, waSettings, onPopup, onInspect }) {
   if (!patients.length) return null;
 
   return (
     <div className="patient-cards-grid">
       {patients.map((p) => {
         const isCorporate = p.patientType?.toLowerCase().includes('corp');
-        const hasLab = p.dateCount !== undefined;
+        const ready = isReportReady(p);
+        const pending = isPendingReport(p);
         return (
-          <article key={`${p.date}-${p.ipNo}`} className={`pcard ${isCorporate ? 'is-corporate' : ''}`}>
+          <article key={`${p.date}-${p.regNo}`} className={`pcard ${isCorporate ? 'is-corporate' : ''}`}>
             <header className="pcard-head">
               <div className="pcard-avatar" aria-hidden="true">{patientInitials(p.name)}</div>
               <div className="pcard-title">
@@ -703,27 +713,46 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                   <span className={`type-badge ${isCorporate ? 'type-corporate' : 'type-general'}`}>
                     {p.patientType || 'General'}
                   </span>
-                  {hasLab ? (
-                    <span className="pcard-tag is-ready" title={`${p.dateCount} dates with completed lab tests`}>
+                  {ready ? (
+                    <span className="pcard-tag is-ready" title={`${p.dateCount} dates with approved lab tests`}>
                       {p.dateCount} lab date{p.dateCount === 1 ? '' : 's'}
                     </span>
+                  ) : pending ? (
+                    <span className="pcard-tag is-pending" title={pendingTooltip(p)}>
+                      Pending · {p.approvedOrders ?? 0}/{p.totalOrders ?? '?'}
+                    </span>
                   ) : (
-                    <span className="pcard-tag" title="No laboratory test orders found in EMR">
-                      No lab data
+                    <span className="pcard-tag" title={p.error || 'No completed laboratory test results in EMR'}>
+                      {p.reportStatus === 'failed' ? 'Failed' : 'No lab data'}
                     </span>
                   )}
                 </div>
               </div>
+              {onInspect && (
+                <button
+                  type="button"
+                  className={`pcard-info-btn ${pending ? 'is-pending' : ''}`}
+                  onClick={() => onInspect(p)}
+                  aria-label={`View full details and test status for ${p.name}`}
+                  title="View full card details & lab test status"
+                >
+                  <InfoIcon size={16} />
+                </button>
+              )}
             </header>
 
             <div className="pcard-ids">
               <div className="pcard-id">
-                <span className="pcard-label">IP No</span>
-                <CopyableChip value={p.ipNo} label="IP No" className="pcard-id-value is-ip" onToast={onToast} />
+                <span className="pcard-label" title="Registration number">UHID</span>
+                <CopyableChip value={p.regNo} label="UHID" className="pcard-id-value is-ip" onToast={onToast} />
               </div>
               <div className="pcard-id">
-                <span className="pcard-label" title="Registration number">UHID</span>
-                <CopyableChip value={p.regNo} label="UHID" className="pcard-id-value" onToast={onToast} />
+                <span className="pcard-label">Token</span>
+                {p.tokenNo ? (
+                  <CopyableChip value={p.tokenNo} label="Token" className="pcard-id-value" onToast={onToast} />
+                ) : (
+                  <span className="pcard-id-value text-muted">—</span>
+                )}
               </div>
             </div>
 
@@ -733,7 +762,7 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
               </span>
               <div className="pcard-dept-text">
                 <div className="pcard-dept-name">{p.department || 'General'}</div>
-                {p.ward && <div className="pcard-ward">{p.ward}</div>}
+                {p.visitType && <div className="pcard-ward">{p.visitType}</div>}
               </div>
             </div>
 
@@ -767,71 +796,65 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, getSummaryPdfUrl, onToa
                 <dd className="pcard-mono">{p.createdUser || '—'}</dd>
               </div>
               <div className="pcard-row">
-                <dt><CalendarIcon size={13} />Discharged</dt>
+                <dt><CalendarIcon size={13} />OP Date</dt>
                 <dd>{p.date ? (dateColumn ? p.date : getHumanDate(p.date)) : '—'}</dd>
               </div>
             </dl>
 
             <footer className="pcard-actions">
               {/* Always one line, whichever state, so every card in a row keeps the same height. */}
-              {!access.showSummary ? null : p.hasSummary && p.summaryDataMissing ? (
-                <div className="pcard-status" title={SUMMARY_NO_DATA_TITLE}>
-                  <span>Discharge summary unavailable</span>
-                </div>
-              ) : p.hasSummary ? (
-                <div
-                  className="pcard-status is-approved"
-                  title={`Discharge summary prepared & approved by ${summaryApprover(p)}`}
-                >
+              {ready ? (
+                <div className="pcard-status is-approved" title="All active lab orders Result Approved">
                   <CheckIcon size={13} />
                   <span>
-                    Approved by <b>{summaryApprover(p)}</b>
+                    {p.totalOrders ? `${p.totalOrders} lab ${p.totalOrders === 1 ? 'order' : 'orders'} approved` : 'Lab report ready'}
+                  </span>
+                </div>
+              ) : pending ? (
+                <div className="pcard-status is-pending" title={pendingTooltip(p)}>
+                  <ClockIcon size={13} />
+                  <span>
+                    Awaiting approval ({p.approvedOrders ?? 0}/{p.totalOrders ?? '?'} ready)
                   </span>
                 </div>
               ) : (
-                <div className="pcard-status" title="Discharge summary not generated yet">
-                  <span>Discharge summary pending</span>
+                <div className="pcard-status" title={p.error || 'No completed laboratory orders found'}>
+                  <span>{p.reportStatus === 'failed' ? 'Report generation failed' : 'No completed lab data'}</span>
                 </div>
               )}
               <div className="pcard-buttons">
-                {!access.showLab ? null : hasLab ? (
-                  <a
-                    className="btn btn-view-pdf pcard-btn"
-                    href={getPdfUrl(p)}
-                    target="_blank"
-                    rel="noreferrer"
-                    title={`Open lab report for ${p.name}`}
-                  >
-                    <FilePdfIcon size={14} />
-                    <span>Lab Report</span>
-                  </a>
+                {ready ? (
+                  <>
+                    <a
+                      className="btn btn-view-pdf pcard-btn"
+                      href={getPdfUrl(p)}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`Open OP lab report for ${p.name}`}
+                    >
+                      <FilePdfIcon size={14} />
+                      <span>Lab Report</span>
+                    </a>
+                    {access.reports?.showWhatsApp && (
+                      <SendWhatsAppButton
+                        date={p.date}
+                        regNo={p.regNo}
+                        name={p.name}
+                        onToast={onToast}
+                        patient={p}
+                        waSettings={waSettings}
+                        onPopup={onPopup}
+                      />
+                    )}
+                  </>
+                ) : pending ? (
+                  <span className="btn pcard-btn is-empty" title={pendingTooltip(p)}>
+                    <span>Awaiting approval</span>
+                  </span>
                 ) : (
-                  <span className="btn pcard-btn is-empty" title="No laboratory test orders found in EMR">
-                    <span>No lab data</span>
+                  <span className="btn pcard-btn is-empty" title={p.error || 'No completed laboratory test orders found in EMR'}>
+                    <span>{p.reportStatus === 'failed' ? 'Failed' : 'No lab data'}</span>
                   </span>
-                )}
-                {!access.showSummary ? null : p.hasSummary && p.summaryDataMissing ? (
-                  <span className="btn pcard-btn btn-summary-missing" title={SUMMARY_NO_DATA_TITLE}>
-                    <span>No Summary</span>
-                  </span>
-                ) : p.hasSummary ? (
-                  <a
-                    className="btn btn-view-summary pcard-btn"
-                    href={getSummaryPdfUrl(p)}
-                    target="_blank"
-                    rel="noreferrer"
-                    title={`Open discharge summary for ${p.name}`}
-                  >
-                    <FilePdfIcon size={14} />
-                    <span>Summary</span>
-                  </a>
-                ) : (
-                  <span className="btn pcard-btn is-empty" title="Discharge summary not generated yet">
-                    <span>No summary</span>
-                  </span>
-                )}
-                {access.reports.showWhatsApp && hasSendableDocument(p, access) && (
-                  <SendWhatsAppButton date={p.date} ipNo={p.ipNo} name={p.name} onToast={onToast} patient={p} waSettings={waSettings} access={access} onPopup={onPopup} />
                 )}
               </div>
             </footer>
@@ -871,9 +894,9 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
             <FilterIcon size={20} />
           </div>
           <div>
-            <h3 className="panel-title">Advanced Patient Investigation Filter</h3>
+            <h3 className="panel-title">Advanced OP Investigation Filter</h3>
             <p className="panel-subtitle">
-              Filter discharges by clinical department, attending physician, patient type, ward, or discharge window.
+              Filter OP visits by department, consulting doctor, visit type, token, patient type, or report date window.
             </p>
           </div>
         </div>
@@ -905,7 +928,7 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
                 id="filter-any"
                 value={filters.any || ''}
                 onChange={set('any')}
-                placeholder="Name, IP, UHID, mobile (any format), Req No, doctor, ward, address or town"
+                placeholder="Name, UHID, Token, Req No, Bill No, mobile (any format), doctor, address or town"
                 className="filter-control"
                 autoComplete="off"
               />
@@ -923,26 +946,26 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
 
           <div className="filter-input-grid">
             <div className="enhanced-field">
-              <label htmlFor="filter-ip">IP Number</label>
-              <div className="field-input-box">
-                <input
-                  id="filter-ip"
-                  value={filters.ipNo}
-                  onChange={set('ipNo')}
-                  placeholder="e.g. IP07025423"
-                  className="filter-control"
-                />
-              </div>
-            </div>
-
-            <div className="enhanced-field">
               <label htmlFor="filter-reg">UHID / Reg No</label>
               <div className="field-input-box">
                 <input
                   id="filter-reg"
                   value={filters.regNo}
                   onChange={set('regNo')}
-                  placeholder="e.g. 6159338"
+                  placeholder="e.g. 4625656"
+                  className="filter-control"
+                />
+              </div>
+            </div>
+
+            <div className="enhanced-field">
+              <label htmlFor="filter-token">Token No</label>
+              <div className="field-input-box">
+                <input
+                  id="filter-token"
+                  value={filters.tokenNo}
+                  onChange={set('tokenNo')}
+                  placeholder="e.g. 12"
                   className="filter-control"
                 />
               </div>
@@ -956,6 +979,19 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
                   value={filters.reqNo}
                   onChange={set('reqNo')}
                   placeholder="Lab request number"
+                  className="filter-control"
+                />
+              </div>
+            </div>
+
+            <div className="enhanced-field">
+              <label htmlFor="filter-bill">Bill No</label>
+              <div className="field-input-box">
+                <input
+                  id="filter-bill"
+                  value={filters.billNo}
+                  onChange={set('billNo')}
+                  placeholder="Lab bill number"
                   className="filter-control"
                 />
               </div>
@@ -1006,7 +1042,7 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
         <div className="filter-card-section">
           <div className="section-title-tag">
             <span className="tag-dot" />
-            <span>Clinical & Ward Assignment</span>
+            <span>Clinical & Visit Details</span>
           </div>
 
           <div className="filter-input-grid">
@@ -1017,7 +1053,7 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
                   id="filter-dept"
                   value={filters.department}
                   onChange={set('department')}
-                  placeholder="e.g. Cardiology"
+                  placeholder="e.g. General Medicine"
                   className="filter-control"
                 />
               </div>
@@ -1037,6 +1073,19 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
             </div>
 
             <div className="enhanced-field">
+              <label htmlFor="filter-visit">Visit Type</label>
+              <div className="field-input-box">
+                <input
+                  id="filter-visit"
+                  value={filters.visitType}
+                  onChange={set('visitType')}
+                  placeholder="e.g. New / Review"
+                  className="filter-control"
+                />
+              </div>
+            </div>
+
+            <div className="enhanced-field">
               <label htmlFor="filter-ptype">Patient Type</label>
               <div className="field-input-box">
                 <input
@@ -1044,19 +1093,6 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
                   value={filters.patientType}
                   onChange={set('patientType')}
                   placeholder="General / Corporate"
-                  className="filter-control"
-                />
-              </div>
-            </div>
-
-            <div className="enhanced-field">
-              <label htmlFor="filter-ward">Ward / ICU</label>
-              <div className="field-input-box">
-                <input
-                  id="filter-ward"
-                  value={filters.ward}
-                  onChange={set('ward')}
-                  placeholder="e.g. Cardiac ICU"
                   className="filter-control"
                 />
               </div>
@@ -1083,12 +1119,12 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
           </div>
         </div>
 
-        {/* Section 3: Discharge Period */}
+        {/* Section 3: OP Period */}
         <div className="filter-card-section">
           <div className="section-header-flex">
             <div className="section-title-tag">
               <span className="tag-dot" />
-              <span>Discharge Date Period</span>
+              <span>OP Report Date Period</span>
             </div>
 
             {/* Quick Range Presets */}
@@ -1111,7 +1147,7 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
 
           <div className="filter-dates-grid">
             <div className="enhanced-field">
-              <label htmlFor="filter-from">Discharge From Date</label>
+              <label htmlFor="filter-from">OP From Date</label>
               <div className="field-input-box">
                 <input
                   id="filter-from"
@@ -1124,7 +1160,7 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
             </div>
 
             <div className="enhanced-field">
-              <label htmlFor="filter-to">Discharge To Date</label>
+              <label htmlFor="filter-to">OP To Date</label>
               <div className="field-input-box">
                 <input
                   id="filter-to"
@@ -1154,7 +1190,7 @@ function AdvancedSearchForm({ filters, onChange, onSearch, onClear, loading }) {
   );
 }
 
-export default function DischargeReports({ navRequest, access = FULL_ACCESS, refreshMs = LIVE_REFRESH_MS }) {
+export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs = LIVE_REFRESH_MS }) {
   const [mode, setMode] = useState('date'); // 'date' | 'search'
   const [date, setDate] = useState(defaultDateOnly());
   const [filters, setFilters] = useState(EMPTY_FILTERS);
@@ -1180,12 +1216,19 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
   const onPopup = useCallback((open) => {
     popupsOpen.current = Math.max(0, popupsOpen.current + (open ? 1 : -1));
   }, []);
+  const [detailPatient, setDetailPatient] = useState(null);
+  const updatePatientRecord = useCallback((updated) => {
+    if (!updated?.regNo || !updated?.date) return;
+    setPatients((prev) =>
+      prev.map((item) => (item.date === updated.date && item.regNo === updated.regNo ? { ...item, ...updated } : item)),
+    );
+  }, []);
   // Test / Live and "confirm the number before sending" for the WhatsApp buttons.
   const [waSettings, setWaSettings] = useState(null);
   useEffect(() => {
     fetchWatiSettings()
       .then(setWaSettings)
-      .catch(() => {});
+      .catch(() => { });
   }, []);
 
   // The AI assistant can open this screen at a date, with the list filtered.
@@ -1196,7 +1239,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
     setFilterText(navRequest.filter || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [navRequest?.id]);
-  const [categoryFilter, setCategoryFilter] = useState('all'); // 'all' | 'lab' | 'summary' | 'nolab' | 'corporate'
+  const [categoryFilter, setCategoryFilter] = useState('all'); // 'all' | 'lab' | 'pending' | 'nolab' | 'corporate'
 
   // Audit log: which day's list was looked at, and filters used.
   useEffect(() => {
@@ -1245,7 +1288,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
   useEffect(() => {
     fetchNotOnWhatsappNumbers()
       .then(setNoWhatsApp)
-      .catch(() => {});
+      .catch(() => { });
   }, [lastRefreshedAt]);
 
   // `quiet` (the 20-second live refresh): swap the data in place — no spinner,
@@ -1290,7 +1333,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
   function refreshStatus() {
     fetchReportStatus()
       .then(setStatus)
-      .catch(() => {});
+      .catch(() => { });
   }
 
   useEffect(() => {
@@ -1359,8 +1402,8 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
       refreshCurrentView();
       showToast(
         summary?.found !== undefined
-          ? `Discharge check complete: ${summary.found} patients checked`
-          : 'Discharge check completed successfully'
+          ? `OP lab check complete: ${summary.found} patients checked`
+          : 'OP lab check completed successfully'
       );
     } catch (err) {
       setStatus((prev) => ({ ...prev, lastSummary: { error: err.message } }));
@@ -1421,16 +1464,16 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
   // Dynamic category counts
   const categoryCounts = useMemo(() => {
     let lab = 0;
-    let summary = 0;
+    let pending = 0;
     let noLab = 0;
     let corporate = 0;
     patients.forEach((p) => {
-      if (p.dateCount !== undefined) lab++;
+      if (isReportReady(p)) lab++;
+      else if (isPendingReport(p)) pending++;
       else noLab++;
-      if (p.hasSummary) summary++;
       if (p.patientType?.toLowerCase().includes('corp')) corporate++;
     });
-    return { all: patients.length, lab, summary, noLab, corporate };
+    return { all: patients.length, lab, pending, noLab, corporate };
   }, [patients]);
 
   // Quick in-page client filter: Category + Text filter across all key fields
@@ -1438,17 +1481,17 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
     let list = patients;
 
     if (categoryFilter === 'lab') {
-      list = list.filter((p) => p.dateCount !== undefined);
-    } else if (categoryFilter === 'summary') {
-      list = list.filter((p) => Boolean(p.hasSummary));
+      list = list.filter((p) => isReportReady(p));
+    } else if (categoryFilter === 'pending') {
+      list = list.filter((p) => isPendingReport(p));
     } else if (categoryFilter === 'nolab') {
-      list = list.filter((p) => p.dateCount === undefined);
+      list = list.filter((p) => !isReportReady(p) && !isPendingReport(p));
     } else if (categoryFilter === 'corporate') {
       list = list.filter((p) => p.patientType?.toLowerCase().includes('corp'));
     }
 
     if (!filterText.trim()) return list;
-    // Any value: name (any order), IP, UHID, mobile in any format, Req No, doctor, ward, town …
+    // Any value: name (any order), UHID, token, Req No, Bill No, mobile in any format, doctor, town …
     return list.filter(patientMatcher(filterText));
   }, [patients, categoryFilter, filterText]);
 
@@ -1473,9 +1516,9 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
 
       <div className="section-header reports-header">
         <div>
-          <h2>Discharge Investigation Reports</h2>
+          <h2>OP Lab Investigation Reports</h2>
           <p className="section-subtitle">
-            Automated multi-parameter investigation charts generated in real-time upon patient discharge.
+            Automated OP lab investigation reports generated once all active orders for the patient are Result Approved.
           </p>
         </div>
       </div>
@@ -1531,7 +1574,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
                 className="toolbar-date-input"
-                aria-label="Select discharge date"
+                aria-label="Select OP report date"
               />
               <span className={`date-human-pill ${date === getFormattedDate(0) ? 'is-today' : ''}`}>
                 {getHumanDate(date)}
@@ -1566,7 +1609,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
                 type="text"
                 value={filterText}
                 onChange={handleFilterTextChange}
-                placeholder="Search name, IP, UHID, mobile, doctor, ward, town… (Press /)"
+                placeholder="Search name, UHID, token, mobile, doctor, dept, town… (Press /)"
                 className="filter-text-input"
               />
               {filterText && (
@@ -1633,9 +1676,9 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
       {!loading && !error && mode === 'date' && patients.length === 0 && (
         <div className="empty modern-empty">
           <div className="empty-icon">📂</div>
-          <div className="empty-title">No discharge reports for {date}</div>
+          <div className="empty-title">No OP lab reports for {date}</div>
           <p className="empty-subtitle">
-            Investigation charts generate automatically when patients are discharged in the EMR. Click "Check Now" above to trigger a fresh query.
+            OP investigation reports generate automatically once all active lab orders are Result Approved in the EMR. Click "Check Now" above to trigger a fresh query.
           </p>
         </div>
       )}
@@ -1643,9 +1686,9 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
       {!loading && !error && mode === 'search' && !searchActive && (
         <div className="empty modern-empty search-guide-empty">
           <div className="empty-icon">🔍</div>
-          <div className="empty-title">Advanced Discharge Query Ready</div>
+          <div className="empty-title">Advanced OP Query Ready</div>
           <p className="empty-subtitle">
-            Set your target criteria above (IP Number, UHID, Patient Name, Attending Doctor, or Date Window) and click <strong>Execute Patient Search</strong>.
+            Set your target criteria above (UHID, Token No, Patient Name, Consulting Doctor, or Date Window) and click <strong>Execute Patient Search</strong>.
           </p>
         </div>
       )}
@@ -1654,7 +1697,7 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
         <div className="empty modern-empty">
           <div className="empty-icon">📋</div>
           <div className="empty-title">No Matching Records Found</div>
-          <p className="empty-subtitle">Try adjusting your filters or broadening the discharge date range.</p>
+          <p className="empty-subtitle">Try adjusting your filters or broadening the OP report date range.</p>
         </div>
       )}
 
@@ -1670,39 +1713,35 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
               <span>All Patients</span>
               <span className="cat-count-badge">{categoryCounts.all}</span>
             </button>
-            {access.showLab && (
+            <button
+              type="button"
+              className={`cat-chip cat-chip-lab ${categoryFilter === 'lab' ? 'active' : ''}`}
+              onClick={() => handleCategoryFilterChange('lab')}
+              title="Filter to patients with OP lab reports ready"
+            >
+              <span>📋 Lab Ready</span>
+              <span className="cat-count-badge">{categoryCounts.lab}</span>
+            </button>
+            {categoryCounts.pending > 0 && (
               <button
                 type="button"
-                className={`cat-chip cat-chip-lab ${categoryFilter === 'lab' ? 'active' : ''}`}
-                onClick={() => handleCategoryFilterChange('lab')}
-                title="Filter to patients with lab reports ready"
+                className={`cat-chip cat-chip-pending ${categoryFilter === 'pending' ? 'active' : ''}`}
+                onClick={() => handleCategoryFilterChange('pending')}
+                title="Filter to patients waiting for all lab orders to be Result Approved"
               >
-                <span>📋 Lab Ready</span>
-                <span className="cat-count-badge">{categoryCounts.lab}</span>
+                <span>⏳ Pending Approval</span>
+                <span className="cat-count-badge">{categoryCounts.pending}</span>
               </button>
             )}
-            {access.showSummary && (
-              <button
-                type="button"
-                className={`cat-chip cat-chip-summary ${categoryFilter === 'summary' ? 'active' : ''}`}
-                onClick={() => handleCategoryFilterChange('summary')}
-                title="Filter to patients with discharge summaries"
-              >
-                <span>📄 Summary Ready</span>
-                <span className="cat-count-badge">{categoryCounts.summary}</span>
-              </button>
-            )}
-            {access.showLab && (
-              <button
-                type="button"
-                className={`cat-chip cat-chip-nolab ${categoryFilter === 'nolab' ? 'active' : ''}`}
-                onClick={() => handleCategoryFilterChange('nolab')}
-                title="Filter to patients with no lab orders"
-              >
-                <span>⏳ No Lab Data</span>
-                <span className="cat-count-badge">{categoryCounts.noLab}</span>
-              </button>
-            )}
+            <button
+              type="button"
+              className={`cat-chip cat-chip-nolab ${categoryFilter === 'nolab' ? 'active' : ''}`}
+              onClick={() => handleCategoryFilterChange('nolab')}
+              title="Filter to patients with no completed lab data"
+            >
+              <span>No Lab Data</span>
+              <span className="cat-count-badge">{categoryCounts.noLab}</span>
+            </button>
             {categoryCounts.corporate > 0 && (
               <button
                 type="button"
@@ -1788,13 +1827,13 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
                 <ReportsCards
                   patients={paginatedPatients}
                   dateColumn={mode === 'search'}
-                  getPdfUrl={(p) => reportPdfUrl(p.date, p.ipNo)}
-                  getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
+                  getPdfUrl={(p) => reportPdfUrl(p.date, p.regNo)}
                   onToast={showToast}
                   noWhatsApp={noWhatsApp}
                   access={access}
                   waSettings={waSettings}
                   onPopup={onPopup}
+                  onInspect={setDetailPatient}
                 />
               ) : (
                 <>
@@ -1802,26 +1841,26 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
                     <ReportsTable
                       patients={paginatedPatients}
                       dateColumn={mode === 'search'}
-                      getPdfUrl={(p) => reportPdfUrl(p.date, p.ipNo)}
-                      getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
+                      getPdfUrl={(p) => reportPdfUrl(p.date, p.regNo)}
                       onToast={showToast}
                       noWhatsApp={noWhatsApp}
                       access={access}
                       waSettings={waSettings}
                       onPopup={onPopup}
+                      onInspect={setDetailPatient}
                     />
                   </div>
                   <div className="responsive-cards-view">
                     <ReportsCards
                       patients={paginatedPatients}
                       dateColumn={mode === 'search'}
-                      getPdfUrl={(p) => reportPdfUrl(p.date, p.ipNo)}
-                      getSummaryPdfUrl={(p) => reportSummaryPdfUrl(p.date, p.ipNo)}
+                      getPdfUrl={(p) => reportPdfUrl(p.date, p.regNo)}
                       onToast={showToast}
                       noWhatsApp={noWhatsApp}
                       access={access}
                       waSettings={waSettings}
                       onPopup={onPopup}
+                      onInspect={setDetailPatient}
                     />
                   </div>
                 </>
@@ -1840,6 +1879,14 @@ export default function DischargeReports({ navRequest, access = FULL_ACCESS, ref
           )}
         </div>
       )}
+
+      <PatientDetailsDialog
+        patient={detailPatient}
+        onClose={() => setDetailPatient(null)}
+        onPopup={onPopup}
+        onToast={showToast}
+        onRecordUpdated={updatePatientRecord}
+      />
     </div>
   );
 }

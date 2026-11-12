@@ -3,9 +3,8 @@ import { changeMyPassword } from '../api/client';
 import { initials, levelLabel } from '../utils/access';
 import { CheckIcon, ClockIcon, KeyIcon, LockIcon, LogoutIcon, ShieldCheckIcon } from './Icons';
 
-const SCREEN_NAMES = { search: 'Lab Search', reports: 'Discharge Reports', labFinder: 'Lab Finder', wati: 'WATI Settings', monitor: 'WhatsApp Monitor' };
+const SCREEN_NAMES = { search: 'Lab Search', reports: 'OP Reports', labFinder: 'Lab Finder', wati: 'WATI Settings', monitor: 'WhatsApp Monitor' };
 const AI = { none: 'Off', ask: 'Ask questions', act: 'Ask + send' };
-const DOCS = { both: 'Lab report + summary', lab: 'Lab report only', summary: 'Discharge summary only' };
 
 /** The header's account button: who you are, what you can do, change password, sign out. */
 export default function ProfileMenu({ me, onLogout }) {
@@ -87,10 +86,6 @@ export default function ProfileMenu({ me, onLogout }) {
                   <li>
                     <span>Ask AI</span>
                     <em>{AI[p.ai]}</em>
-                  </li>
-                  <li>
-                    <span>Reports</span>
-                    <em>{DOCS[p.documents]}</em>
                   </li>
                 </ul>
               </div>

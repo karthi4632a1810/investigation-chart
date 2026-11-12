@@ -212,10 +212,7 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
           <PatientField label="Patient Name" value={patientMeta?.name} />
           <PatientField label="Age" value={patientMeta?.age} />
           <PatientField label="Sex" value={patientMeta?.sex} />
-          <PatientField label="Bed No" value={patientMeta?.bed} />
-          <PatientField label="IP No" value={patientMeta?.ip} />
-          <PatientField label="Ward" value={patientMeta?.ward} />
-          <PatientField label="Unit" value={patientMeta?.unit} />
+          <PatientField label="Unit / Dept" value={patientMeta?.unit} />
         </div>
 
         <div className="chart-card-body">
@@ -260,10 +257,7 @@ export default function InvestigationChart({ hospital, regNo, chart }) {
               <PatientField label="Patient Name" value={patientMeta?.name} />
               <PatientField label="Age" value={patientMeta?.age} />
               <PatientField label="Sex" value={patientMeta?.sex} />
-              <PatientField label="Bed No" value={patientMeta?.bed} />
-              <PatientField label="IP No" value={patientMeta?.ip} />
-              <PatientField label="Ward" value={patientMeta?.ward} />
-              <PatientField label="Unit" value={patientMeta?.unit} />
+              <PatientField label="Unit / Dept" value={patientMeta?.unit} />
             </div>
 
             <div className="chart-card-body">

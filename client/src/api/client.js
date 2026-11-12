@@ -88,6 +88,14 @@ export async function fetchReportsForDate(date) {
   return data.patients;
 }
 
+export async function fetchReportDetails(date, regNo, { refresh = false } = {}) {
+  const qs = refresh ? '?refresh=1' : '';
+  const res = await apiFetch(`${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(regNo)}/details${qs}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load patient details');
+  return data;
+}
+
 export async function searchReports(filters) {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
@@ -104,21 +112,17 @@ export async function searchReports(filters) {
 export async function triggerReportRun() {
   const res = await apiFetch(`${API_BASE}/reports/run-now`, { method: 'POST' });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to run discharge check');
+  if (!res.ok) throw new Error(data.error || 'Failed to run OP report check');
   return data.summary;
 }
 
-export function reportPdfUrl(date, ipNo) {
-  return `${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/pdf`;
-}
-
-export function reportSummaryPdfUrl(date, ipNo) {
-  return `${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/summary-pdf`;
+export function reportPdfUrl(date, regNo) {
+  return `${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(regNo)}/pdf`;
 }
 
 /** `toNumber` (optional): the number confirmed / edited in the send popup. */
-export async function sendReportWhatsApp(date, ipNo, toNumber) {
-  const res = await apiFetch(`${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/send-whatsapp`, {
+export async function sendReportWhatsApp(date, regNo, toNumber) {
+  const res = await apiFetch(`${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(regNo)}/send-whatsapp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(toNumber ? { toNumber } : {}),
@@ -206,9 +210,9 @@ export function shareLabResults(query, toNumber, recipientName, via) {
   return postJson(`${API_BASE}/lab-results/share`, { query, toNumber, recipientName, via });
 }
 
-/** One patient's lab report + discharge summary to a number the user typed. */
-export function sharePatientReports(date, ipNo, toNumber, via) {
-  return postJson(`${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(ipNo)}/share`, { toNumber, via });
+/** One OP patient's lab report to a number the user typed. */
+export function sharePatientReports(date, regNo, toNumber, via) {
+  return postJson(`${API_BASE}/reports/${encodeURIComponent(date)}/${encodeURIComponent(regNo)}/share`, { toNumber, via });
 }
 
 // ---- /admin WhatsApp monitor ---------------------------------------------
@@ -282,14 +286,14 @@ export async function downloadWhatsappExport(params, view, format) {
   return name;
 }
 
-/** Ask AI's discharge report as Excel / PDF / CSV (server: dischargeReportQuery.js). */
-export async function downloadDischargeExport(query, format) {
-  const res = await apiFetch(`${API_BASE}/discharges/export?${adminParams({ ...query, format })}`);
+/** Ask AI's OP report table as Excel / PDF / CSV (server: opReportQuery.js). */
+export async function downloadOpReportExport(query, format) {
+  const res = await apiFetch(`${API_BASE}/op-reports/export?${adminParams({ ...query, format })}`);
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || 'Export failed');
   }
-  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || `discharges.${format}`;
+  const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || `op-reports.${format}`;
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement('a');
   a.href = url;

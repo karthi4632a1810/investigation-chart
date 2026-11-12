@@ -171,18 +171,18 @@ export default function LoginScreen({
           </div>
 
           <p className="lock-tagline">
-            Lab reports and discharge summaries, generated automatically at discharge and delivered to
-            patients on WhatsApp.
+            OP lab reports, generated automatically once all ordered tests are approved and delivered
+            to patients on WhatsApp.
           </p>
 
           <ul className="lock-features">
             <li>
               <FilePdfIcon size={15} />
-              Lab reports
+              OP lab reports
             </li>
             <li>
               <FilePdfIcon size={15} />
-              Discharge summaries
+              All-order approval check
             </li>
             <li>
               <WhatsAppIcon size={15} />
@@ -197,7 +197,7 @@ export default function LoginScreen({
               <LockIcon size={22} />
             </div>
             <h1 id="lock-card-title">Staff sign in</h1>
-            <p>Diagnostics Summary Portal</p>
+            <p>OP Lab Reports Portal</p>
           </div>
 
           <form onSubmit={onSubmit} className="login-form">

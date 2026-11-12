@@ -67,7 +67,7 @@ export const ACTIONS = {
 };
 export const CATEGORIES = ['auth', 'screen', 'presence', 'report', 'whatsapp', 'export', 'ai', 'settings', 'users', 'audit'];
 
-const SCREEN_NAMES = { search: 'Lab Search', reports: 'Discharge Reports', labFinder: 'Lab Finder', wati: 'WATI Settings', admin: 'WhatsApp Monitor', users: 'Users', audit: 'Audit Log', settings: 'Master Settings' };
+const SCREEN_NAMES = { search: 'Lab Search', reports: 'OP Reports', labFinder: 'Lab Finder', wati: 'WATI Settings', admin: 'WhatsApp Monitor', users: 'Users', audit: 'Audit Log', settings: 'Master Settings' };
 
 let ready = null;
 async function events() {
@@ -137,9 +137,9 @@ const mins = (ms) => {
 };
 const patient = (t = {}) => {
   if (!t) return '';
-  const id = [t.ipNo, t.uhid && `UHID ${t.uhid}`].filter(Boolean).join(', ');
-  const name = t.patientName || t.ipNo || t.uhid || 'a patient';
-  return `${name}${id && name !== t.ipNo ? ` (${id})` : ''}${t.date ? `, discharged ${dmy(t.date)}` : ''}`;
+  const id = [t.regNo && `UHID ${t.regNo}`, t.uhid && t.uhid !== t.regNo && `UHID ${t.uhid}`].filter(Boolean).join(', ');
+  const name = t.patientName || t.regNo || t.uhid || 'a patient';
+  return `${name}${id && name !== t.regNo ? ` (${id})` : ''}${t.date ? `, ${dmy(t.date)}` : ''}`;
 };
 
 export function describe(e) {
@@ -169,17 +169,17 @@ export function describe(e) {
     case 'search':
       return d.regNo ? `Searched Lab Search for ${d.regNo}${d.from ? ` (${d.from} to ${d.to})` : ''}` : `Searched ${SCREEN_NAMES[e.screen] || ''}${d.query ? `: ${d.query}` : ''}`;
     case 'date_change':
-      return `Viewed discharges of ${dmy(d.date)}`;
+      return `Viewed OP reports of ${dmy(d.date)}`;
     case 'filter_change':
       return `Changed filters on ${SCREEN_NAMES[e.screen] || e.screen}${d.summary ? ` — ${d.summary}` : ''}`;
     case 'copy':
       return `Copied ${d.label || 'a value'} ${d.value || ''}`.trim();
     case 'pdf_open':
-      return `Opened the ${d.document === 'summary' ? 'discharge summary' : 'lab report'} of ${patient(t)}`;
+      return `Opened the lab report of ${patient(t)}`;
     case 'lab_detail_open':
       return `Opened lab result details (order ${d.orderId || '?'})`;
     case 'run_now':
-      return 'Pressed Check Now (discharge check)';
+      return 'Pressed Check Now (OP lab check)';
     case 'message_open':
       return `Opened the WhatsApp message of ${patient(t)}`;
     case 'whatsapp_click':
@@ -359,7 +359,7 @@ function filterOf(q = {}) {
   const text = String(q.q || '').trim().slice(0, 60);
   if (text) {
     const rx = { $regex: text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
-    f.$or = [{ text: rx }, { 'target.ipNo': rx }, { 'target.patientName': rx }, { 'target.uhid': rx }, { userName: rx }, { user: rx }];
+    f.$or = [{ text: rx }, { 'target.regNo': rx }, { 'target.patientName': rx }, { 'target.uhid': rx }, { userName: rx }, { user: rx }];
   }
   return f;
 }
@@ -554,7 +554,7 @@ const COLUMNS = [
   { key: 'category', label: 'Type', width: 11 },
   { key: 'text', label: 'What happened', width: 70 },
   { key: 'patient', label: 'Patient', width: 26 },
-  { key: 'ipNo', label: 'IP No / UHID', width: 14 },
+  { key: 'regNo', label: 'UHID', width: 14 },
   { key: 'screen', label: 'Screen', width: 16 },
   { key: 'device', label: 'Device', width: 16 },
   { key: 'ip', label: 'IP address', width: 15 },
@@ -572,7 +572,7 @@ export async function exportAudit(q = {}, format = 'xlsx') {
     category: d.category,
     text: d.text,
     patient: d.target?.patientName || '',
-    ipNo: d.target?.ipNo || d.target?.uhid || '',
+    regNo: d.target?.regNo || d.target?.uhid || '',
     screen: SCREEN_NAMES[d.screen] || d.screen || '',
     device: d.device,
     ip: d.ip,

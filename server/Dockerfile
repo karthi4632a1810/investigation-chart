@@ -29,6 +29,6 @@ RUN npm ci --omit=dev
 COPY src ./src
 
 ENV NODE_ENV=production
-EXPOSE 2003
+EXPOSE 2021
 
 CMD ["node", "src/index.js"]

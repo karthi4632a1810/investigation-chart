@@ -22,7 +22,7 @@ export const WA_EXPORT_FORMATS = {
 
 const STATUS_LABEL = { pending: 'Pending', sent: 'Sent', delivered: 'Delivered', read: 'Read', failed: 'Failed' };
 const TRIGGER_LABEL = { auto: 'Automatic (live)', manual: 'Manual click', share: 'Shared to a number', imported: 'Imported history' };
-const DOC_LABEL = { lab: 'Lab Report', summary: 'Discharge Summary', lab_results: 'Lab Results Report' };
+const DOC_LABEL = { lab: 'Lab Report', lab_results: 'Lab Results Report' };
 
 function ist(date) {
   if (!date) return '';
@@ -45,7 +45,7 @@ const reason = (m) => (m.status === 'failed' ? m.failedDetail || m.error || '' :
 function describeFilters(q) {
   const time = q.fromTime || q.toTime ? `, ${q.fromTime || '00:00'}–${q.toTime || '23:59'}` : '';
   const range = (q.from === q.to ? dmy(q.from) : `${dmy(q.from)} to ${dmy(q.to)}`) + time;
-  const parts = [q.basis === 'report' ? `Patients discharged ${range}` : `Sent ${range}`];
+  const parts = [q.basis === 'report' ? `OP visits ${range}` : `Sent ${range}`];
   if (q.status) parts.push(`Status: ${String(q.status).split(',').map((s) => STATUS_LABEL[s] || s).join(', ')}`);
   if (q.document) parts.push(`Document: ${DOC_LABEL[q.document] || q.document}`);
   if (q.trigger) parts.push(`Trigger: ${TRIGGER_LABEL[q.trigger] || q.trigger}`);
@@ -56,8 +56,8 @@ function describeFilters(q) {
 const MESSAGE_COLUMNS = [
   { key: 'sentAt', label: 'Sent at', width: 20 },
   { key: 'patient', label: 'Patient', width: 26 },
-  { key: 'ipNo', label: 'IP No', width: 13 },
-  { key: 'discharged', label: 'Discharged', width: 12 },
+  { key: 'regNo', label: 'UHID', width: 13 },
+  { key: 'reportDate', label: 'Report date', width: 12 },
   { key: 'document', label: 'Report', width: 18 },
   { key: 'to', label: 'To', width: 17 },
   { key: 'status', label: 'Status', width: 11 },
@@ -73,8 +73,8 @@ function messageRows(messages) {
   return messages.map((m) => ({
     sentAt: ist(m.acceptedAt || m.createdAt),
     patient: m.patientName || '',
-    ipNo: m.ipNo || '',
-    discharged: dmy(m.dischargeDate),
+    regNo: m.regNo || '',
+    reportDate: dmy(m.reportDate),
     document: docLabel(m),
     to: phone(m.toNumber),
     status: m.status === 'failed' && m.notOnWhatsApp ? 'Not on WhatsApp' : STATUS_LABEL[m.status] || m.status,
@@ -94,8 +94,8 @@ function patientTable(patients) {
   for (const p of patients) for (const r of p.reports) if (!reportKeys.includes(docLabel(r))) reportKeys.push(docLabel(r));
   const columns = [
     { key: 'patient', label: 'Patient', width: 26 },
-    { key: 'ipNo', label: 'IP No', width: 13 },
-    { key: 'discharged', label: 'Discharged', width: 12 },
+    { key: 'regNo', label: 'UHID', width: 13 },
+    { key: 'reportDate', label: 'Report date', width: 12 },
     { key: 'to', label: 'To', width: 17 },
     { key: 'overall', label: 'Overall', width: 11 },
     ...reportKeys.flatMap((k) => [
@@ -109,8 +109,8 @@ function patientTable(patients) {
   const rows = patients.map((p) => {
     const row = {
       patient: p.patientName || '',
-      ipNo: p.ipNo || '',
-      discharged: dmy(p.dischargeDate),
+      regNo: p.regNo || '',
+      reportDate: dmy(p.reportDate),
       to: phone(p.toNumber),
       overall: STATUS_LABEL[p.status] || p.status,
       messages: p.messages.length,
@@ -222,7 +222,7 @@ export async function buildWhatsappExport(q, view, format) {
   ];
   const subtitle = describeFilters(q);
   const times = q.fromTime || q.toTime ? `_${(q.fromTime || '00:00').replace(':', '')}-${(q.toTime || '23:59').replace(':', '')}` : '';
-  const stamp = `${q.basis === 'report' ? 'discharged' : 'sent'}-${q.from || 'all'}${q.to && q.to !== q.from ? `_to_${q.to}` : ''}${times}`;
+  const stamp = `${q.basis === 'report' ? 'reported' : 'sent'}-${q.from || 'all'}${q.to && q.to !== q.from ? `_to_${q.to}` : ''}${times}`;
   const filename = `whatsapp-${view}-${stamp}.${format}`;
 
   let table;

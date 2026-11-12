@@ -51,8 +51,8 @@ async function collection() {
     c.createIndex({ createdAt: -1 }),
     c.createIndex({ status: 1, createdAt: -1 }),
     c.createIndex({ watiMessageId: 1 }, { sparse: true }),
-    c.createIndex({ dischargeDate: 1, ipNo: 1 }),
-  ]).catch(() => {});
+    c.createIndex({ reportDate: 1, regNo: 1 }),
+  ]).catch(() => { });
   await indexesReady;
   return c;
 }
@@ -63,13 +63,14 @@ const digitsOnly = (n) => String(n || '').replace(/\D/g, '');
 
 /**
  * @param entry { trigger: 'auto'|'manual'|'share', via?, triggeredBy, document:
- *   'lab'|'summary'|'lab_results', documentLabel, dischargeDate?, ipNo?,
+ *   'lab'|'lab_results'|'other', documentLabel, reportDate?, regNo?,
  *   patientName?, department?, toNumber, template, liveMode? }
  * @returns the new record's id (string)
  */
 export async function logSendStart(entry) {
   const now = new Date();
   const c = await collection();
+  const regNo = entry.regNo || entry.uhid || null;
   const { insertedId } = await c.insertOne({
     createdAt: now,
     trigger: entry.trigger || 'manual',
@@ -77,8 +78,8 @@ export async function logSendStart(entry) {
     triggeredBy: entry.triggeredBy || 'system',
     document: entry.document || 'other',
     documentLabel: entry.documentLabel || '',
-    dischargeDate: entry.dischargeDate || null,
-    ipNo: entry.ipNo || null,
+    reportDate: entry.reportDate || null,
+    regNo,
     patientName: entry.patientName || '',
     // The template's "Dear …" name when it isn't the patient's (test messages).
     recipientName: entry.recipientName || null,
@@ -87,8 +88,7 @@ export async function logSendStart(entry) {
     liveMode: Boolean(entry.liveMode),
     // Staff changed the number in the confirm popup before sending.
     numberEdited: Boolean(entry.numberEdited),
-    // A UHID (Ask AI lab lookups have no IP number).
-    uhid: entry.uhid || null,
+    uhid: entry.uhid || regNo,
     template: entry.template || '',
     status: 'pending',
     history: [{ status: 'pending', at: now, source: 'app', note: 'Send started' }],
@@ -125,9 +125,9 @@ export const RATE_LIMITED = /\b429\b|usage limit/i;
 const MAX_RATE_LIMITED_ATTEMPTS = 30;
 const RATE_LIMITED_RETRY_MS = 60 * 60_000;
 
-/** Only patient reports can be re-sent without a person — a results list isn't stored. */
+/** Only OP lab reports can be re-sent without a person — a results list isn't stored. */
 function canAutoRetry(doc, error) {
-  if (!['lab', 'summary'].includes(doc?.document) || !doc.ipNo || !doc.dischargeDate) return false;
+  if (doc?.document !== 'lab' || !doc.regNo || !doc.reportDate) return false;
   if (!setting('retry.enabled')) return false;
   if (!setting('retry.notOnWhatsApp') && (isNotOnWhatsApp(error) || /undeliverable|131026/i.test(String(error || '')))) return false;
   if (RATE_LIMITED.test(String(error || ''))) return (doc.attempts || 1) < MAX_RATE_LIMITED_ATTEMPTS;
@@ -166,7 +166,7 @@ export async function logSendResult(id, { ok, error, response }) {
     if (!moved.matchedCount) await c.updateOne({ _id }, { $set: accepted });
     return;
   }
-  const doc = await c.findOne({ _id }, { projection: { document: 1, ipNo: 1, dischargeDate: 1, attempts: 1, createdAt: 1 } });
+  const doc = await c.findOne({ _id }, { projection: { document: 1, regNo: 1, reportDate: 1, attempts: 1, createdAt: 1 } });
   const message = String(error || 'Send failed').slice(0, 500);
   const retry = canAutoRetry(doc, message);
   const nextRetryAt = retry ? retryTime(doc, message, now) : null;
@@ -264,7 +264,7 @@ function watiHeaders() {
   return { Authorization: config.wati.accessToken, Accept: 'application/json', 'User-Agent': UA };
 }
 
-class RateLimitedError extends Error {}
+class RateLimitedError extends Error { }
 
 async function fetchWatiMessages(number, pageSize = 20) {
   const res = await fetch(`${config.wati.endpoint}/api/v1/getMessages/${number}?pageSize=${pageSize}&pageNumber=1`, {
@@ -272,11 +272,11 @@ async function fetchWatiMessages(number, pageSize = 20) {
     signal: AbortSignal.timeout(20_000),
   });
   if (res.status === 429) {
-    countWatiCall('status', { rateLimited: true }).catch(() => {});
+    countWatiCall('status', { rateLimited: true }).catch(() => { });
     noteWatiRateLimited();
     throw new RateLimitedError('WATI API usage limit exceeded (429)');
   }
-  countWatiCall('status').catch(() => {});
+  countWatiCall('status').catch(() => { });
   if (!res.ok) throw new Error(`WATI getMessages ${res.status}`);
   noteWatiOk();
   const data = await res.json();
@@ -288,7 +288,7 @@ function matchWatiItem(doc, items, claimed) {
   const sentAt = new Date(doc.acceptedAt || doc.createdAt).getTime();
   const firstName = String(doc.recipientName || doc.patientName || '').split(/[\s.]+/).filter((w) => w.length > 2)[0] || '';
   // Reports carry "Attached: <document>"; a test message carries only the typed text.
-  const label = ['lab', 'summary', 'lab_results'].includes(doc.document) ? doc.documentLabel : '';
+  const label = ['lab', 'lab_results'].includes(doc.document) ? doc.documentLabel : '';
   let best = null;
   for (const item of items) {
     if (claimed.has(item.id)) continue;
@@ -524,14 +524,14 @@ export async function handleWatiWebhook(event) {
   webhookEventsSinceStart += 1;
   getMongoCollection('app_flags')
     .then((f) => f.updateOne(WEBHOOK_FLAG, { $set: { at: lastWebhookAt, eventType: String(event?.eventType || '') } }, { upsert: true }))
-    .catch(() => {});
+    .catch(() => { });
 
   const c = await collection();
   const ids = [event.whatsappMessageId, event.localMessageId, event.id].filter((v) => typeof v === 'string' && v);
   let doc = ids.length
     ? await c.findOne({
-        $or: [{ whatsappMessageId: { $in: ids } }, { watiLocalMessageId: { $in: ids } }, { watiMessageId: { $in: ids } }, { watiSendIds: { $in: ids } }],
-      })
+      $or: [{ whatsappMessageId: { $in: ids } }, { watiLocalMessageId: { $in: ids } }, { watiMessageId: { $in: ids } }, { watiSendIds: { $in: ids } }],
+    })
     : null;
 
   const at = webhookTime(event);
@@ -588,12 +588,12 @@ export async function requeueRateLimitedSends() {
       {
         status: 'failed',
         createdAt: { $gte: new Date(Date.now() - retryWindowMs()) },
-        document: { $in: ['lab', 'summary'] },
-        ipNo: { $ne: null },
-        dischargeDate: { $ne: null },
+        document: 'lab',
+        regNo: { $ne: null },
+        reportDate: { $ne: null },
         nextRetryAt: null,
       },
-      { projection: { document: 1, ipNo: 1, dischargeDate: 1, attempts: 1, error: 1, failedDetail: 1, createdAt: 1 } },
+      { projection: { document: 1, regNo: 1, reportDate: 1, attempts: 1, error: 1, failedDetail: 1, createdAt: 1 } },
     )
     .toArray();
   // Not on WhatsApp / ordinary failures under the try limit, and WATI-limit refusals.
@@ -636,8 +636,8 @@ export async function importWatiHistory(numbers) {
     for (const item of items.filter((m) => m.eventType === 'broadcastMessage')) {
       if (await c.findOne({ watiMessageId: item.id })) continue;
       const text = String(item.finalText || '');
-      const documentLabel = /Attached: (Lab Report|Discharge Summary|Lab Results Report)/.exec(text)?.[1] || '';
-      const document = { 'Lab Report': 'lab', 'Discharge Summary': 'summary', 'Lab Results Report': 'lab_results' }[documentLabel] || 'other';
+      const documentLabel = /Attached: (Lab Report|Lab Results Report)/.exec(text)?.[1] || '';
+      const document = { 'Lab Report': 'lab', 'Lab Results Report': 'lab_results' }[documentLabel] || 'other';
       const created = new Date(item.created);
       const status = WATI_STATUS[String(item.statusString || '').toUpperCase()] || 'sent';
       // WATI doesn't say when a message was delivered or read, so the one
@@ -650,8 +650,8 @@ export async function importWatiHistory(numbers) {
         triggeredBy: 'unknown',
         document,
         documentLabel,
-        dischargeDate: null,
-        ipNo: null,
+        reportDate: null,
+        regNo: null,
         patientName: /^Dear ([^,\n]+),/.exec(text)?.[1]?.trim() || '',
         department: '',
         toNumber: number,
@@ -673,19 +673,19 @@ export async function importWatiHistory(numbers) {
 }
 
 export function startWhatsAppStatusPoller(numbersToImport = []) {
-  loadWebhookState().catch(() => {});
+  loadWebhookState().catch(() => { });
   requeueRateLimitedSends()
     .then((n) => n && console.log(`[whatsapp] ${n} failed / not-on-WhatsApp report(s) from the last ${setting('retry.forDays')} days put back in the retry queue`))
-    .catch(() => {});
+    .catch(() => { });
   backfillNotOnWhatsAppFlag()
     .then((n) => n && console.log(`[whatsapp] marked ${n} earlier failure(s) as "not on WhatsApp"`))
-    .catch(() => {});
+    .catch(() => { });
   importWatiHistory(numbersToImport)
     .then((n) => n && console.log(`[whatsapp] imported ${n} earlier message(s) from WATI history`))
     .catch((error) => console.warn(`[whatsapp] history import skipped: ${error.message}`))
     .finally(() => {
-      pollWhatsAppStatuses().catch(() => {});
-      setInterval(() => pollWhatsAppStatuses().catch(() => {}), POLL_INTERVAL_MS).unref?.();
+      pollWhatsAppStatuses().catch(() => { });
+      setInterval(() => pollWhatsAppStatuses().catch(() => { }), POLL_INTERVAL_MS).unref?.();
     });
 }
 
@@ -702,16 +702,13 @@ function istMidnight(day) {
 /**
  * The date range, by one of two dates (the monitor's "Dates by" switch):
  *  - 'sent' (default): when the message was sent.
- *  - 'report': the patient's discharge date — the date their reports are filed
- *    under. "Today" then means today's patients only, even if some of
- *    yesterday's reports were (re)sent today. Messages that aren't a patient's
- *    report (Lab Finder lists, tests) have no discharge date and drop out.
+ *  - 'report': the patient's OP report date. Messages that aren't a patient's
+ *    report (Lab Finder lists, tests) have no report date and drop out.
  */
 const isReportBasis = (basis) => basis === 'report';
 
 // Optional time of day (HH:MM, India time): the range then runs from
-// `from` at fromTime to `to` at toTime — "today 10:00–14:00", or overnight
-// "yesterday 20:00 → today 08:00".
+// `from` at fromTime to `to` at toTime — "today 10:00–14:00".
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 export function timeWindow(q = {}) {
   const fromTime = TIME_RE.test(q.fromTime || '') ? q.fromTime : null;
@@ -720,21 +717,25 @@ export function timeWindow(q = {}) {
 }
 const istAt = (day, hhmm) => new Date(`${day}T${hhmm}:00+05:30`);
 
-/** The EMR discharge time ("29-09-2026 12:24", India time) as a Date, or null. */
-export function dischargeMoment(record) {
-  const m = /^(\d{2})-(\d{2})-(\d{4})\s+(\d{1,2}):(\d{2})/.exec(String(record?.dischargeDate || ''));
-  return m ? new Date(`${m[3]}-${m[2]}-${m[1]}T${m[4].padStart(2, '0')}:${m[5]}:00+05:30`) : null;
+/** Parse EMR visitDate ("11/10/2026 09:30" or "29-09-2026 12:24") as Date, or null. */
+export function visitMoment(record) {
+  const s = String(record?.visitDate || '').trim();
+  const dmy = /^(\d{2})-(\d{2})-(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/.exec(s);
+  if (dmy) return new Date(`${dmy[3]}-${dmy[2]}-${dmy[1]}T${(dmy[4] || '00').padStart(2, '0')}:${dmy[5] || '00'}:00+05:30`);
+  const mdy = /^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2}))?/.exec(s);
+  if (mdy) return new Date(`${mdy[3]}-${mdy[1]}-${mdy[2]}T${(mdy[4] || '00').padStart(2, '0')}:${mdy[5] || '00'}:00+05:30`);
+  return null;
 }
 
-/** IP numbers of patients discharged between `from` fromTime and `to` toTime. */
-export async function dischargedInWindow(from, to, win) {
+/** OP visits whose visit time falls between `from` fromTime and `to` toTime. */
+export async function visitsInWindow(from, to, win) {
   const start = istAt(from, win.fromTime).getTime();
   const end = istAt(to, win.toTime).getTime() + 60_000;
-  const rows = await (await getMongoCollection('discharge_reports'))
-    .find({ date: { $gte: from, $lte: to } }, { projection: { _id: 0, ipNo: 1, dischargeDate: 1 } })
+  const rows = await (await getMongoCollection('op_reports'))
+    .find({ date: { $gte: from, $lte: to } }, { projection: { _id: 0, regNo: 1, visitDate: 1 } })
     .toArray();
   return rows.filter((r) => {
-    const t = dischargeMoment(r)?.getTime();
+    const t = visitMoment(r)?.getTime();
     return t >= start && t < end;
   });
 }
@@ -743,10 +744,10 @@ function rangeFilter(from, to, basis, win) {
   const f = DATE_RE.test(from || '') ? from : null;
   const t = DATE_RE.test(to || '') ? to : null;
   if (isReportBasis(basis)) {
-    const dischargeDate = { $ne: null };
-    if (f) dischargeDate.$gte = f;
-    if (t) dischargeDate.$lte = t;
-    return { dischargeDate };
+    const reportDate = { $ne: null };
+    if (f) reportDate.$gte = f;
+    if (t) reportDate.$lte = t;
+    return { reportDate };
   }
   const createdAt = {};
   if (f) createdAt.$gte = win ? istAt(f, win.fromTime) : istMidnight(f);
@@ -755,7 +756,7 @@ function rangeFilter(from, to, basis, win) {
 }
 
 /** A message's day (YYYY-MM-DD) for charts — by the same date the range uses. */
-const dayOf = (basis) => (isReportBasis(basis) ? '$dischargeDate' : { $dateToString: { date: '$createdAt', format: '%Y-%m-%d', timezone: TZ } });
+const dayOf = (basis) => (isReportBasis(basis) ? '$reportDate' : { $dateToString: { date: '$createdAt', format: '%Y-%m-%d', timezone: TZ } });
 
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -785,12 +786,12 @@ function buildFilter(q = {}) {
     for (const s of statuses) if (SPECIAL_STATUS[s]) either.push(SPECIAL_STATUS[s]());
     and.push({ $or: either });
   }
-  if (['lab', 'summary', 'lab_results', 'other'].includes(q.document)) filter.document = q.document;
+  if (['lab', 'lab_results', 'other'].includes(q.document)) filter.document = q.document;
   if (['auto', 'manual', 'share', 'imported'].includes(q.trigger)) filter.trigger = q.trigger;
   const search = String(q.q || '').trim().slice(0, 60);
   if (search) {
     const rx = { $regex: escapeRegex(search), $options: 'i' };
-    and.push({ $or: [{ patientName: rx }, { ipNo: rx }, { toNumber: { $regex: escapeRegex(search.replace(/\D/g, '') || search) } }, { triggeredBy: rx }] });
+    and.push({ $or: [{ patientName: rx }, { regNo: rx }, { uhid: rx }, { toNumber: { $regex: escapeRegex(search.replace(/\D/g, '') || search) } }, { triggeredBy: rx }] });
   }
   if (and.length) filter.$and = and;
   return filter;
@@ -798,13 +799,13 @@ function buildFilter(q = {}) {
 
 /**
  * buildFilter, plus — for "Report date" with a time window — only the
- * patients whose EMR discharge time falls inside it.
+ * OP patients whose visit time falls inside it.
  */
 async function resolveFilter(q = {}) {
   const filter = buildFilter(q);
   const win = timeWindow(q);
   if (win && isReportBasis(q.basis) && DATE_RE.test(q.from || '') && DATE_RE.test(q.to || '')) {
-    filter.ipNo = { $in: (await dischargedInWindow(q.from, q.to, win)).map((r) => r.ipNo) };
+    filter.regNo = { $in: (await visitsInWindow(q.from, q.to, win)).map((r) => r.regNo) };
   }
   return filter;
 }
@@ -855,7 +856,7 @@ export async function whatsappSummary(q = {}) {
               },
             },
           ],
-          patients: [{ $match: { ipNo: { $ne: null } } }, { $group: { _id: { d: '$dischargeDate', ip: '$ipNo' } } }, { $count: 'n' }],
+          patients: [{ $match: { regNo: { $ne: null } } }, { $group: { _id: { d: '$reportDate', reg: '$regNo' } } }, { $count: 'n' }],
         },
       },
     ])
@@ -956,7 +957,8 @@ export async function whatsappActivity(limit = 25) {
           status: '$history.status',
           note: '$history.note',
           patientName: 1,
-          ipNo: 1,
+          regNo: 1,
+          reportDate: 1,
           documentLabel: 1,
           toNumber: 1,
           trigger: 1,
@@ -986,10 +988,8 @@ function overallStatus(reports) {
 }
 
 /**
- * One row per patient (discharge date + IP number; imported history, which
- * has no IP, groups by number + name). Each row lists the patient's reports
- * individually — the latest message per report, plus how many were sent —
- * and every message behind them, for the expandable detail.
+ * One row per OP patient (report date + UHID; imported history without UHID
+ * groups by number + name).
  */
 export async function whatsappPatients(q = {}) {
   const c = await collection();
@@ -1004,10 +1004,10 @@ export async function whatsappPatients(q = {}) {
       {
         $group: {
           _id: {
-            dischargeDate: '$dischargeDate',
-            key: { $ifNull: ['$ipNo', { $concat: ['$toNumber', '|', { $ifNull: ['$patientName', ''] }] }] },
+            reportDate: '$reportDate',
+            key: { $ifNull: ['$regNo', { $concat: ['$toNumber', '|', { $ifNull: ['$patientName', ''] }] }] },
           },
-          ipNo: { $last: '$ipNo' },
+          regNo: { $last: '$regNo' },
           patientName: { $last: '$patientName' },
           department: { $last: '$department' },
           toNumber: { $last: '$toNumber' },
@@ -1022,7 +1022,6 @@ export async function whatsappPatients(q = {}) {
     .toArray();
 
   const rows = (grouped[0]?.rows || []).map((g) => {
-    // Latest message per report (a report sent twice shows its newest attempt).
     const byDoc = new Map();
     for (const m of g.messages) {
       const key = m.document === 'other' ? m.documentLabel || m.id : m.document;
@@ -1037,12 +1036,12 @@ export async function whatsappPatients(q = {}) {
       sends: r.sends,
       ...r.latest,
     }));
-    const order = { lab: 0, summary: 1, lab_results: 2, other: 3 };
+    const order = { lab: 0, lab_results: 1, other: 2 };
     reports.sort((a, b) => (order[a.document] ?? 9) - (order[b.document] ?? 9));
     return {
-      key: `${g._id.dischargeDate || ''}|${g._id.key}`,
-      dischargeDate: g._id.dischargeDate,
-      ipNo: g.ipNo,
+      key: `${g._id.reportDate || ''}|${g._id.key}`,
+      reportDate: g._id.reportDate,
+      regNo: g.regNo,
       patientName: g.patientName,
       department: g.department,
       toNumber: g.toNumber,
@@ -1066,7 +1065,7 @@ export async function allWhatsappMessages(q = {}, max = 10000) {
 
 /**
  * Numbers whose most recent message failed as "not on WhatsApp" — shown as a
- * warning next to the patient's mobile on Discharge Reports. A later
+ * warning next to the patient's mobile on OP Reports. A later
  * successful send to the number takes it off the list.
  */
 export async function numbersNotOnWhatsApp() {
@@ -1139,50 +1138,48 @@ function previousRange(from, to) {
 }
 
 /**
- * Did every patient discharged in the range get their reports on WhatsApp?
- * Patient-based (by discharge date), so the status / document / trigger
- * filters don't apply here.
+ * Did every OP patient with lab orders in the range get their report on WhatsApp?
  */
 async function coverage(from, to, win = null) {
   if (!DATE_RE.test(from || '') || !DATE_RE.test(to || '')) return null;
-  let reports = await (await getMongoCollection('discharge_reports'))
-    .find({ date: { $gte: from, $lte: to } }, { projection: { _id: 0, date: 1, ipNo: 1, name: 1, mobile: 1, department: 1, dateCount: 1, hasSummary: 1, summaryDataMissing: 1, dischargeDate: 1 } })
+  let reports = await (await getMongoCollection('op_reports'))
+    .find({ date: { $gte: from, $lte: to } }, { projection: { _id: 0, date: 1, regNo: 1, name: 1, mobile: 1, department: 1, dateCount: 1, reportStatus: 1, visitDate: 1 } })
     .toArray();
   if (win) {
     const start = istAt(from, win.fromTime).getTime();
     const end = istAt(to, win.toTime).getTime() + 60_000;
     reports = reports.filter((r) => {
-      const t = dischargeMoment(r)?.getTime();
+      const t = visitMoment(r)?.getTime();
       return t >= start && t < end;
     });
   }
   const c = await collection();
   const msgs = await c
-    .find({ dischargeDate: { $gte: from, $lte: to }, ipNo: { $ne: null } }, { projection: { dischargeDate: 1, ipNo: 1, status: 1, notOnWhatsApp: 1 } })
+    .find({ reportDate: { $gte: from, $lte: to }, regNo: { $ne: null } }, { projection: { reportDate: 1, regNo: 1, status: 1, notOnWhatsApp: 1 } })
     .toArray();
   const RANK_BEST = { read: 5, delivered: 4, sent: 3, pending: 2, failed: 1 };
   const best = new Map();
   for (const m of msgs) {
-    const key = `${m.dischargeDate}|${m.ipNo}`;
+    const key = `${m.reportDate}|${m.regNo}`;
     const prev = best.get(key);
     if (!prev || RANK_BEST[m.status] > RANK_BEST[prev.status]) best.set(key, m);
   }
   const counts = { read: 0, delivered: 0, sent: 0, pending: 0, failed: 0, nowa: 0, noMobile: 0, noReport: 0, notSent: 0 };
   const notReached = [];
   for (const p of reports) {
-    const m = best.get(`${p.date}|${p.ipNo}`);
+    const m = best.get(`${p.date}|${p.regNo}`);
     let state;
     if (m) state = m.status === 'failed' && m.notOnWhatsApp ? 'nowa' : m.status;
     else if (!String(p.mobile || '').replace(/\D/g, '')) state = 'noMobile';
-    else if (p.dateCount === undefined && !(p.hasSummary && !p.summaryDataMissing)) state = 'noReport';
+    else if (p.reportStatus !== 'ready' && p.dateCount === undefined) state = 'noReport';
     else state = 'notSent';
     counts[state] += 1;
     if (!['read', 'delivered', 'sent'].includes(state)) {
-      notReached.push({ date: p.date, ipNo: p.ipNo, name: p.name, department: p.department, mobile: p.mobile || '', state });
+      notReached.push({ date: p.date, regNo: p.regNo, name: p.name, department: p.department, mobile: p.mobile || '', state });
     }
   }
   return {
-    discharged: reports.length,
+    opPatients: reports.length,
     reached: counts.read + counts.delivered + counts.sent,
     counts,
     notReached: notReached.slice(0, 200),

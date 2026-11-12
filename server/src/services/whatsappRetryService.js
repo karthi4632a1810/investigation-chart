@@ -7,14 +7,15 @@
  * or on demand from the /admin monitor's Retry button. A retry reuses the
  * failed record, so one report stays one row with an attempt count.
  *
- * Only a patient's lab report or discharge summary can be re-sent: the PDF is
- * still in storage and gets a fresh link. A Lab Finder results list isn't
- * stored, so it has to be shared again from Lab Finder.
+ * Only an OP patient's lab report can be re-sent: the PDF is still in storage
+ * and gets a fresh link. A Lab Finder results list isn't stored, so it has to
+ * be shared again from Lab Finder.
  */
 import { getMongoCollection } from './mongo.js';
+import { ensureReportPdfForMode } from './opReportService.js';
 import { whatsappFileName, whatsappPdfUrl } from './publicLinkService.js';
-import { pdfExists, reportObjectKey, reportSummaryObjectKey } from './storageService.js';
-import { documentLine, sendInvestigationReportWhatsApp } from './watiService.js';
+import { pdfExists, reportObjectKey } from './storageService.js';
+import { DOCUMENT_TEMPLATES, documentLine, sendInvestigationReportWhatsApp } from './watiService.js';
 import { countRetry, retryCallsLeftToday, retryCallsPerDay, watiPausedUntil } from './watiBudget.js';
 import { retryEveryMs } from './whatsappLogService.js';
 import { setting } from './appSettingsService.js';
@@ -22,29 +23,27 @@ import { getWatiSettings } from './watiSettingsService.js';
 import { dueRetries, getWhatsappRecord } from './whatsappLogService.js';
 
 const RETRY_CHECK_MS = 60 * 1000;
-const LABELS = { lab: 'Lab Report', summary: 'Discharge Summary' };
+const LABELS = { lab: 'Lab Report' };
 
 export async function retryWhatsAppMessage(id, { auto = false, triggeredBy } = {}) {
   const doc = await getWhatsappRecord(id);
   if (!doc) throw new Error('Message not found');
   if (doc.status !== 'failed') throw new Error('Only failed messages can be retried');
-  if (!LABELS[doc.document] || !doc.ipNo || !doc.dischargeDate) {
-    throw new Error('This message can\'t be re-sent from here — share it again from Lab Finder or Discharge Reports');
+  if (!LABELS[doc.document] || !doc.regNo || !doc.reportDate) {
+    throw new Error('This message can\'t be re-sent from here — share it again from Lab Finder or OP Reports');
   }
 
-  const key = doc.document === 'lab' ? reportObjectKey(doc.dischargeDate, doc.ipNo) : reportSummaryObjectKey(doc.dischargeDate, doc.ipNo);
+  const key = reportObjectKey(doc.reportDate, doc.regNo);
+  await ensureReportPdfForMode(doc.reportDate, doc.regNo).catch(() => {});
   if (!(await pdfExists(key))) throw new Error(`The ${LABELS[doc.document].toLowerCase()} PDF is no longer available`);
-  if (doc.document === 'summary') {
-    const record = await (await getMongoCollection('discharge_reports')).findOne({ date: doc.dischargeDate, ipNo: doc.ipNo });
-    if (record?.summaryDataMissing) throw new Error('The discharge summary has no patient data — it is never sent');
-  }
 
   const settings = await getWatiSettings();
   await sendInvestigationReportWhatsApp({
     toNumber: doc.toNumber,
-    name: doc.patientName || doc.ipNo,
+    name: doc.patientName || doc.regNo,
     note: documentLine(LABELS[doc.document], settings.secondParam),
-    pdfUrl: await whatsappPdfUrl(key, whatsappFileName(LABELS[doc.document], doc.ipNo)),
+    pdfUrl: await whatsappPdfUrl(key, whatsappFileName(LABELS[doc.document], doc.regNo)),
+    template: doc.template && DOCUMENT_TEMPLATES[doc.template] ? doc.template : settings.labReportTemplate,
     log: { existingId: id, auto, triggeredBy: auto ? 'system' : triggeredBy },
   });
   return getWhatsappRecord(id);

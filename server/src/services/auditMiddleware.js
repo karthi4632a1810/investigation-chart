@@ -25,7 +25,7 @@ function lastQuestion(messages) {
   return short([...(Array.isArray(messages) ? messages : [])].reverse().find((m) => m?.role === 'user')?.content || '', 500);
 }
 
-const SETTING_LABELS = { liveEnabled: 'Live mode', fixedNumber: 'test number', secondParam: 'extra line', confirmBeforeSend: 'confirm number popup', labReportTemplate: 'Ask AI lab template' };
+const SETTING_LABELS = { liveEnabled: 'Live mode', fixedNumber: 'test number', secondParam: 'extra line', confirmBeforeSend: 'confirm number popup', labReportTemplate: 'OP lab template' };
 const describeSettings = (body = {}) =>
   Object.entries(body)
     .filter(([k]) => SETTING_LABELS[k])
@@ -51,12 +51,12 @@ const RULES = [
   ['GET', /^\/api\/detail\/(.+)$/, 'lab_detail_open', ({ m, ok }) => (ok ? { screen: 'search', details: { orderId: short(m[1], 40) } } : null)],
 
   ['GET', /^\/api\/reports\/search$/, 'search', ({ req }) => ({ screen: 'reports', details: { query: summarise(req.query) } })],
-  ['GET', new RegExp(`^/api/reports/(${SEG})/(${SEG})/(pdf|summary-pdf)$`), 'pdf_open', ({ m, ok }) =>
-    ok ? { screen: 'reports', target: { date: m[1], ipNo: m[2] }, details: { document: m[3] === 'pdf' ? 'lab' : 'summary' } } : null],
+  ['GET', new RegExp(`^/api/reports/(${SEG})/(${SEG})/pdf$`), 'pdf_open', ({ m, ok }) =>
+    ok ? { screen: 'reports', target: { date: m[1], regNo: m[2] }, details: { document: 'lab' } } : null],
   ['POST', /^\/api\/reports\/run-now$/, 'run_now', () => ({ screen: 'reports' })],
   ['POST', new RegExp(`^/api/reports/(${SEG})/(${SEG})/send-whatsapp$`), 'whatsapp_send', ({ m, res, body, ok }) => ({
     screen: 'reports',
-    target: { date: m[1], ipNo: m[2] },
+    target: { date: m[1], regNo: m[2] },
     details: {
       ok,
       to: res.locals.auditExtra?.to || short(body.sentTo, 20),
@@ -67,13 +67,13 @@ const RULES = [
   })],
   ['POST', new RegExp(`^/api/reports/(${SEG})/(${SEG})/share$`), 'whatsapp_share', ({ m, body, ok }) => ({
     screen: 'reports',
-    target: { date: m[1], ipNo: m[2] },
-    details: { ok, what: 'patient reports', to: short(body.sentTo, 20), error: ok ? undefined : short(body.error, 200) },
+    target: { date: m[1], regNo: m[2] },
+    details: { ok, what: 'OP lab report', to: short(body.sentTo, 20), error: ok ? undefined : short(body.error, 200) },
   })],
 
   ['POST', /^\/api\/lab-results\/search$/, 'search', ({ req }) => ({ screen: 'labFinder', details: { query: summarise(req.body) } })],
   ['POST', /^\/api\/lab-results\/export$/, 'export', ({ req, ok }) =>
-    ok ? { screen: 'labFinder', details: { what: req.body?.query?.ipNo ? `lab values of ${short(req.body.query.ipNo, 20)}` : 'lab results list', format: short(req.body?.format, 6), query: summarise(req.body?.query) } } : null],
+    ok ? { screen: 'labFinder', details: { what: req.body?.query?.regNo || req.body?.query?.uhid ? `lab values of UHID ${short(req.body.query.regNo || req.body.query.uhid, 20)}` : 'lab results list', format: short(req.body?.format, 6), query: summarise(req.body?.query) } } : null],
   ['POST', /^\/api\/lab-results\/share$/, 'whatsapp_share', ({ body, ok }) => ({
     screen: 'labFinder',
     details: { ok, what: 'lab results list', to: short(body.sentTo, 20), error: ok ? undefined : short(body.error, 200) },
@@ -81,14 +81,14 @@ const RULES = [
 
   ['GET', /^\/api\/admin\/whatsapp\/export$/, 'export', ({ req, ok }) =>
     ok ? { screen: 'admin', details: { what: `WhatsApp ${req.query.view === 'patients' ? 'patient-wise' : 'message-wise'} report`, format: short(req.query.format, 6), query: summarise(req.query) } } : null],
-  ['POST', new RegExp(`^/api/admin/whatsapp/messages/(${SEG})/retry$`), 'whatsapp_retry', ({ body, ok }) => ({
+  ['POST', new RegExp(`^/api\/admin\/whatsapp\/messages\/(${SEG})\/retry$`), 'whatsapp_retry', ({ body, ok }) => ({
     screen: 'admin',
-    target: body.message ? { patientName: body.message.patientName, ipNo: body.message.ipNo, date: body.message.dischargeDate } : null,
+    target: body.message ? { patientName: body.message.patientName, regNo: body.message.regNo, date: body.message.reportDate } : null,
     details: { ok, error: ok ? undefined : short(body.error, 200) },
   })],
   ['POST', /^\/api\/admin\/whatsapp\/refresh$/, 'whatsapp_check', () => ({ screen: 'admin' })],
-  ['GET', /^\/api\/discharges\/export$/, 'export', ({ req, ok }) =>
-    ok ? { screen: 'ai', details: { what: 'discharge report', format: short(req.query.format, 6), query: summarise(req.query) } } : null],
+  ['GET', /^\/api\/op-reports\/export$/, 'export', ({ req, ok }) =>
+    ok ? { screen: 'ai', details: { what: 'OP lab report list', format: short(req.query.format, 6), query: summarise(req.query) } } : null],
 
   ['POST', /^\/api\/wati\/settings$/, 'settings_change', ({ req, ok }) => (ok ? { screen: 'wati', details: { changes: describeSettings(req.body) } } : null)],
   ['PUT', /^\/api\/settings$/, 'settings_change', ({ body, ok }) =>
@@ -134,10 +134,11 @@ const RULES = [
   ['GET', /^\/api\/audit\/export$/, 'audit_export', ({ req, ok }) => (ok ? { screen: 'audit', details: { format: short(req.query.format, 6), query: summarise(req.query) } } : null)],
 ];
 
-/** Fills in the patient's name and department for a target given by date + IP number. */
+/** Fills in the patient's name and department for a target given by date + UHID (`regNo`). */
 async function withPatient(target) {
-  if (!target?.ipNo || !target.date || target.patientName) return target;
-  const r = await (await getMongoCollection('discharge_reports')).findOne({ date: target.date, ipNo: target.ipNo }, { projection: { _id: 0, name: 1, department: 1 } });
+  const regNo = target?.regNo || target?.uhid;
+  if (!regNo || !target.date || target.patientName) return target;
+  const r = await (await getMongoCollection('op_reports')).findOne({ date: target.date, regNo }, { projection: { _id: 0, name: 1, department: 1 } });
   return r ? { ...target, patientName: r.name, patientDepartment: r.department } : target;
 }
 

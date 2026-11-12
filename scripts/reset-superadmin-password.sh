@@ -3,7 +3,7 @@
 #
 # Run it on the server, from anywhere:
 #
-#   bash /docker/investigation-chart/scripts/reset-superadmin-password.sh
+#   bash /docker/op-lab-reports/scripts/reset-superadmin-password.sh
 #
 # The super admin isn't stored in the database: it's APP_USERNAME / APP_PASSWORD
 # in server/.env, read when the backend starts. This script:
@@ -19,7 +19,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ENV_FILE=server/.env
-CONTAINER=investigation-backend
+CONTAINER=op-lab-backend
 COMPOSE=(docker compose -f docker-compose.yml)
 [[ -f docker-compose.prod.yml ]] && COMPOSE+=(-f docker-compose.prod.yml)
 
@@ -118,7 +118,7 @@ STATUS="$(printf '%s' "$PW1" | docker exec -i "$CONTAINER" node --input-type=mod
   import { config } from "/app/src/config.js";
   let password = "";
   for await (const chunk of process.stdin) password += chunk;
-  const base = `http://localhost:${process.env.PORT || 2003}/api`;
+  const base = `http://localhost:${process.env.PORT || 2021}/api`;
   for (let i = 0; i < 45; i++) {
     try {
       const r = await fetch(`${base}/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: config.auth.username, password }) });

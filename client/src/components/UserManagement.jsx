@@ -22,9 +22,8 @@ import {
   WhatsAppIcon,
 } from './Icons';
 
-const SCREEN_SHORT = { search: 'Lab Search', reports: 'Reports', labFinder: 'Lab Finder', wati: 'WATI', monitor: 'Monitor' };
+const SCREEN_SHORT = { search: 'Lab Search', reports: 'OP Reports', labFinder: 'Lab Finder', wati: 'WATI', monitor: 'Monitor' };
 const AI_LABEL = { none: 'Off', ask: 'Ask questions', act: 'Ask + send' };
-const DOC_LABEL = { both: 'Both reports', lab: 'Lab report only', summary: 'Summary only' };
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const HOUR_PRESETS = [
   { label: 'Mon–Fri · 9 am–6 pm', days: [1, 2, 3, 4, 5], from: '09:00', to: '18:00' },
@@ -385,30 +384,14 @@ function UserEditor({ model, user, onClose, onSaved, onResetPassword }) {
                 <b>
                   <WhatsAppIcon size={14} /> WhatsApp button on patient cards
                 </b>
-                <span>Lets them send a patient's reports on WhatsApp.</span>
+                <span>Lets them send a patient&apos;s OP lab report on WhatsApp.</span>
                 {whatsappNeedsWrite && (
                   <span className="um-warn">
-                    <AlertIcon size={12} /> Needs Discharge Reports set to View &amp; send to take effect.
+                    <AlertIcon size={12} /> Needs OP Reports set to View &amp; send to take effect.
                   </span>
                 )}
               </div>
               <Switch checked={p.whatsappButton} onChange={(v) => setPerm((x) => ({ ...x, whatsappButton: v }))} label="WhatsApp button" />
-            </div>
-            <div className="um-feature">
-              <div className="um-feature-text">
-                <b>Reports shown</b>
-                <span>Which PDFs they can open and send.</span>
-              </div>
-              <Segmented
-                small
-                value={p.documents}
-                onChange={(v) => setPerm((x) => ({ ...x, documents: v }))}
-                options={[
-                  { value: 'both', label: 'Both' },
-                  { value: 'lab', label: 'Lab report' },
-                  { value: 'summary', label: 'Summary' },
-                ]}
-              />
             </div>
           </section>
 
@@ -482,7 +465,6 @@ function UserEditor({ model, user, onClose, onSaved, onResetPassword }) {
             <div className="um-preview-meta">
               <span>Ask AI: {AI_LABEL[p.ai]}</span>
               <span>WhatsApp button: {p.whatsappButton && p.screens.reports === 'write' ? 'On' : 'Off'}</span>
-              <span>{DOC_LABEL[p.documents]}</span>
               <span>{describeSchedule(p.schedule)}</span>
             </div>
           </section>
@@ -633,7 +615,6 @@ function AccessChips({ user }) {
           <WhatsAppIcon size={11} /> Send
         </span>
       )}
-      {p.documents !== 'both' && <span className="um-pill">{DOC_LABEL[p.documents]}</span>}
     </div>
   );
 }

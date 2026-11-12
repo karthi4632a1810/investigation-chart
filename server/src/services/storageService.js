@@ -1,6 +1,6 @@
 /**
  * PDF object storage on MinIO (S3-compatible). Reports are stored under
- * `<date>/<IP_NO>.pdf` in a single bucket. Using object storage instead of the
+ * `<date>/<REG_NO>.pdf` in a single bucket. Using object storage instead of the
  * container's local disk means a report survives a container restart/redeploy and
  * isn't tied to whichever host the backend happens to be scheduled on.
  *
@@ -13,11 +13,11 @@
  */
 import { Client } from 'minio';
 
-const PORT = parseInt(process.env.MINIO_PORT || '4003', 10);
+const PORT = parseInt(process.env.MINIO_PORT || '4021', 10);
 const USE_SSL = process.env.MINIO_USE_SSL === 'true';
 const ACCESS_KEY = process.env.MINIO_ACCESS_KEY || 'minioadmin';
 const SECRET_KEY = process.env.MINIO_SECRET_KEY || 'minioadmin';
-const BUCKET = process.env.MINIO_BUCKET || 'investigation-reports';
+const BUCKET = process.env.MINIO_BUCKET || 'op-lab-reports';
 
 // A fixed region skips the SDK's automatic bucket-region lookup (a real network
 // call to the endpoint). Without it, `presignClient.presignedGetObject` — which
@@ -49,13 +49,8 @@ const presignClient = new Client({
 
 let bucketReady = null;
 
-export function reportObjectKey(date, ipNo) {
-  return `${date}/${ipNo}.pdf`;
-}
-
-/** The EMR's own discharge summary document — separate from the lab investigation chart. */
-export function reportSummaryObjectKey(date, ipNo) {
-  return `${date}/${ipNo}-summary.pdf`;
+export function reportObjectKey(date, regNo) {
+  return `${date}/${regNo}.pdf`;
 }
 
 /** Creates the bucket if it doesn't exist yet. Safe to call repeatedly. */
@@ -81,6 +76,11 @@ export async function ensureBucket() {
 export async function uploadPdfFile(objectKey, localFilePath) {
   await ensureBucket();
   await minioClient.fPutObject(BUCKET, objectKey, localFilePath, { 'Content-Type': 'application/pdf' });
+}
+
+export async function uploadPdfBuffer(objectKey, buffer) {
+  await ensureBucket();
+  await minioClient.putObject(BUCKET, objectKey, buffer, buffer.length, { 'Content-Type': 'application/pdf' });
 }
 
 export async function pdfExists(objectKey) {

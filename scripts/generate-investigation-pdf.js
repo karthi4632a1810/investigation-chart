@@ -1,118 +1,77 @@
 /**
- * Manual CLI: generate one patient's full admission-to-discharge Investigation
- * Chart PDF, using the same logic as the hourly automation
- * (server/src/services/dischargeReportService.js + investigationPdfService.js).
+ * Manual CLI: generate one OP patient's Investigation Report PDF for a date,
+ * using the same approval gate and EMR lookup as the OP report scheduler
+ * (opReportService.js + investigationPdfService.js).
  *
- * Looks up ADMISSION DATE / DISCHARGE DATE for the given IP number in
- * discharge.csv (see scripts/fetch-discharge.js), then uploads the PDF to MinIO at
- * <date>/<IP_NO>.pdf and records its metadata in Mongo — exactly what the hourly
- * automation does.
+ * Uploads the PDF to MinIO at `<date>/<REG_NO>.pdf` and records its metadata
+ * in MongoDB (`op_reports`).
  *
- * Needs MONGO_URI / MINIO_* pointed at the running stack, e.g. the host-published
- * ports from docker-compose.yml:
- *
- *   node --env-file=server/.env scripts/generate-investigation-pdf.js IP07023819
- *   node --env-file=server/.env scripts/generate-investigation-pdf.js IP07023819 2026-09-07  # explicit report date (YYYY-MM-DD)
+ * Usage (with MONGO_URI / MINIO_* pointing at the running stack):
+ *   node --env-file=server/.env scripts/generate-investigation-pdf.js 4625656
+ *   node --env-file=server/.env scripts/generate-investigation-pdf.js 4625656 2026-09-07
+ *   node --env-file=server/.env scripts/generate-investigation-pdf.js 4625656 2026-09-07 --force
  */
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { config } from '../server/src/config.js';
+import { fetchOpLabOrders } from '../server/src/services/emrService.js';
 import { generatePatientPdf } from '../server/src/services/investigationPdfService.js';
-import { buildReportRecord, upsertReportRecord } from '../server/src/services/dischargeReportService.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const csvPath = path.join(__dirname, '..', 'discharge.csv');
-
-/** Minimal CSV parser: handles quoted fields with embedded commas/quotes. */
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let field = '';
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        field += c;
-      }
-    } else if (c === '"') {
-      inQuotes = true;
-    } else if (c === ',') {
-      row.push(field);
-      field = '';
-    } else if (c === '\n' || c === '\r') {
-      if (c === '\r' && text[i + 1] === '\n') i++;
-      row.push(field);
-      field = '';
-      if (row.some((v) => v !== '')) rows.push(row);
-      row = [];
-    } else {
-      field += c;
-    }
-  }
-  if (field !== '' || row.length) {
-    row.push(field);
-    if (row.some((v) => v !== '')) rows.push(row);
-  }
-
-  const [header, ...dataRows] = rows;
-  return dataRows.map((r) => Object.fromEntries(header.map((h, idx) => [h, r[idx] ?? ''])));
-}
-
-function findDischargeRow(ipNo) {
-  if (!fs.existsSync(csvPath)) {
-    throw new Error(`discharge.csv not found at ${csvPath} — run fetch-discharge.js first`);
-  }
-  const rows = parseCsv(fs.readFileSync(csvPath, 'utf8'));
-  const row = rows.find((r) => r['IP NO']?.trim().toUpperCase() === ipNo.toUpperCase());
-  if (!row) throw new Error(`"${ipNo}" not found in discharge.csv`);
-  return row;
-}
+import { saveLabResults } from '../server/src/services/labResultsService.js';
+import {
+  dateFolderName,
+  fetchOpVisitForRegNo,
+  summarizeOpPatient,
+  upsertReportRecord,
+} from '../server/src/services/opReportService.js';
 
 async function main() {
-  const ipNo = process.argv[2];
-  if (!ipNo) {
-    console.error('Usage: node generate-investigation-pdf.js <IP_NO> [output-date YYYY-MM-DD]');
+  const args = process.argv.slice(2);
+  const force = args.includes('--force');
+  const positional = args.filter((a) => !a.startsWith('--'));
+  const regNo = positional[0]?.trim();
+
+  if (!regNo) {
+    console.error('Usage: node scripts/generate-investigation-pdf.js <UHID/REG_NO> [date YYYY-MM-DD] [--force]');
     process.exit(1);
   }
 
-  const row = findDischargeRow(ipNo);
-  const admissionDate = row['ADMISSION DATE'];
-  const dischargeDate = row['DISCHARGE DATE'];
-
-  console.log(`Found "${ipNo}": ${row['PATIENT NAME']?.trim() || '(name n/a)'}`);
-  console.log(`Fetching chart: ${admissionDate} -> ${dischargeDate}`);
-
-  let folderDate = process.argv[3];
-  if (!folderDate) {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    folderDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const folderDate = positional[1] || dateFolderName();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(folderDate)) {
+    throw new Error(`Invalid date "${folderDate}" — expected YYYY-MM-DD`);
   }
+
+  console.log(`Fetching OP lab orders & visit for UHID ${regNo} on ${folderDate}...`);
+  const [ordersRes, visitRow] = await Promise.all([
+    fetchOpLabOrders({ date: folderDate, regNo }),
+    fetchOpVisitForRegNo(folderDate, regNo),
+  ]);
+  if (!ordersRes.ok) throw new Error(ordersRes.error || 'Failed to query EMR OP lab orders');
+  if (!ordersRes.data.length) throw new Error(`No OP lab orders found for UHID "${regNo}" on ${folderDate}`);
+
+  const summary = summarizeOpPatient(regNo, ordersRes.data, visitRow);
+  console.log(
+    `Patient: ${summary.recordFields.name || '(name n/a)'} | Orders: ${summary.approvedOrders}/${summary.totalOrders} RESULT APPROVED`,
+  );
+
+  if (!summary.allApproved && !force) {
+    throw new Error(
+      `Orders still pending (${summary.pendingOrders} pending: ${summary.pendingStatuses.join(', ') || 'In Progress'}). Pass --force to render approved orders anyway.`,
+    );
+  }
+
+  const rowsToRender = force
+    ? summary.activeRows.filter((r) => String(r['STATUS'] || '').trim().toUpperCase() === 'RESULT APPROVED')
+    : summary.activeRows;
 
   const result = await generatePatientPdf({
-    ipNo,
-    regNo: row['REG NO'],
-    admissionDate,
-    dischargeDate,
-    hospital: config.hospital,
+    regNo,
     date: folderDate,
-    physicianName: row['DOCTOR'],
+    rows: rowsToRender.length ? rowsToRender : null,
+    hospital: config.hospital,
+    physicianName: summary.recordFields.doctor,
+    department: summary.recordFields.department,
+    visitType: summary.recordFields.visitType,
+    tokenNo: summary.recordFields.tokenNo,
   });
-
-  if (!result.ok) {
-    throw new Error(result.error);
-  }
+  if (!result.ok) throw new Error(result.error);
 
   console.log(`Chart built: ${result.dateCount} date(s) of results.`);
   if (result.fetchErrors?.length) {
@@ -120,15 +79,28 @@ async function main() {
   }
   console.log(`Uploaded to MinIO: ${result.objectKey}`);
 
-  // Without this, a manually-generated report exists as a PDF in MinIO but is
-  // invisible on the Discharge Reports screen, which reads report metadata from
-  // Mongo — not the object store — so it can list/search without touching the EMR.
-  await upsertReportRecord(folderDate, buildReportRecord(row, result));
-  console.log(`Recorded in Mongo for ${folderDate}.`);
-  process.exit(0); // the open Mongo connection would otherwise hold the process alive
+  const fullRecord = {
+    ...summary.recordFields,
+    totalOrders: summary.totalOrders,
+    approvedOrders: summary.approvedOrders,
+    pendingOrders: summary.pendingOrders,
+    pendingStatuses: summary.pendingStatuses,
+    reportStatus: 'ready',
+    dateCount: result.dateCount,
+    fetchErrors: result.fetchErrors || [],
+    reqNos: result.reqNos?.length ? result.reqNos : summary.recordFields.reqNos,
+    objectKey: result.objectKey,
+    generatedSig: summary.orderSig,
+    generatedAt: new Date(),
+    error: null,
+  };
+  await upsertReportRecord(folderDate, fullRecord);
+  await saveLabResults(folderDate, fullRecord, result.results);
+  console.log(`Recorded in Mongo (op_reports) & lab_results for ${folderDate}.`);
+  process.exit(0);
 }
 
 main().catch((error) => {
-  console.error('Failed to generate investigation PDF:', error.message);
+  console.error('Failed to generate OP investigation PDF:', error.message);
   process.exit(1);
 });

@@ -2,17 +2,24 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const firstNonEmpty = (...values) =>
+  values.map((v) => (v == null ? '' : String(v).trim())).find((v) => v !== '');
+
+const normalizeBearer = (token) =>
+  token && !/^Bearer\s+/i.test(token) ? `Bearer ${token}` : token;
+
+const parseOptionalBool = (raw) => {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return undefined;
+  return !/^(off|false|0|no)$/i.test(String(raw).trim());
+};
+
 export const config = {
-  port: parseInt(process.env.PORT || '6001', 10),
+  port: parseInt(process.env.PORT || '2021', 10),
   auth: {
     username: process.env.APP_USERNAME || 'admin',
     password: process.env.APP_PASSWORD || 'admin123',
   },
   emr: {
-    // Used by dischargeSummaryService.js for the ward module's endpoints
-    // (GetPatdetail, pSummary.aspx), which live under a different path than the
-    // lab/query-builder URLs below but on the same host.
-    baseUrl: process.env.EMR_BASE_URL || 'https://emr.mapims.edu.in/BB15SE',
     loginUrl: process.env.EMR_LOGIN_URL,
     labUrlTemplate: process.env.EMR_LAB_URL_TEMPLATE,
     queryBuilderUrl: process.env.EMR_QUERY_BUILDER_URL,
@@ -28,21 +35,18 @@ export const config = {
     address: process.env.HOSPITAL_ADDRESS,
   },
   wati: {
-    // The tenant-specific API host, e.g. https://live-mt-server.wati.io/123456
-    // (found in the WATI dashboard's API Docs page).
-    endpoint: process.env.API_ENDPOINT,
-    // The full "Bearer <jwt>" value from the same page — used as-is in the
-    // Authorization header, not the differently-formatted WATI_API_TOKEN.
-    accessToken: process.env.WATI_ACCESS_TOKEN,
-    templateId: process.env.WATI_TEMPLATE_ID || 'investigation',
+    // Prefer root .env WATI_* overrides when non-empty; fall back to server/.env keys.
+    endpoint: firstNonEmpty(process.env.WATI_URL, process.env.API_ENDPOINT)?.replace(/\/+$/, ''),
+    // Root .env may pass a bare JWT (`WATI_TOKEN`) while server/.env passes `Bearer <jwt>`.
+    accessToken: normalizeBearer(firstNonEmpty(process.env.WATI_TOKEN, process.env.WATI_ACCESS_TOKEN)),
+    templateId: firstNonEmpty(process.env.WATI_TEMPLATE_NAME, process.env.WATI_TEMPLATE_ID) || 'mapims_lab_rpt',
+    testPhone: firstNonEmpty(process.env.WATI_TEST_PHONE),
+    sendEnabled: parseOptionalBool(process.env.WATI_SEND_ENABLED),
+    testMode: parseOptionalBool(process.env.WATI_TEST_MODE),
   },
+  // Used by Ask AI assistantService.js as Gemini fallback if enabled
   gemini: {
     apiKey: process.env.GEMINI_API_KEY,
-    endpoint: process.env.GEMINI_API_ENDPOINT || 'https://generativelanguage.googleapis.com/v1beta',
-    // Note: this key's plan currently has a 0-quota limit on Pro-tier models
-    // (gemini-3.1-pro returns 429 RESOURCE_EXHAUSTED; gemini-2.5-pro is fully
-    // retired for new users) — confirmed by direct testing. Flash works fine.
-    // Switch back to a pro model via GEMINI_MODEL once billing/quota allows.
     model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
   },
 };
