@@ -9,9 +9,11 @@ import {
   fetchWatiSettings,
   fetchReportsForDate,
   fetchReportStatus,
+  fetchUnsentWhatsAppCount,
   reportPdfUrl,
   searchReports,
   sendReportWhatsApp,
+  sendUnsentReportsWhatsApp,
   triggerReportRun,
 } from '../api/client';
 import {
@@ -1273,11 +1275,20 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
   }, []);
   // Test / Live and "confirm the number before sending" for the WhatsApp buttons.
   const [waSettings, setWaSettings] = useState(null);
+  const [unsentCount, setUnsentCount] = useState(0);
+  const [bulkConfirming, setBulkConfirming] = useState(false);
+  const [bulkSending, setBulkSending] = useState(false);
+  const [bulkError, setBulkError] = useState('');
   useEffect(() => {
     fetchWatiSettings()
       .then(setWaSettings)
       .catch(() => { });
   }, []);
+  useEffect(() => {
+    if (!bulkConfirming) return undefined;
+    onPopup(true);
+    return () => onPopup(false);
+  }, [bulkConfirming, onPopup]);
 
   // The AI assistant can open this screen at a date, with the list filtered.
   useEffect(() => {
@@ -1338,6 +1349,20 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
       .then(setWaStates)
       .catch(() => { });
   }, [lastRefreshedAt]);
+
+  const refreshUnsentCount = useCallback((forDate) => {
+    fetchUnsentWhatsAppCount(forDate)
+      .then((res) => setUnsentCount(res?.count || 0))
+      .catch(() => setUnsentCount(0));
+  }, []);
+
+  useEffect(() => {
+    if (mode !== 'date' || !waSettings?.liveEnabled) {
+      setUnsentCount(0);
+      return;
+    }
+    refreshUnsentCount(date);
+  }, [mode, date, lastRefreshedAt, waSettings?.liveEnabled, refreshUnsentCount]);
 
   // `quiet` (the 20-second live refresh): swap the data in place — no spinner,
   // the list stays mounted, so an open WhatsApp popup, the page you're on, the
@@ -1560,9 +1585,54 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
 
   const lastRefreshedLabel = lastRefreshedAt ? formatRelativeTime(new Date(lastRefreshedAt).toISOString()) : null;
 
+  async function handleBulkSend() {
+    setBulkSending(true);
+    setBulkError('');
+    try {
+      const summary = await sendUnsentReportsWhatsApp(date);
+      setBulkConfirming(false);
+      refreshUnsentCount(date);
+      loadByDate(date, { quiet: true });
+      const parts = [`Sent ${summary.sent || 0}`];
+      if (summary.failed) parts.push(`${summary.failed} failed`);
+      if (summary.skipped) parts.push(`${summary.skipped} skipped`);
+      if (summary.stoppedReason) parts.push(summary.stoppedReason);
+      showToast(`Bulk WhatsApp: ${parts.join(' · ')}`);
+    } catch (err) {
+      setBulkError(err.message);
+    } finally {
+      setBulkSending(false);
+    }
+  }
+
   return (
     <div className="discharge-reports-page">
       <ToastNotification toast={toast} onDismiss={() => setToast(null)} />
+      {bulkConfirming &&
+        createPortal(
+          <div className="um-modal-backdrop" onMouseDown={() => !bulkSending && setBulkConfirming(false)}>
+            <div className="um-modal wa-send" role="alertdialog" aria-label="Send unsent reports on WhatsApp" onMouseDown={(e) => e.stopPropagation()}>
+              <h3>Send unsent WhatsApp reports?</h3>
+              <p>
+                This will send <strong>{unsentCount}</strong> ready OP lab report{unsentCount === 1 ? '' : 's'} for{' '}
+                <strong>{getHumanDate(date)}</strong> directly to each patient&apos;s mobile number in <strong>Live mode</strong>.
+              </p>
+              <p className="wa-send-note">
+                Reports already sent in Live mode (or already queued/failed) are skipped automatically.
+              </p>
+              {bulkError && <div className="wa-send-error is-block">{bulkError}</div>}
+              <div className="um-modal-actions">
+                <button type="button" className="btn btn-secondary" onClick={() => setBulkConfirming(false)} disabled={bulkSending}>
+                  Cancel
+                </button>
+                <button type="button" className="btn btn-primary wa-send-btn" onClick={handleBulkSend} disabled={bulkSending}>
+                  {bulkSending ? 'Sending…' : `Send ${unsentCount} report${unsentCount === 1 ? '' : 's'}`}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
 
       <div className="section-header reports-header">
         <div>
@@ -1801,6 +1871,22 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
               >
                 <span>🏢 Corporate</span>
                 <span className="cat-count-badge">{categoryCounts.corporate}</span>
+              </button>
+            )}
+            {mode === 'date' && access.reports.showWhatsApp && waSettings?.liveEnabled && unsentCount > 0 && (
+              <button
+                type="button"
+                className="btn btn-send-whatsapp"
+                style={{ marginLeft: 'auto' }}
+                disabled={bulkSending}
+                onClick={() => {
+                  setBulkError('');
+                  setBulkConfirming(true);
+                }}
+                title="Send all ready reports for this date that have not been sent in Live mode yet"
+              >
+                <WhatsAppIcon size={15} />
+                <span>{bulkSending ? 'Sending unsent…' : `Send ${unsentCount} unsent`}</span>
               </button>
             )}
           </div>

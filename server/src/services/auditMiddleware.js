@@ -65,6 +65,11 @@ const RULES = [
       error: ok ? undefined : short(body.error, 200),
     },
   })],
+  ['POST', new RegExp(`^/api/reports/(${SEG})/send-unsent-whatsapp$`), 'whatsapp_bulk_send', ({ m, body, ok }) => ({
+    screen: 'reports',
+    target: { date: m[1] },
+    details: { ok, total: body.total, sent: body.sent, failed: body.failed, skipped: body.skipped, error: ok ? undefined : short(body.error, 200) },
+  })],
   ['POST', new RegExp(`^/api/reports/(${SEG})/(${SEG})/share$`), 'whatsapp_share', ({ m, body, ok }) => ({
     screen: 'reports',
     target: { date: m[1], regNo: m[2] },

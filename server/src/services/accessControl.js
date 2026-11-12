@@ -65,6 +65,8 @@ const RULES = [
 
   ['GET', /^\/api\/reports\/(status|dates|search)$/, screen('reports', 'read')],
   ['GET', new RegExp(`^/api/reports/${SEG}/${SEG}/pdf$`), anyOf(screen('reports', 'read'), screen('labFinder', 'read'))],
+  ['GET', new RegExp(`^/api/reports/${SEG}/unsent-whatsapp$`), screen('reports', 'read')],
+  ['POST', new RegExp(`^/api/reports/${SEG}/send-unsent-whatsapp$`), all(screen('reports', 'write'), whatsappButton)],
   ['GET', new RegExp(`^/api/reports/${SEG}$`), screen('reports', 'read')],
   ['POST', /^\/api\/reports\/run-now$/, screen('reports', 'write')],
   ['POST', /^\/api\/reports\/backfill\//, superAdmin],

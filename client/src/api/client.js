@@ -132,6 +132,24 @@ export async function sendReportWhatsApp(date, regNo, toNumber) {
   return data;
 }
 
+export async function fetchUnsentWhatsAppCount(date) {
+  const res = await apiFetch(`${API_BASE}/reports/${encodeURIComponent(date)}/unsent-whatsapp`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to check unsent reports');
+  return data;
+}
+
+export async function sendUnsentReportsWhatsApp(date) {
+  const res = await apiFetch(`${API_BASE}/reports/${encodeURIComponent(date)}/send-unsent-whatsapp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to send unsent reports');
+  return data;
+}
+
 export async function fetchWatiSettings() {
   const res = await apiFetch(`${API_BASE}/wati/settings`);
   const data = await res.json();

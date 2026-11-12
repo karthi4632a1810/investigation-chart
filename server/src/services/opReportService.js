@@ -19,7 +19,9 @@ import { currentPdfMode, generatePatientPdf } from './investigationPdfService.js
 import { pdfExists, reportObjectKey, getPdfPresignedUrl } from './storageService.js';
 import { getMongoCollection } from './mongo.js';
 import { getWatiSettings } from './watiSettingsService.js';
-import { sendInvestigationReportWhatsApp, documentLine } from './watiService.js';
+import { sendInvestigationReportWhatsApp, documentLine, toWatiNumber } from './watiService.js';
+import { watiPausedUntil } from './watiBudget.js';
+import { RATE_LIMITED } from './whatsappLogService.js';
 import { hasPublicMinioEndpoint, PUBLIC_BASE_URL, whatsappFileName, whatsappPdfUrl } from './publicLinkService.js';
 import { saveLabResults } from './labResultsService.js';
 import { extractOrderIdFromCell } from '../utils/htmlParser.js';
@@ -379,6 +381,116 @@ export async function sendReportsWhatsApp({ dateFolder, regNo, toNumber, name, n
     result.failed.push({ kind: doc.kind, label: doc.label, error: error.message });
   }
   return result;
+}
+
+const bulkSendingDates = new Set();
+
+function isValidTargetMobile(mobile) {
+  const digits = toWatiNumber(mobile);
+  return digits.length >= 11 && digits.length <= 15;
+}
+
+/**
+ * Returns ready OP reports for `dateFolder` that have a valid mobile number
+ * and have not yet had a Live Mode WhatsApp attempt logged.
+ */
+export async function listUnsentReadyReports(dateFolder) {
+  const reportsCol = await getMongoCollection(REPORTS_COLLECTION);
+  const waCol = await getMongoCollection(WA_LOG_COLLECTION);
+  const [readyDocs, sentRegNos] = await Promise.all([
+    reportsCol
+      .find(
+        { date: dateFolder, reportStatus: 'ready', mobile: { $type: 'string', $ne: '' } },
+        { projection: { _id: 0, date: 1, regNo: 1, name: 1, mobile: 1, department: 1 } },
+      )
+      .sort({ name: 1 })
+      .toArray(),
+    waCol.distinct('regNo', { reportDate: dateFolder, regNo: { $ne: null }, liveMode: true }),
+  ]);
+  const sentSet = new Set(sentRegNos.map((r) => String(r)));
+  return readyDocs.filter((r) => !sentSet.has(String(r.regNo)) && isValidTargetMobile(r.mobile));
+}
+
+/**
+ * Catch-up bulk send for ready reports on `dateFolder` that missed Live auto-send
+ * (for example, reports generated while Test mode was active).
+ */
+export async function sendUnsentReportsWhatsApp(dateFolder, { triggeredBy = 'staff', concurrency = 4 } = {}) {
+  if (setting('maintenance.readOnly')) throw new Error('System is in read-only mode');
+  const settings = await getWatiSettings();
+  if (!settings.liveEnabled) {
+    throw new Error('Turn on Live mode in WATI Settings before sending to patients');
+  }
+  if (bulkSendingDates.has(dateFolder)) {
+    throw new Error('A bulk send is already running for this date');
+  }
+
+  bulkSendingDates.add(dateFolder);
+  try {
+    const reportsCol = await getMongoCollection(REPORTS_COLLECTION);
+    const targets = await listUnsentReadyReports(dateFolder);
+    let sent = 0;
+    let failed = 0;
+    let skipped = 0;
+    let stoppedReason = '';
+    let cursor = 0;
+
+    async function worker() {
+      while (cursor < targets.length && !stoppedReason) {
+        if (watiPausedUntil()) {
+          stoppedReason = 'WATI API usage limit reached — remaining reports can be sent later';
+          break;
+        }
+        const rec = targets[cursor++];
+        const key = reportObjectKey(dateFolder, rec.regNo);
+        if (!(await pdfExists(key).catch(() => false))) {
+          skipped += 1;
+          continue;
+        }
+        const waResult = await sendReportsWhatsApp({
+          dateFolder,
+          regNo: rec.regNo,
+          toNumber: rec.mobile,
+          name: rec.name || rec.regNo,
+          note: settings.secondParam,
+          template: settings.labReportTemplate,
+          log: {
+            trigger: 'manual',
+            via: 'bulk',
+            triggeredBy,
+            patientName: rec.name || '',
+            department: rec.department || '',
+            liveMode: true,
+          },
+        });
+        if (waResult.sent.length) {
+          sent += 1;
+          await reportsCol.updateOne(
+            { date: dateFolder, regNo: rec.regNo },
+            { $set: { whatsappSentAt: new Date(), whatsappStatus: 'sent' } },
+          );
+        } else if (waResult.failed.length) {
+          failed += 1;
+          const errMsg = waResult.failed[0].error || 'Send failed';
+          await reportsCol.updateOne(
+            { date: dateFolder, regNo: rec.regNo },
+            { $set: { whatsappStatus: 'failed', whatsappError: errMsg } },
+          );
+          if (RATE_LIMITED.test(errMsg)) {
+            stoppedReason = 'WATI API usage limit reached — remaining reports can be sent later';
+            break;
+          }
+        } else {
+          skipped += 1;
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(targets.length, 1)) }, worker));
+    return { date: dateFolder, total: targets.length, sent, failed, skipped, stoppedReason };
+  } finally {
+    bulkSendingDates.delete(dateFolder);
+  }
 }
 
 /** Merges OP lab order rows with front-office visit metadata for a single `regNo`. */

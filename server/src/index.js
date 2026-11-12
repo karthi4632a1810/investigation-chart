@@ -10,11 +10,13 @@ import {
   getReportRecord,
   getSchedulerStatus,
   listReportDates,
+  listUnsentReadyReports,
   loadReportIndex,
   runBackfillForDate,
   runOpReportCheck,
   searchReports,
   sendReportsWhatsApp,
+  sendUnsentReportsWhatsApp,
   startOpReportScheduler,
 } from './services/opReportService.js';
 import { getPdfStream, pdfExists, reportObjectKey } from './services/storageService.js';
@@ -431,6 +433,35 @@ app.get('/api/detail/:orderid', async (req, res) => {
       res.json({ ok: true, sentTo: toNumber, ...result });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /** Count ready OP lab reports on `date` that have not had a Live Mode WhatsApp send yet. */
+  app.get('/api/reports/:date/unsent-whatsapp', async (req, res) => {
+    const { date } = req.params;
+    if (!DATE_RE.test(date)) {
+      return res.status(400).json({ ok: false, error: 'Invalid date format, expected YYYY-MM-DD' });
+    }
+    try {
+      const [targets, settings] = await Promise.all([listUnsentReadyReports(date), getWatiSettings()]);
+      res.json({ ok: true, date, count: targets.length, liveEnabled: Boolean(settings.liveEnabled) });
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  /** Catch-up Live Mode WhatsApp send for all unsent ready OP lab reports on `date`. */
+  app.post('/api/reports/:date/send-unsent-whatsapp', async (req, res) => {
+    const { date } = req.params;
+    if (!DATE_RE.test(date)) {
+      return res.status(400).json({ ok: false, error: 'Invalid date format, expected YYYY-MM-DD' });
+    }
+    try {
+      const summary = await sendUnsentReportsWhatsApp(date, { triggeredBy: getSessionUser(req) });
+      res.json({ ok: true, ...summary });
+    } catch (error) {
+      const status = /live mode|read-only|already running/i.test(error.message) ? 400 : 500;
+      res.status(status).json({ ok: false, error: error.message });
     }
   });
 
