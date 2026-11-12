@@ -249,10 +249,19 @@ export function fetchWhatsappActivity(limit = 20) {
   return getJson(`${API_BASE}/admin/whatsapp/activity?limit=${limit}`).then((d) => d.events);
 }
 
+/** WhatsApp reachability sets from WATI logs: `{ notOnWhatsApp: Set, verified: Set }`. */
+export async function fetchWhatsappNumberStates() {
+  const data = await getJson(`${API_BASE}/whatsapp/not-on-whatsapp`);
+  return {
+    notOnWhatsApp: new Set((data.numbers || []).map((n) => n.number)),
+    verified: new Set((data.verified || []).map((n) => n.number)),
+  };
+}
+
 /** Numbers whose latest WhatsApp message failed as "not on WhatsApp", as a Set of 91XXXXXXXXXX digits. */
 export async function fetchNotOnWhatsappNumbers() {
-  const data = await getJson(`${API_BASE}/whatsapp/not-on-whatsapp`);
-  return new Set((data.numbers || []).map((n) => n.number));
+  const { notOnWhatsApp } = await fetchWhatsappNumberStates();
+  return notOnWhatsApp;
 }
 
 export function fetchWhatsappInsights(params) {

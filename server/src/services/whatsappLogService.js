@@ -1064,22 +1064,74 @@ export async function allWhatsappMessages(q = {}, max = 10000) {
 }
 
 /**
+ * Per-number latest WhatsApp reachability from whatsapp_messages:
+ *  - notOnWhatsApp: numbers whose latest outcome failed as "not on WhatsApp"
+ *  - verified: numbers whose latest outcome succeeded (`sent`/`delivered`/`read`)
+ *    or was accepted by WATI with `validWhatsAppNumber: true`
+ */
+export async function whatsappNumberStatuses() {
+  const c = await collection();
+  const rows = await c
+    .aggregate([
+      {
+        $match: {
+          toNumber: { $type: 'string', $ne: '' },
+          $or: [
+            { status: { $in: ['sent', 'delivered', 'read', 'failed'] } },
+            { validWhatsAppNumber: true },
+          ],
+        },
+      },
+      { $sort: { createdAt: -1 } },
+      { $group: { _id: '$toNumber', latest: { $first: '$$ROOT' } } },
+      {
+        $project: {
+          _id: 0,
+          number: '$_id',
+          status: '$latest.status',
+          notOnWhatsApp: '$latest.notOnWhatsApp',
+          validWhatsAppNumber: '$latest.validWhatsAppNumber',
+          at: {
+            $ifNull: [
+              '$latest.readAt',
+              {
+                $ifNull: [
+                  '$latest.deliveredAt',
+                  {
+                    $ifNull: [
+                      '$latest.acceptedAt',
+                      { $ifNull: ['$latest.failedAt', '$latest.createdAt'] },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    ])
+    .toArray();
+
+  const notOnWhatsApp = [];
+  const verified = [];
+  for (const r of rows) {
+    if (r.status === 'failed' && r.notOnWhatsApp === true) {
+      notOnWhatsApp.push({ number: r.number, at: r.at || null });
+    } else if (['sent', 'delivered', 'read'].includes(r.status) || (r.status !== 'failed' && r.validWhatsAppNumber === true)) {
+      verified.push({ number: r.number, status: r.status, at: r.at || null });
+    }
+  }
+  return { notOnWhatsApp, verified };
+}
+
+/**
  * Numbers whose most recent message failed as "not on WhatsApp" — shown as a
  * warning next to the patient's mobile on OP Reports. A later
  * successful send to the number takes it off the list.
  */
 export async function numbersNotOnWhatsApp() {
-  const c = await collection();
-  const rows = await c
-    .aggregate([
-      { $match: { status: { $in: ['sent', 'delivered', 'read', 'failed'] } } },
-      { $sort: { createdAt: -1 } },
-      { $group: { _id: '$toNumber', latest: { $first: '$$ROOT' } } },
-      { $match: { 'latest.status': 'failed', 'latest.notOnWhatsApp': true } },
-      { $project: { _id: 0, number: '$_id', at: '$latest.failedAt' } },
-    ])
-    .toArray();
-  return rows;
+  const { notOnWhatsApp } = await whatsappNumberStatuses();
+  return notOnWhatsApp;
 }
 
 /** Marks earlier failures (logged before the flag existed) that were "not on WhatsApp". */

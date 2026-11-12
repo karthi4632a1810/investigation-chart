@@ -63,7 +63,7 @@ import {
   getWhatsappMessage,
   handleWatiWebhook,
   listWhatsappMessages,
-  numbersNotOnWhatsApp,
+  whatsappNumberStatuses,
   pollWhatsAppStatuses,
   startWhatsAppStatusPoller,
   whatsappActivity,
@@ -645,7 +645,8 @@ app.get('/api/detail/:orderid', async (req, res) => {
 
   app.get('/api/whatsapp/not-on-whatsapp', async (_req, res) => {
     try {
-      res.json({ ok: true, numbers: await numbersNotOnWhatsApp() });
+      const { notOnWhatsApp, verified } = await whatsappNumberStatuses();
+      res.json({ ok: true, numbers: notOnWhatsApp, verified });
     } catch (error) {
       res.status(500).json({ ok: false, error: error.message });
     }

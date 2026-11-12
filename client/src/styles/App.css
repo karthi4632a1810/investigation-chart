@@ -3612,6 +3612,20 @@ html, body {
   white-space: nowrap;
 }
 
+.wa-verified-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  color: var(--green);
+  background: var(--green-bg);
+  border: 1px solid var(--green-border);
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
 /* Drawer: failure explanation + retry */
 .wa-failure {
   padding: 12px 14px;

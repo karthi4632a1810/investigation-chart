@@ -5,7 +5,7 @@ import { patientMatcher } from '../utils/patientMatch';
 import {
   checkWhatsAppNumber,
   defaultDateOnly,
-  fetchNotOnWhatsappNumbers,
+  fetchWhatsappNumberStates,
   fetchWatiSettings,
   fetchReportsForDate,
   fetchReportStatus,
@@ -513,7 +513,50 @@ function NoWhatsAppBadge() {
   );
 }
 
-function ReportsTable({ patients, dateColumn, getPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS, waSettings, onPopup, onInspect }) {
+function WhatsAppVerifiedBadge({ source }) {
+  const title =
+    source === 'both'
+      ? 'WhatsApp verified (registered in EMR & delivered via WATI)'
+      : source === 'emr'
+        ? 'WhatsApp verified (registered in EMR)'
+        : 'WhatsApp verified (delivered via WATI)';
+  return (
+    <span className="wa-verified-badge" title={title} aria-label="WhatsApp verified">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M20 11.5a8.4 8.4 0 0 1-12.2 7.5L3 20.5l1.5-4.6A8.4 8.4 0 1 1 20 11.5Z"
+          fill="currentColor"
+          fillOpacity="0.16"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M8.8 12l2.1 2.1 4.4-4.4"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </span>
+  );
+}
+
+function MobileWhatsAppStatus({ patient, waStates }) {
+  const digits = whatsappDigits(patient?.mobile);
+  if (!digits) return null;
+  if (waStates?.notOnWhatsApp?.has(digits)) return <NoWhatsAppBadge />;
+
+  const hasEmrWa = Boolean(String(patient?.whatsappNo || '').trim());
+  const isWatiVerified = Boolean(waStates?.verified?.has(digits));
+  if (!hasEmrWa && !isWatiVerified) return null;
+
+  const source = hasEmrWa && isWatiVerified ? 'both' : hasEmrWa ? 'emr' : 'wati';
+  return <WhatsAppVerifiedBadge source={source} />;
+}
+
+function ReportsTable({ patients, dateColumn, getPdfUrl, onToast, waStates, access = FULL_ACCESS, waSettings, onPopup, onInspect }) {
   if (!patients.length) return null;
 
   return (
@@ -597,7 +640,7 @@ function ReportsTable({ patients, dateColumn, getPdfUrl, onToast, noWhatsApp, ac
                         onToast={onToast}
                         iconOnly
                       />
-                      {noWhatsApp?.has(whatsappDigits(p.mobile)) && <NoWhatsAppBadge />}
+                      <MobileWhatsAppStatus patient={p} waStates={waStates} />
                     </div>
                   ) : (
                     <span className="text-muted">—</span>
@@ -694,7 +737,7 @@ function patientInitials(name) {
   return (words.slice(0, 2).map((w) => w[0]).join('') || '?').toUpperCase();
 }
 
-function ReportsCards({ patients, dateColumn, getPdfUrl, onToast, noWhatsApp, access = FULL_ACCESS, waSettings, onPopup, onInspect }) {
+function ReportsCards({ patients, dateColumn, getPdfUrl, onToast, waStates, access = FULL_ACCESS, waSettings, onPopup, onInspect }) {
   if (!patients.length) return null;
 
   return (
@@ -784,7 +827,7 @@ function ReportsCards({ patients, dateColumn, getPdfUrl, onToast, noWhatsApp, ac
                         onToast={onToast}
                         iconOnly
                       />
-                      {noWhatsApp?.has(whatsappDigits(p.mobile)) && <NoWhatsAppBadge />}
+                      <MobileWhatsAppStatus patient={p} waStates={waStates} />
                     </span>
                   ) : (
                     <span className="text-muted">—</span>
@@ -1209,8 +1252,8 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
     }
   });
   const [filterText, setFilterText] = useState('');
-  // Numbers that failed as "not on WhatsApp" — tagged next to the patient's mobile.
-  const [noWhatsApp, setNoWhatsApp] = useState(() => new Set());
+  // WhatsApp verification & not-on-WhatsApp state from WATI logs, paired with EMR whatsappNo.
+  const [waStates, setWaStates] = useState(() => ({ notOnWhatsApp: new Set(), verified: new Set() }));
   // How many WhatsApp popups are open — the live refresh waits while any is.
   const popupsOpen = useRef(0);
   const onPopup = useCallback((open) => {
@@ -1286,8 +1329,8 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
   }
 
   useEffect(() => {
-    fetchNotOnWhatsappNumbers()
-      .then(setNoWhatsApp)
+    fetchWhatsappNumberStates()
+      .then(setWaStates)
       .catch(() => { });
   }, [lastRefreshedAt]);
 
@@ -1829,7 +1872,7 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
                   dateColumn={mode === 'search'}
                   getPdfUrl={(p) => reportPdfUrl(p.date, p.regNo)}
                   onToast={showToast}
-                  noWhatsApp={noWhatsApp}
+                  waStates={waStates}
                   access={access}
                   waSettings={waSettings}
                   onPopup={onPopup}
@@ -1843,7 +1886,7 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
                       dateColumn={mode === 'search'}
                       getPdfUrl={(p) => reportPdfUrl(p.date, p.regNo)}
                       onToast={showToast}
-                      noWhatsApp={noWhatsApp}
+                      waStates={waStates}
                       access={access}
                       waSettings={waSettings}
                       onPopup={onPopup}
@@ -1856,7 +1899,7 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
                       dateColumn={mode === 'search'}
                       getPdfUrl={(p) => reportPdfUrl(p.date, p.regNo)}
                       onToast={showToast}
-                      noWhatsApp={noWhatsApp}
+                      waStates={waStates}
                       access={access}
                       waSettings={waSettings}
                       onPopup={onPopup}
