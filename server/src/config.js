@@ -13,6 +13,20 @@ const parseOptionalBool = (raw) => {
   return !/^(off|false|0|no)$/i.test(String(raw).trim());
 };
 
+const deriveEmrLoginUrl = (url) => {
+  const match = String(url || '').match(/^(https?:\/\/[^?#]+?)\/(?:QueryBuilder|Lab)\//i);
+  return match ? `${match[1]}/wsLogin.asmx/chkLoginNew` : undefined;
+};
+
+const formatEmrLabUrlTemplate = (url) => {
+  const clean = String(url || '').trim();
+  if (!clean) return undefined;
+  return clean.includes('Orderid=') ? clean : `${clean}${clean.includes('?') ? '&' : '?'}action=Search&Orderid=`;
+};
+
+const queryBuilderUrl = firstNonEmpty(process.env.EMR_QUERY_BUILDER_URL, process.env.ROOT_EMR_QUERY_BUILDER_URL);
+const labResultHisUrl = firstNonEmpty(process.env.EMR_LAB_URL_TEMPLATE, process.env.ROOT_EMR_LAB_URL_TEMPLATE);
+
 export const config = {
   port: parseInt(process.env.PORT || '2021', 10),
   auth: {
@@ -20,13 +34,17 @@ export const config = {
     password: process.env.APP_PASSWORD || 'admin123',
   },
   emr: {
-    loginUrl: process.env.EMR_LOGIN_URL,
-    labUrlTemplate: process.env.EMR_LAB_URL_TEMPLATE,
-    queryBuilderUrl: process.env.EMR_QUERY_BUILDER_URL,
-    retDatatableUrl: process.env.EMR_RET_DATATABLE_URL || 'https://emr.mapims.edu.in/BB15SE/Lab/wsLabServices.asmx/RETDatatable',
-    username: process.env.EMR_USERNAME,
-    password: process.env.EMR_PASSWORD,
-    logOpt: process.env.EMR_LOG_OPT || '2',
+    loginUrl:
+      firstNonEmpty(process.env.EMR_LOGIN_URL, process.env.ROOT_EMR_LOGIN_URL) ||
+      deriveEmrLoginUrl(firstNonEmpty(process.env.ROOT_EMR_REPORT_BASE_URL, process.env.ROOT_EMR_LAB_RESULT_HIS_URL, queryBuilderUrl)),
+    labUrlTemplate: labResultHisUrl || formatEmrLabUrlTemplate(process.env.ROOT_EMR_LAB_RESULT_HIS_URL),
+    queryBuilderUrl,
+    retDatatableUrl:
+      firstNonEmpty(process.env.EMR_RET_DATATABLE_URL, process.env.ROOT_EMR_RET_DATATABLE_URL, process.env.ROOT_EMR_LAB_SERVICES_URL) ||
+      'https://emr.mapims.edu.in/BB15SE/Lab/wsLabServices.asmx/RETDatatable',
+    username: firstNonEmpty(process.env.EMR_USERNAME, process.env.ROOT_EMR_USERNAME),
+    password: firstNonEmpty(process.env.EMR_PASSWORD, process.env.ROOT_EMR_PASSWORD),
+    logOpt: firstNonEmpty(process.env.EMR_LOG_OPT, process.env.ROOT_EMR_LOG_OPT) || '2',
   },
   hospital: {
     logoPath: process.env.HOSPITAL_LOGO_PATH,

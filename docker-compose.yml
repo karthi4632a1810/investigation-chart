@@ -48,6 +48,17 @@ services:
       WATI_SEND_ENABLED: ${WATI_SEND_ENABLED:-}
       WATI_TEST_MODE: ${WATI_TEST_MODE:-}
       WATI_TEST_PHONE: ${WATI_TEST_PHONE:-}
+      # Optional EMR fallbacks from root .env (used when ./server/.env omits them).
+      ROOT_EMR_LOGIN_URL: ${EMR_LOGIN_URL:-}
+      ROOT_EMR_LAB_URL_TEMPLATE: ${EMR_LAB_URL_TEMPLATE:-}
+      ROOT_EMR_QUERY_BUILDER_URL: ${EMR_QUERY_BUILDER_URL:-}
+      ROOT_EMR_RET_DATATABLE_URL: ${EMR_RET_DATATABLE_URL:-}
+      ROOT_EMR_LAB_SERVICES_URL: ${EMR_LAB_SERVICES_URL:-}
+      ROOT_EMR_REPORT_BASE_URL: ${EMR_REPORT_BASE_URL:-}
+      ROOT_EMR_LAB_RESULT_HIS_URL: ${EMR_LAB_RESULT_HIS_URL:-}
+      ROOT_EMR_USERNAME: ${EMR_USERNAME:-}
+      ROOT_EMR_PASSWORD: ${EMR_PASSWORD:-}
+      ROOT_EMR_LOG_OPT: ${EMR_LOG_OPT:-}
     # A single templated bind string (not a second "ports:" list in an override
     # file) — Compose concatenates list-valued keys across -f files instead of
     # replacing them, so a docker-compose.prod.yml override here would leave

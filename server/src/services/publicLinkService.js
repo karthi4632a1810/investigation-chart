@@ -64,6 +64,12 @@ export function whatsappFileName(label, id) {
   return `${[clean(label), clean(id)].filter(Boolean).join('-') || 'Report'}.pdf`;
 }
 
+/** True when MinIO's public endpoint is not a loopback/unspecified local host. */
+export function hasPublicMinioEndpoint() {
+  const host = String(process.env.MINIO_PUBLIC_ENDPOINT || process.env.MINIO_ENDPOINT || 'localhost').trim().toLowerCase();
+  return !['', 'localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(host);
+}
+
 /** The document link handed to WATI for one WhatsApp message. */
 export async function whatsappPdfUrl(objectKey, fileName) {
   // Without PUBLIC_BASE_URL: the MinIO link, as before (plain http until HTTPS is set up).

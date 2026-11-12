@@ -12,8 +12,8 @@
  * be shared again from Lab Finder.
  */
 import { getMongoCollection } from './mongo.js';
-import { ensureReportPdfForMode } from './opReportService.js';
-import { whatsappFileName, whatsappPdfUrl } from './publicLinkService.js';
+import { ensureReportPdfForMode, resolveWhatsappReportUrls } from './opReportService.js';
+import { whatsappFileName } from './publicLinkService.js';
 import { pdfExists, reportObjectKey } from './storageService.js';
 import { DOCUMENT_TEMPLATES, documentLine, sendInvestigationReportWhatsApp } from './watiService.js';
 import { countRetry, retryCallsLeftToday, retryCallsPerDay, watiPausedUntil } from './watiBudget.js';
@@ -38,11 +38,15 @@ export async function retryWhatsAppMessage(id, { auto = false, triggeredBy } = {
   if (!(await pdfExists(key))) throw new Error(`The ${LABELS[doc.document].toLowerCase()} PDF is no longer available`);
 
   const settings = await getWatiSettings();
+  const [pdfUrl] = await resolveWhatsappReportUrls(doc.reportDate, doc.regNo, {
+    objectKey: key,
+    fileName: whatsappFileName(LABELS[doc.document], doc.regNo),
+  });
   await sendInvestigationReportWhatsApp({
     toNumber: doc.toNumber,
     name: doc.patientName || doc.regNo,
     note: documentLine(LABELS[doc.document], settings.secondParam),
-    pdfUrl: await whatsappPdfUrl(key, whatsappFileName(LABELS[doc.document], doc.regNo)),
+    pdfUrl,
     template: doc.template && DOCUMENT_TEMPLATES[doc.template] ? doc.template : settings.labReportTemplate,
     log: { existingId: id, auto, triggeredBy: auto ? 'system' : triggeredBy },
   });

@@ -470,6 +470,7 @@ async function generateEmrOriginalPdf({ regNo, fromDate, toDate, date, rows, obj
     fetchErrors: emrPdf.fetchErrors || [],
     patientMeta: chart?.patientMeta || {},
     reqNos: emrPdf.reqNos || [],
+    emrPdfUrls: emrPdf.emrPdfUrls || [],
     results: chart ? flattenChartResults(chart) : [],
     objectKey,
   };

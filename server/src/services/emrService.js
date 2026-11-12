@@ -136,18 +136,24 @@ async function mergePdfBuffers(buffers) {
   return Buffer.from(await merged.save());
 }
 
+/** Builds the direct Crystal Reports PDF URL from LabResultHis.aspx hidden fields. */
+function buildEmrReportPdfUrl(html, fallbackOrderId) {
+  const hdnOrderid = (html.match(/id="hdnOrderid"[^>]*value="([^"]*)"/i) || [])[1] || fallbackOrderId;
+  const hdnProcids = (html.match(/id="hdnProcids"[^>]*value="([^"]*)"/i) || [])[1] || '';
+  const pdfUrl = new URL(
+    `CRReport/LabReport.aspx?action=Search&Orderid=${encodeURIComponent(hdnOrderid)}&Procids=${encodeURIComponent(hdnProcids)}&COMPHDR=1&PatEmail=0`,
+    config.emr.labUrlTemplate,
+  ).href;
+  return { hdnOrderid, hdnProcids, pdfUrl };
+}
+
 /**
  * Fetches the hospital's original Crystal Reports PDF (`CRReport/LabReport.aspx` with
  * `COMPHDR=1` so the hospital logo & letterhead appear) for one EMR `Orderid`.
  */
 async function fetchOriginalEmrOrderPdf(client, orderId) {
   const html = await fetchLabResultHtml(client, orderId);
-  const hdnOrderid = (html.match(/id="hdnOrderid"[^>]*value="([^"]*)"/i) || [])[1] || orderId;
-  const hdnProcids = (html.match(/id="hdnProcids"[^>]*value="([^"]*)"/i) || [])[1] || '';
-  const pdfUrl = new URL(
-    `CRReport/LabReport.aspx?action=Search&Orderid=${encodeURIComponent(hdnOrderid)}&Procids=${encodeURIComponent(hdnProcids)}&COMPHDR=1&PatEmail=0`,
-    config.emr.labUrlTemplate,
-  ).href;
+  const { hdnOrderid, pdfUrl } = buildEmrReportPdfUrl(html, orderId);
 
   const resp = await withNetworkRetry(() =>
     client.get(pdfUrl, { responseType: 'arraybuffer', validateStatus: () => true }),
@@ -157,7 +163,27 @@ async function fetchOriginalEmrOrderPdf(client, orderId) {
   if (!isPdf) {
     return { ok: false, html, error: `Req No ${orderId} returned status ${resp.status} (non-PDF)` };
   }
-  return { ok: true, html, pdfBuffer: buf, orderId: hdnOrderid };
+  return { ok: true, html, pdfBuffer: buf, orderId: hdnOrderid, pdfUrl };
+}
+
+/** Resolves direct EMR Crystal Reports PDF URLs for cached order IDs without re-downloading PDF bytes. */
+export async function resolveOriginalEmrPdfUrls(orderIds = []) {
+  const cleanIds = [...new Set((orderIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!cleanIds.length) return [];
+  const client = createClient();
+  const loginResult = await withNetworkRetry(() => doLogin(client));
+  if (!loginResult.ok) return [];
+  const urls = [];
+  for (const id of cleanIds) {
+    try {
+      const html = await fetchLabResultHtml(client, id);
+      const { hdnProcids, pdfUrl } = buildEmrReportPdfUrl(html, id);
+      if (hdnProcids && hdnProcids !== '0') urls.push(pdfUrl);
+    } catch {
+      // Ignore individual order lookup failure; caller can fall back to MinIO URL.
+    }
+  }
+  return urls;
 }
 
 /**
@@ -189,6 +215,7 @@ export async function fetchOriginalEmrLabPdf(searchData, { requireAllApproved = 
   }
 
   const bufferByOrderId = new Map();
+  const urlByOrderId = new Map();
   const htmlByOrderId = {};
   const errorByOrderId = new Map();
 
@@ -198,6 +225,7 @@ export async function fetchOriginalEmrLabPdf(searchData, { requireAllApproved = 
       if (res.html) htmlByOrderId[orderId] = res.html;
       if (res.ok && res.pdfBuffer) {
         bufferByOrderId.set(orderId, res.pdfBuffer);
+        if (res.pdfUrl) urlByOrderId.set(orderId, res.pdfUrl);
         errorByOrderId.delete(orderId);
       } else {
         errorByOrderId.set(orderId, res.error || `Req No ${orderId}: original PDF unavailable`);
@@ -221,6 +249,7 @@ export async function fetchOriginalEmrLabPdf(searchData, { requireAllApproved = 
 
   const buffers = reqIds.map((id) => bufferByOrderId.get(id)).filter(Boolean);
   const fetchedOrderIds = reqIds.filter((id) => bufferByOrderId.has(id));
+  const emrPdfUrls = fetchedOrderIds.map((id) => urlByOrderId.get(id)).filter(Boolean);
   const fetchErrors = [...errorByOrderId.values()];
   const missingApproved = reqIds.filter((id) => !bufferByOrderId.has(id) && approvedOrderIds.has(id));
 
@@ -230,7 +259,7 @@ export async function fetchOriginalEmrLabPdf(searchData, { requireAllApproved = 
   }
 
   const pdfBuffer = await mergePdfBuffers(buffers);
-  return { ok: true, pdfBuffer, reqNos: fetchedOrderIds, htmlByOrderId, fetchErrors };
+  return { ok: true, pdfBuffer, reqNos: fetchedOrderIds, emrPdfUrls, htmlByOrderId, fetchErrors };
 }
 
 function escapeSql(value) {

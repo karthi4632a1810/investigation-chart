@@ -153,7 +153,9 @@ export async function logSendResult(id, { ok, error, response }) {
   const c = await collection();
   const _id = new ObjectId(id);
   if (ok) {
-    const ids = [response?.model?.ids, response?.localMessageId, response?.id].flat().filter((v) => typeof v === 'string' && v);
+    const ids = [response?.local_message_id, response?.localMessageId, response?.id, response?.model?.ids]
+      .flat()
+      .filter((v) => typeof v === 'string' && v);
     const accepted = { validWhatsAppNumber: response?.validWhatsAppNumber ?? null, nextRetryAt: null, ...(ids.length ? { watiSendIds: ids } : {}) };
     // A webhook can get here first and move the record past "sent" — don't undo it.
     const moved = await c.updateOne(
@@ -287,8 +289,9 @@ async function fetchWatiMessages(number, pageSize = 20) {
 function matchWatiItem(doc, items, claimed) {
   const sentAt = new Date(doc.acceptedAt || doc.createdAt).getTime();
   const firstName = String(doc.recipientName || doc.patientName || '').split(/[\s.]+/).filter((w) => w.length > 2)[0] || '';
-  // Reports carry "Attached: <document>"; a test message carries only the typed text.
+  // Only templates with {{2}} (investigation) include the "Attached: <document>" line.
   const label = ['lab', 'lab_results'].includes(doc.document) ? doc.documentLabel : '';
+  const expectsLabelLine = Boolean(label) && (!doc.template || doc.template === 'investigation');
   let best = null;
   for (const item of items) {
     if (claimed.has(item.id)) continue;
@@ -296,7 +299,7 @@ function matchWatiItem(doc, items, claimed) {
     const delta = created - sentAt;
     if (delta < -120_000 || delta > 10 * 60_000) continue;
     const text = String(item.finalText ?? item.text ?? '');
-    if (label && text && !text.includes(`Attached: ${label}`)) continue;
+    if (expectsLabelLine && text && !text.includes(`Attached: ${label}`)) continue;
     if (firstName && text && !text.toUpperCase().includes(firstName.toUpperCase())) continue;
     if (!best || Math.abs(delta) < Math.abs(best.delta)) best = { item, delta };
   }

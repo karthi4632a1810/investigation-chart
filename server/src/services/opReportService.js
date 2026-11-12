@@ -7,13 +7,20 @@
  */
 import { config } from '../config.js';
 import { onSettingsChange, setting } from './appSettingsService.js';
-import { extractPatientMeta, fetchOpLabOrders, fetchOpVisits, parseAgeGender, toEmrMdy } from './emrService.js';
+import {
+  extractPatientMeta,
+  fetchOpLabOrders,
+  fetchOpVisits,
+  parseAgeGender,
+  resolveOriginalEmrPdfUrls,
+  toEmrMdy,
+} from './emrService.js';
 import { currentPdfMode, generatePatientPdf } from './investigationPdfService.js';
 import { pdfExists, reportObjectKey, getPdfPresignedUrl } from './storageService.js';
 import { getMongoCollection } from './mongo.js';
 import { getWatiSettings } from './watiSettingsService.js';
 import { sendInvestigationReportWhatsApp, documentLine } from './watiService.js';
-import { whatsappFileName, whatsappPdfUrl } from './publicLinkService.js';
+import { hasPublicMinioEndpoint, PUBLIC_BASE_URL, whatsappFileName, whatsappPdfUrl } from './publicLinkService.js';
 import { saveLabResults } from './labResultsService.js';
 import { extractOrderIdFromCell } from '../utils/htmlParser.js';
 import { matchPatient, patientSearchFilter } from './patientSearchService.js';
@@ -259,6 +266,7 @@ export async function ensureReportPdfForMode(dateFolder, regNo, existingRecord =
     dateCount: res.dateCount,
     fetchErrors: res.fetchErrors || [],
     reqNos: res.reqNos?.length ? res.reqNos : info.recordFields.reqNos,
+    emrPdfUrls: res.emrPdfUrls || [],
     objectKey: res.objectKey,
     generatedSig: info.orderSig,
     generatedAt: new Date(),
@@ -307,31 +315,63 @@ export async function getReportDetails(dateFolder, regNo, { refresh = false } = 
   return { patient: latest || { ...record, ...patch }, source: 'emr' };
 }
 
+/**
+ * Picks the PDF URL(s) handed to WATI for an OP lab report:
+ * - With `PUBLIC_BASE_URL` configured, serves the merged MinIO PDF over HTTPS.
+ * - In original EMR mode without `PUBLIC_BASE_URL`, uses direct HTTPS EMR
+ *   Crystal Reports PDF URL(s) when single-order or when MinIO is loopback.
+ */
+export async function resolveWhatsappReportUrls(
+  dateFolder,
+  regNo,
+  { record = null, objectKey = reportObjectKey(dateFolder, regNo), fileName = whatsappFileName('Lab Report', regNo) } = {},
+) {
+  const rec = record || (await getReportRecord(dateFolder, regNo));
+  if (!PUBLIC_BASE_URL && (rec?.pdfMode || currentPdfMode()) === 'emr') {
+    let emrUrls = Array.isArray(rec?.emrPdfUrls) ? rec.emrPdfUrls.filter(Boolean) : [];
+    if (!emrUrls.length && rec?.reqNos?.length) {
+      emrUrls = await resolveOriginalEmrPdfUrls(rec.reqNos).catch(() => []);
+      if (emrUrls.length) await upsertReportRecord(dateFolder, { regNo, emrPdfUrls: emrUrls }).catch(() => {});
+    }
+    if (emrUrls.length === 1 || (emrUrls.length > 1 && !hasPublicMinioEndpoint())) {
+      return emrUrls;
+    }
+  }
+  return [await whatsappPdfUrl(objectKey, fileName)];
+}
+
 export async function sendReportsWhatsApp({ dateFolder, regNo, toNumber, name, note, template, log }) {
   const result = { sent: [], missing: [], failed: [] };
   const doc = WHATSAPP_DOCUMENTS[0];
   const key = doc.objectKey(dateFolder, regNo);
   try {
-    await ensureReportPdfForMode(dateFolder, regNo).catch(() => {});
+    const ensured = await ensureReportPdfForMode(dateFolder, regNo).catch(() => null);
     if (!(await pdfExists(key))) {
       result.missing.push({ kind: doc.kind, label: doc.label });
       return result;
     }
     const activeTemplate = template || (await getWatiSettings()).labReportTemplate;
-    await sendInvestigationReportWhatsApp({
-      toNumber,
-      name,
-      note: documentLine(doc.label, note),
-      pdfUrl: await whatsappPdfUrl(key, whatsappFileName(doc.label, regNo)),
-      template: activeTemplate,
-      log: log && {
-        ...log,
-        document: doc.kind,
-        documentLabel: doc.label,
-        reportDate: dateFolder,
-        regNo,
-      },
+    const pdfUrls = await resolveWhatsappReportUrls(dateFolder, regNo, {
+      record: ensured?.record || null,
+      objectKey: key,
+      fileName: whatsappFileName(doc.label, regNo),
     });
+    for (const pdfUrl of pdfUrls) {
+      await sendInvestigationReportWhatsApp({
+        toNumber,
+        name,
+        note: documentLine(doc.label, note),
+        pdfUrl,
+        template: activeTemplate,
+        log: log && {
+          ...log,
+          document: doc.kind,
+          documentLabel: doc.label,
+          reportDate: dateFolder,
+          regNo,
+        },
+      });
+    }
     result.sent.push({ kind: doc.kind, label: doc.label });
   } catch (error) {
     result.failed.push({ kind: doc.kind, label: doc.label, error: error.message });
