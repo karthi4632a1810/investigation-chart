@@ -220,6 +220,11 @@ function AutomationStatus({ status, onRunNow, running, canRun = true }) {
               <strong>{summary.failed}</strong> failed
             </span>
           )}
+          {summary.error && (
+            <span className="stat-chip chip-failed" title={summary.error}>
+              <strong>Error:</strong> {summary.error}
+            </span>
+          )}
         </div>
       )}
 
@@ -1444,9 +1449,11 @@ export default function OpReports({ navRequest, access = FULL_ACCESS, refreshMs 
       setStatus((prev) => ({ ...prev, lastSummary: summary, lastCheckFinishedAt: new Date().toISOString() }));
       refreshCurrentView();
       showToast(
-        summary?.found !== undefined
-          ? `OP lab check complete: ${summary.found} patients checked`
-          : 'OP lab check completed successfully'
+        summary?.error
+          ? `Check failed: ${summary.error}`
+          : summary?.found !== undefined
+            ? `OP lab check complete: ${summary.found} patients checked`
+            : 'OP lab check completed successfully'
       );
     } catch (err) {
       setStatus((prev) => ({ ...prev, lastSummary: { error: err.message } }));
