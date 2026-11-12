@@ -317,9 +317,11 @@ export async function getReportDetails(dateFolder, regNo, { refresh = false } = 
 
 /**
  * Picks the PDF URL(s) handed to WATI for an OP lab report:
- * - With `PUBLIC_BASE_URL` configured, serves the merged MinIO PDF over HTTPS.
- * - In original EMR mode without `PUBLIC_BASE_URL`, uses direct HTTPS EMR
- *   Crystal Reports PDF URL(s) when single-order or when MinIO is loopback.
+ * - Whenever `PUBLIC_BASE_URL` or a non-loopback `MINIO_PUBLIC_ENDPOINT` is
+ *   configured (VPS), always serves the MinIO-saved PDF via `whatsappPdfUrl`.
+ * - Only on local dev (`!PUBLIC_BASE_URL && !hasPublicMinioEndpoint()`) in
+ *   original EMR mode, falls back to direct HTTPS EMR URLs because WATI
+ *   cannot reach `localhost` MinIO.
  */
 export async function resolveWhatsappReportUrls(
   dateFolder,
@@ -327,13 +329,13 @@ export async function resolveWhatsappReportUrls(
   { record = null, objectKey = reportObjectKey(dateFolder, regNo), fileName = whatsappFileName('Lab Report', regNo) } = {},
 ) {
   const rec = record || (await getReportRecord(dateFolder, regNo));
-  if (!PUBLIC_BASE_URL && (rec?.pdfMode || currentPdfMode()) === 'emr') {
+  if (!PUBLIC_BASE_URL && !hasPublicMinioEndpoint() && (rec?.pdfMode || currentPdfMode()) === 'emr') {
     let emrUrls = Array.isArray(rec?.emrPdfUrls) ? rec.emrPdfUrls.filter(Boolean) : [];
     if (!emrUrls.length && rec?.reqNos?.length) {
       emrUrls = await resolveOriginalEmrPdfUrls(rec.reqNos).catch(() => []);
       if (emrUrls.length) await upsertReportRecord(dateFolder, { regNo, emrPdfUrls: emrUrls }).catch(() => {});
     }
-    if (emrUrls.length === 1 || (emrUrls.length > 1 && !hasPublicMinioEndpoint())) {
+    if (emrUrls.length) {
       return emrUrls;
     }
   }

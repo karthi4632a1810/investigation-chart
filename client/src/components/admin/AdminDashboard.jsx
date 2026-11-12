@@ -254,6 +254,8 @@ function MessageDrawer({ id, onClose, onChanged, readOnly = false }) {
       onChanged?.();
     } catch (err) {
       setError(err.message);
+      load();
+      onChanged?.();
     } finally {
       setRetrying(false);
     }

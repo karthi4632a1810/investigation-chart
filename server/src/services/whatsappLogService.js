@@ -156,7 +156,16 @@ export async function logSendResult(id, { ok, error, response }) {
     const ids = [response?.local_message_id, response?.localMessageId, response?.id, response?.model?.ids]
       .flat()
       .filter((v) => typeof v === 'string' && v);
-    const accepted = { validWhatsAppNumber: response?.validWhatsAppNumber ?? null, nextRetryAt: null, ...(ids.length ? { watiSendIds: ids } : {}) };
+    const accepted = {
+      validWhatsAppNumber: response?.validWhatsAppNumber ?? null,
+      nextRetryAt: null,
+      error: null,
+      failedAt: null,
+      failedDetail: null,
+      notOnWhatsApp: false,
+      rateLimited: false,
+      ...(ids.length ? { watiSendIds: ids } : {}),
+    };
     // A webhook can get here first and move the record past "sent" — don't undo it.
     const moved = await c.updateOne(
       { _id, status: 'pending' },
@@ -189,12 +198,14 @@ export async function logSendResult(id, { ok, error, response }) {
 }
 
 /** Reuses a failed record for a resend, so one report stays one row. */
-export async function logRetryStart(id, { auto = false, triggeredBy } = {}) {
+export async function logRetryStart(id, { auto = false, triggeredBy, toNumber } = {}) {
   const c = await collection();
   const _id = new ObjectId(id);
-  const doc = await c.findOne({ _id }, { projection: { attempts: 1 } });
+  const doc = await c.findOne({ _id }, { projection: { attempts: 1, toNumber: 1 } });
   const attempt = (doc?.attempts || 1) + 1;
   const now = new Date();
+  const nextNumber = toNumber && toNumber !== doc?.toNumber ? toNumber : null;
+  const note = `Retry ${attempt - 1} — ${auto ? 'automatic' : `by ${triggeredBy || 'staff'}`}${nextNumber ? ` (updated number +${nextNumber})` : ''}`;
   await c.updateOne(
     { _id },
     {
@@ -207,16 +218,19 @@ export async function logRetryStart(id, { auto = false, triggeredBy } = {}) {
         whatsappMessageId: null,
         watiLocalMessageId: null,
         watiSendIds: null,
+        error: null,
+        failedAt: null,
         failedDetail: null,
         acceptedAt: null,
         deliveredAt: null,
         readAt: null,
         notOnWhatsApp: false,
         rateLimited: false,
+        ...(nextNumber ? { toNumber: nextNumber } : {}),
       },
       $unset: { nextCheckAt: '', lastCheckedAt: '' },
       $push: {
-        history: { status: 'pending', at: now, source: 'app', note: `Retry ${attempt - 1} — ${auto ? 'automatic' : `by ${triggeredBy || 'staff'}`}` },
+        history: { status: 'pending', at: now, source: 'app', note },
       },
     },
   );

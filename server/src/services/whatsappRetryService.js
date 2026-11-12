@@ -12,10 +12,10 @@
  * be shared again from Lab Finder.
  */
 import { getMongoCollection } from './mongo.js';
-import { ensureReportPdfForMode, resolveWhatsappReportUrls } from './opReportService.js';
+import { ensureReportPdfForMode, getReportDetails, resolveWhatsappReportUrls } from './opReportService.js';
 import { whatsappFileName } from './publicLinkService.js';
 import { pdfExists, reportObjectKey } from './storageService.js';
-import { DOCUMENT_TEMPLATES, documentLine, sendInvestigationReportWhatsApp } from './watiService.js';
+import { DOCUMENT_TEMPLATES, documentLine, sendInvestigationReportWhatsApp, toWatiNumber } from './watiService.js';
 import { countRetry, retryCallsLeftToday, retryCallsPerDay, watiPausedUntil } from './watiBudget.js';
 import { retryEveryMs } from './whatsappLogService.js';
 import { setting } from './appSettingsService.js';
@@ -34,21 +34,34 @@ export async function retryWhatsAppMessage(id, { auto = false, triggeredBy } = {
   }
 
   const key = reportObjectKey(doc.reportDate, doc.regNo);
-  await ensureReportPdfForMode(doc.reportDate, doc.regNo).catch(() => {});
+  const ensured = await ensureReportPdfForMode(doc.reportDate, doc.regNo).catch(() => null);
   if (!(await pdfExists(key))) throw new Error(`The ${LABELS[doc.document].toLowerCase()} PDF is no longer available`);
+
+  // For live patient sends whose number wasn't manually overridden, pick up any
+  // mobile / WhatsApp number correction made in the EMR before retrying.
+  let targetNumber = doc.toNumber;
+  if (doc.liveMode && doc.trigger !== 'share' && !doc.numberEdited) {
+    const refreshed = await getReportDetails(doc.reportDate, doc.regNo, { refresh: true }).catch(() => null);
+    const freshMobile = refreshed?.patient?.whatsappNo || refreshed?.patient?.mobile;
+    const freshDigits = freshMobile ? toWatiNumber(freshMobile) : '';
+    if (freshDigits.length >= 11 && freshDigits.length <= 15) {
+      targetNumber = freshDigits;
+    }
+  }
 
   const settings = await getWatiSettings();
   const [pdfUrl] = await resolveWhatsappReportUrls(doc.reportDate, doc.regNo, {
+    record: ensured?.record || null,
     objectKey: key,
     fileName: whatsappFileName(LABELS[doc.document], doc.regNo),
   });
   await sendInvestigationReportWhatsApp({
-    toNumber: doc.toNumber,
+    toNumber: targetNumber,
     name: doc.patientName || doc.regNo,
     note: documentLine(LABELS[doc.document], settings.secondParam),
     pdfUrl,
     template: doc.template && DOCUMENT_TEMPLATES[doc.template] ? doc.template : settings.labReportTemplate,
-    log: { existingId: id, auto, triggeredBy: auto ? 'system' : triggeredBy },
+    log: { existingId: id, auto, triggeredBy: auto ? 'system' : triggeredBy, toNumber: targetNumber },
   });
   return getWhatsappRecord(id);
 }
