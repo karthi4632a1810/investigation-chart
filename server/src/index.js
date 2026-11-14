@@ -295,9 +295,8 @@ app.get('/api/detail/:orderid', async (req, res) => {
   });
 
   /**
-   * Redirects to a short-lived MinIO presigned URL rather than proxying the PDF
-   * bytes through this server — the browser downloads directly from MinIO, and a
-   * plain <a href> / target="_blank" still works transparently across the redirect.
+   * Streams the OP lab report PDF directly from storage rather than redirecting
+   * to a localhost/internal MinIO presigned URL.
    */
   app.get('/api/reports/:date/:regNo/pdf', async (req, res) => {
     const { date, regNo } = req.params;
@@ -307,10 +306,20 @@ app.get('/api/detail/:orderid', async (req, res) => {
 
     try {
       await ensureReportPdfForMode(date, regNo).catch(() => {});
-      if (!(await pdfExists(reportObjectKey(date, regNo)))) {
+      const key = reportObjectKey(date, regNo);
+      const pdf = await getPdfStream(key);
+      if (!pdf) {
         return res.status(404).json({ ok: false, error: 'Report not found' });
       }
-      res.redirect(await getReportPdfUrl(date, regNo));
+      const filename = `Lab-Report-${regNo}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      if (pdf.size) res.setHeader('Content-Length', pdf.size);
+      res.setHeader('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      res.setHeader('X-Robots-Tag', 'noindex');
+      if (req.method === 'HEAD') return res.end();
+      pdf.stream.on('error', () => res.destroy());
+      pdf.stream.pipe(res);
     } catch (error) {
       res.status(503).json({ ok: false, error: `Reports store unavailable: ${error.message}` });
     }

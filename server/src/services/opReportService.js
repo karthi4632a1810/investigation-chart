@@ -966,7 +966,7 @@ export async function listReportDates() {
 }
 
 export async function getReportPdfUrl(dateFolder, regNo) {
-  return getPdfPresignedUrl(reportObjectKey(dateFolder, regNo));
+  return `/api/reports/${encodeURIComponent(dateFolder)}/${encodeURIComponent(regNo)}/pdf`;
 }
 
 export { toEmrMdy };
